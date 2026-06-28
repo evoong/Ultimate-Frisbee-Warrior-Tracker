@@ -75,9 +75,11 @@ export function useCreateSeason() {
 }
 
 export function useGetPlayerStats() {
-  const fn = useCallback(async (params?: { seasonId?: number; gameIds?: number[] }) => {
+  const fn = useCallback(async (params?: { seasonIds?: number[]; gameIds?: number[] }) => {
     const url = new URL('/api/stats/players', window.location.origin)
-    if (params?.seasonId != null) url.searchParams.set('seasonId', String(params.seasonId))
+    if (params?.seasonIds && params.seasonIds.length > 0) {
+      for (const id of params.seasonIds) url.searchParams.append('seasonIds', String(id))
+    }
     if (params?.gameIds && params.gameIds.length > 0) {
       for (const id of params.gameIds) url.searchParams.append('gameIds', String(id))
     }
@@ -85,7 +87,7 @@ export function useGetPlayerStats() {
     if (!res.ok) throw new Error(await res.text())
     return res.json()
   }, [])
-  return useApiCall<unknown, { seasonId?: number; gameIds?: number[] } | undefined>(fn)
+  return useApiCall<unknown, { seasonIds?: number[]; gameIds?: number[] } | undefined>(fn)
 }
 
 export function useGetCumulativeStats() {

@@ -10,6 +10,7 @@ import { Button } from '../lib/shadcn/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
 import { Label } from '../lib/shadcn/label'
 import PlayerCombobox from '../components/PlayerCombobox'
+import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
 import { Target, Plus, Minus, TrendingUp, Undo2, Edit2, ChevronLeft, Trash2, Calendar, ArrowLeftRight } from 'lucide-react'
 
@@ -42,7 +43,7 @@ export default function QuickScore() {
   const [editingEventId, setEditingEventId] = useState<number | null>(null)
   const [editScorerId, setEditScorerId] = useState<string>('')
   const [editAssisterId, setEditAssisterId] = useState<string>('')
-  const [seasonFilter, setSeasonFilter] = useState<string>('all')
+  const [selectedSeasonIds, setSelectedSeasonIds] = useState<number[]>([])
 
   useEffect(() => {
     fetchGames()
@@ -51,9 +52,14 @@ export default function QuickScore() {
   }, [])
 
   useEffect(() => {
-    if (games && games.length > 0 && selectedGameId === null) {
-      const filtered = filteredGames
-      if (filtered.length > 0) setSelectedGameId((filtered[0] as Game).id)
+    fetchGames({ seasonIds: selectedSeasonIds.length > 0 ? selectedSeasonIds : undefined })
+    setSelectedGameId(null)
+  }, [selectedSeasonIds])
+
+  useEffect(() => {
+    if (games && (games as Game[]).length > 0 && selectedGameId === null) {
+      const g = games as Game[]
+      if (g.length > 0) setSelectedGameId(g[0]!.id)
     }
   }, [games])
 
@@ -65,9 +71,7 @@ export default function QuickScore() {
     }
   }, [selectedGameId])
 
-  const filteredGames = ((games as Game[] | undefined) ?? []).filter(g =>
-    seasonFilter === 'all' || g.season_id?.toString() === seasonFilter
-  )
+  const filteredGames = (games as Game[] | undefined) ?? []
 
   const selectedGame = (games as Game[] | undefined)?.find(g => g.id === selectedGameId)
   const ourGoals = events?.filter((e: { event_type: string }) => e.event_type === 'Goal').length || 0
@@ -189,17 +193,12 @@ export default function QuickScore() {
           <h1 className="text-2xl font-bold text-foreground">Quick Score</h1>
 
           {/* Season Filter */}
-          <Select value={seasonFilter} onValueChange={(v) => { setSeasonFilter(v); setSelectedGameId(null) }}>
-            <SelectTrigger className="bg-card border-border text-foreground">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Seasons</SelectItem>
-              {(allSeasons as Season[] | undefined)?.map(s => (
-                <SelectItem key={s.id} value={String(s.id)}>{seasonLabel(s)}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SeasonMultiSelect
+            seasons={(allSeasons as Season[] | undefined) ?? []}
+            selectedIds={selectedSeasonIds}
+            onChange={setSelectedSeasonIds}
+            placeholder="All Seasons"
+          />
 
           {/* Game Selection */}
           <Card className="bg-card text-card-foreground border-border">
