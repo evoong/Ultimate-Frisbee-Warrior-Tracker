@@ -1,13 +1,12 @@
-import { useEffect, useState } from 'react'
-import { useGetPlayers, useUpdatePlayerPosition, useDeleteSubPlayer } from '../hooks/backend/players'
-import { useGetPlayerGameStats } from '../hooks/backend/players'
+import { useEffect, useRef, useState } from 'react'
+import { useGetPlayers, useUpdatePlayerPosition, useDeleteSubPlayer, useGetPlayerGameStats, useUploadPlayerPhoto } from '../hooks/backend/players'
 import { useGetSeasons } from '../hooks/backend/stats'
 import { Badge } from '../lib/shadcn/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
 import { Input } from '../lib/shadcn/input'
 import { Label } from '../lib/shadcn/label'
-import { User, Phone, Search, ChevronLeft, ChevronRight, Users, TrendingUp, Trophy, Trash2 } from 'lucide-react'
+import { User, Phone, Search, ChevronLeft, ChevronRight, Users, TrendingUp, Trophy, Trash2, Camera } from 'lucide-react'
 
 type Player = {
   id: number
@@ -16,6 +15,7 @@ type Player = {
   phone: string | null
   is_sub: boolean
   position: string | null
+  photo_url: string | null
 }
 
 type GameStat = {
@@ -31,12 +31,38 @@ type GameStat = {
 
 const POSITIONS = ['Handler', 'Cutter', 'Hybrid', 'Hybrid Handler', 'Hybrid Cutter']
 
+function PlayerAvatar({ photoUrl, name, size = 'md' }: { photoUrl: string | null; name: string; size?: 'sm' | 'md' | 'lg' }) {
+  const sizes = {
+    sm: 'w-10 h-10',
+    md: 'w-12 h-12',
+    lg: 'w-20 h-20',
+  }
+  const iconSizes = { sm: 'w-5 h-5', md: 'w-6 h-6', lg: 'w-9 h-9' }
+
+  if (photoUrl) {
+    return (
+      <img
+        src={photoUrl}
+        alt={name}
+        className={`${sizes[size]} rounded-full object-cover shrink-0 border-2 border-border`}
+      />
+    )
+  }
+
+  return (
+    <div className={`${sizes[size]} rounded-full bg-primary/10 flex items-center justify-center shrink-0`}>
+      <User className={`${iconSizes[size]} text-primary`} />
+    </div>
+  )
+}
+
 export default function Roster() {
   const { data: rawPlayers, loading, error, trigger: fetchPlayers } = useGetPlayers()
   const { data: gameStats, loading: statsLoading, trigger: fetchGameStats } = useGetPlayerGameStats()
   const { data: seasons, trigger: fetchSeasons } = useGetSeasons()
   const { trigger: updatePosition } = useUpdatePlayerPosition()
   const { trigger: deleteSubPlayer } = useDeleteSubPlayer()
+  const { trigger: uploadPhoto, loading: uploadingPhoto } = useUploadPlayerPhoto()
 
   const players = rawPlayers as Player[] | undefined
 
@@ -44,12 +70,14 @@ export default function Roster() {
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
   const [seasonFilter, setSeasonFilter] = useState<string>('all')
   const [rosterSeasonFilter, setRosterSeasonFilter] = useState<string | null>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     fetchSeasons()
   }, [])
 
-  // Auto-select most recent season once loaded
   useEffect(() => {
     const s = seasons as { season_id: number }[] | undefined
     if (s && rosterSeasonFilter === null) {
@@ -70,33 +98,50 @@ export default function Roster() {
   const handleSelectPlayer = (player: Player) => {
     setSelectedPlayer(player)
     setSeasonFilter('all')
+    setUploadError(null)
     fetchGameStats({ playerId: player.id })
   }
 
   const handleBack = () => {
     setSelectedPlayer(null)
     setSearchQuery('')
+    setUploadError(null)
   }
 
   const handlePositionChange = async (player: Player, position: string) => {
     const newPosition = position === '__none__' ? null : position
-    // Optimistically update local state
     setSelectedPlayer({ ...player, position: newPosition })
     await updatePosition({ playerId: player.id, position: newPosition })
-    // Refresh list so the card also reflects the change
     fetchPlayers({ seasonId: rosterSeasonFilter === 'all' ? null : parseInt(rosterSeasonFilter!) })
+  }
+
+  const handlePhotoClick = () => {
+    fileInputRef.current?.click()
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !selectedPlayer) return
+    setUploadError(null)
+    const result = await uploadPhoto({ playerId: selectedPlayer.id, file })
+    if (result?.photo_url) {
+      const updated = { ...selectedPlayer, photo_url: result.photo_url }
+      setSelectedPlayer(updated)
+      fetchPlayers({ seasonId: rosterSeasonFilter === 'all' ? null : parseInt(rosterSeasonFilter!) })
+    } else {
+      setUploadError('Upload failed. Please try again.')
+    }
+    e.target.value = ''
   }
 
   const filteredPlayers = players?.filter(p =>
     p.display_name.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  // Filter game stats by season
   const filteredStats = (gameStats as GameStat[] | undefined)?.filter(g =>
     seasonFilter === 'all' || g.season_id?.toString() === seasonFilter
   ) ?? []
 
-  // Compute summary totals from filtered stats
   const summary = filteredStats.reduce(
     (acc, g) => ({
       goals: acc.goals + parseInt(g.goals),
@@ -127,10 +172,7 @@ export default function Roster() {
           </button>
           {selectedPlayer.is_sub && (
             <button
-              onClick={async () => {
-                await handleDeleteSub(selectedPlayer.id)
-                handleBack()
-              }}
+              onClick={async () => { await handleDeleteSub(selectedPlayer.id); handleBack() }}
               className="flex items-center gap-1.5 text-sm text-destructive hover:text-destructive/80 transition-colors"
             >
               <Trash2 className="w-4 h-4" />
@@ -139,19 +181,42 @@ export default function Roster() {
           )}
         </div>
 
-        {/* Player Header */}
+        {/* Player Header with photo upload */}
         <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-            <User className="w-8 h-8 text-primary" />
+          <div className="relative group">
+            {selectedPlayer.photo_url ? (
+              <img
+                src={selectedPlayer.photo_url}
+                alt={selectedPlayer.display_name}
+                className="w-20 h-20 rounded-full object-cover border-2 border-border"
+              />
+            ) : (
+              <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center">
+                <User className="w-9 h-9 text-primary" />
+              </div>
+            )}
+            {/* Camera overlay */}
+            <button
+              onClick={handlePhotoClick}
+              disabled={uploadingPhoto}
+              className="absolute inset-0 rounded-full flex items-center justify-center bg-black/0 group-hover:bg-black/40 transition-colors cursor-pointer"
+              aria-label="Upload photo"
+            >
+              <Camera className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow" />
+            </button>
+            {uploadingPhoto && (
+              <div className="absolute inset-0 rounded-full flex items-center justify-center bg-black/50">
+                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              </div>
+            )}
           </div>
-          <div>
-            <div className="flex items-center gap-2">
+
+          <div className="flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl font-bold text-foreground">{selectedPlayer.display_name}</h1>
-              {selectedPlayer.is_sub && (
-                <Badge variant="secondary" className="text-xs">Sub</Badge>
-              )}
+              {selectedPlayer.is_sub && <Badge variant="secondary" className="text-xs">Sub</Badge>}
             </div>
-            <div className="flex items-center gap-3 mt-1">
+            <div className="flex items-center gap-3 mt-1 flex-wrap">
               {selectedPlayer.gender_match && (
                 <span className="text-sm text-muted-foreground">{selectedPlayer.gender_match}</span>
               )}
@@ -162,8 +227,28 @@ export default function Roster() {
                 </div>
               )}
             </div>
+            <button
+              onClick={handlePhotoClick}
+              disabled={uploadingPhoto}
+              className="mt-1.5 text-xs text-primary hover:underline disabled:opacity-50"
+            >
+              {uploadingPhoto ? 'Uploading…' : selectedPlayer.photo_url ? 'Change photo' : 'Upload photo'}
+            </button>
           </div>
         </div>
+
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={handleFileChange}
+        />
+
+        {uploadError && (
+          <p className="text-sm text-destructive">{uploadError}</p>
+        )}
 
         {/* Position */}
         <div className="space-y-1">
@@ -235,9 +320,7 @@ export default function Roster() {
           <CardHeader>
             <CardTitle className="text-base flex items-center justify-between">
               <span>Per Game</span>
-              <span className="text-sm font-normal text-muted-foreground">
-                {filteredStats.length} games
-              </span>
+              <span className="text-sm font-normal text-muted-foreground">{filteredStats.length} games</span>
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -245,39 +328,25 @@ export default function Roster() {
               <div className="text-center py-8 text-muted-foreground text-sm">Loading...</div>
             ) : filteredStats.length > 0 ? (
               <div className="space-y-2">
-                {/* Column headers */}
                 <div className="flex items-center gap-3 px-3 text-xs text-muted-foreground font-medium">
                   <div className="flex-1">Game</div>
                   <div className="w-8 text-center text-green-600 dark:text-green-400">G</div>
                   <div className="w-8 text-center text-blue-600 dark:text-blue-400">A</div>
                   <div className="w-8 text-center text-orange-600 dark:text-orange-400">TO</div>
                 </div>
-
                 {filteredStats.map((stat) => (
                   <div key={stat.game_id} className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-background">
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium text-foreground text-sm truncate">
-                        vs {stat.opponent}
-                      </div>
+                      <div className="font-medium text-foreground text-sm truncate">vs {stat.opponent}</div>
                       <div className="flex items-center gap-2 mt-0.5">
                         <span className="text-xs text-muted-foreground">{formatDate(stat.game_date)}</span>
-                        {stat.game_type === 'Playoff' && (
-                          <Trophy className="w-3 h-3 text-yellow-500 dark:text-yellow-400" />
-                        )}
-                        {stat.season_id && (
-                          <span className="text-xs text-muted-foreground">S{stat.season_id}</span>
-                        )}
+                        {stat.game_type === 'Playoff' && <Trophy className="w-3 h-3 text-yellow-500 dark:text-yellow-400" />}
+                        {stat.season_id && <span className="text-xs text-muted-foreground">S{stat.season_id}</span>}
                       </div>
                     </div>
-                    <div className="w-8 text-center font-bold text-green-600 dark:text-green-400">
-                      {stat.goals}
-                    </div>
-                    <div className="w-8 text-center font-bold text-blue-600 dark:text-blue-400">
-                      {stat.assists}
-                    </div>
-                    <div className="w-8 text-center font-bold text-orange-600 dark:text-orange-400">
-                      {stat.turnovers}
-                    </div>
+                    <div className="w-8 text-center font-bold text-green-600 dark:text-green-400">{stat.goals}</div>
+                    <div className="w-8 text-center font-bold text-blue-600 dark:text-blue-400">{stat.assists}</div>
+                    <div className="w-8 text-center font-bold text-orange-600 dark:text-orange-400">{stat.turnovers}</div>
                   </div>
                 ))}
               </div>
@@ -285,9 +354,7 @@ export default function Roster() {
               <div className="text-center py-10">
                 <TrendingUp className="w-12 h-12 text-muted-foreground mx-auto mb-3 opacity-40" />
                 <p className="text-muted-foreground text-sm">No stats recorded yet</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Stats appear once goals and assists are logged in Quick Score
-                </p>
+                <p className="text-xs text-muted-foreground mt-1">Stats appear once goals and assists are logged in Quick Score</p>
               </div>
             )}
           </CardContent>
@@ -317,12 +384,9 @@ export default function Roster() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-foreground">Roster</h1>
-        <div className="text-sm text-muted-foreground">
-          {filteredPlayers?.length || 0} of {players?.length || 0}
-        </div>
+        <div className="text-sm text-muted-foreground">{filteredPlayers?.length || 0} of {players?.length || 0}</div>
       </div>
 
-      {/* Season filter */}
       <Select value={rosterSeasonFilter ?? 'all'} onValueChange={setRosterSeasonFilter}>
         <SelectTrigger className="bg-card border-border text-foreground">
           <SelectValue />
@@ -357,23 +421,15 @@ export default function Roster() {
           >
             <CardContent className="p-4">
               <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-                  <User className="w-6 h-6 text-primary" />
-                </div>
-                <div className="flex-1">
+                <PlayerAvatar photoUrl={player.photo_url} name={player.display_name} size="md" />
+                <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="font-semibold text-foreground text-lg">{player.display_name}</span>
-                    {player.is_sub && (
-                      <Badge variant="secondary" className="text-xs">Sub</Badge>
-                    )}
+                    <span className="font-semibold text-foreground text-lg truncate">{player.display_name}</span>
+                    {player.is_sub && <Badge variant="secondary" className="text-xs shrink-0">Sub</Badge>}
                   </div>
-                  <div className="flex items-center gap-3 mt-1">
-                    {player.position && (
-                      <span className="text-sm text-muted-foreground">{player.position}</span>
-                    )}
-                    {player.gender_match && (
-                      <span className="text-sm text-muted-foreground">{player.gender_match}</span>
-                    )}
+                  <div className="flex items-center gap-3 mt-1 flex-wrap">
+                    {player.position && <span className="text-sm text-muted-foreground">{player.position}</span>}
+                    {player.gender_match && <span className="text-sm text-muted-foreground">{player.gender_match}</span>}
                     {player.phone && (
                       <div className="flex items-center gap-1 text-sm text-muted-foreground">
                         <Phone className="w-3 h-3" />
@@ -385,13 +441,13 @@ export default function Roster() {
                 {player.is_sub ? (
                   <button
                     onClick={(e) => { e.stopPropagation(); handleDeleteSub(player.id) }}
-                    className="p-2 rounded hover:bg-destructive/10 transition-colors"
+                    className="p-2 rounded hover:bg-destructive/10 transition-colors shrink-0"
                     aria-label={`Remove sub ${player.display_name}`}
                   >
                     <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive" />
                   </button>
                 ) : (
-                  <ChevronRight className="w-5 h-5 text-muted-foreground" />
+                  <ChevronRight className="w-5 h-5 text-muted-foreground shrink-0" />
                 )}
               </div>
             </CardContent>
