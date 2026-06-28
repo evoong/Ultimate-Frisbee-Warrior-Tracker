@@ -1141,7 +1141,7 @@ When you want to perform an action, include the ACTION tag in your response foll
     const genai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
     const geminiResponse = await genai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3.1-flash-lite",
       contents,
       config: {
         systemInstruction: systemPrompt,
