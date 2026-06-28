@@ -265,10 +265,11 @@ export default function QuickScore() {
                       setDefaultAssisterId(tmp)
                     }}
                     title={`Swap ${scorerLabel} ↔ ${assisterLabel}`}
-                    className="flex items-center justify-end text-muted-foreground hover:text-foreground transition-colors"
+                    className="flex flex-col items-end gap-0.5 text-muted-foreground hover:text-foreground transition-colors"
                     aria-label="Swap scorer and assister"
                   >
-                    <ArrowLeftRight className="w-3.5 h-3.5" />
+                    <span className="text-xs font-medium">{assisterLabel}</span>
+                    <ArrowLeftRight className="w-3 h-3" />
                   </button>
                   <PlayerCombobox
                     players={playerOptions}
