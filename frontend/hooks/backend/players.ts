@@ -101,3 +101,17 @@ export function useGetPlayerGameStats() {
   }, [])
   return useApiCall<unknown, { playerId: number }>(fn)
 }
+
+export function useUploadPlayerPhoto() {
+  const fn = useCallback(async (params: { playerId: number; file: File }) => {
+    const form = new FormData()
+    form.append('photo', params.file)
+    const res = await fetch(`/api/players/${params.playerId}/photo`, {
+      method: 'POST',
+      body: form,
+    })
+    if (!res.ok) throw new Error(await res.text())
+    return res.json() as Promise<{ photo_url: string }>
+  }, [])
+  return useApiCall<{ photo_url: string }, { playerId: number; file: File }>(fn)
+}

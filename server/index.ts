@@ -1,6 +1,9 @@
 import express from 'express'
 import cors from 'cors'
 import { Pool, types } from 'pg'
+import multer from 'multer'
+import path from 'path'
+import fs from 'fs'
 
 // Return DATE columns as strings (not JS Date objects)
 types.setTypeParser(1082, (val: string) => val)
@@ -10,6 +13,28 @@ const PORT = 3001
 
 app.use(cors())
 app.use(express.json())
+
+// Serve uploaded player photos as static files
+const uploadsDir = path.join(process.cwd(), 'uploads')
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true })
+app.use('/uploads', express.static(uploadsDir))
+
+// Multer config — store images in /uploads, preserve extension
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, uploadsDir),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase() || '.jpg'
+    cb(null, `player-${Date.now()}${ext}`)
+  },
+})
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true)
+    else cb(new Error('Only image files are allowed'))
+  },
+})
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -122,7 +147,7 @@ app.get('/api/players', async (req, res) => {
     const { seasonId } = req.query
     if (seasonId && seasonId !== 'null') {
       const result = await pool.query(
-        `SELECT p.id, p.first_name, p.last_name, p.display_name, p.gender_match, p.phone, COALESCE(p.is_sub, false) as is_sub, p.position
+        `SELECT p.id, p.first_name, p.last_name, p.display_name, p.gender_match, p.phone, COALESCE(p.is_sub, false) as is_sub, p.position, p.photo_url
          FROM players p
          INNER JOIN season_players sp ON sp.player_id = p.id
          WHERE sp.season_id = $1 AND sp.active = true
@@ -132,9 +157,28 @@ app.get('/api/players', async (req, res) => {
       return res.json(result.rows)
     }
     const result = await pool.query(
-      'SELECT id, first_name, last_name, display_name, gender_match, phone, COALESCE(is_sub, false) as is_sub, position FROM players ORDER BY display_name'
+      'SELECT id, first_name, last_name, display_name, gender_match, phone, COALESCE(is_sub, false) as is_sub, position, photo_url FROM players ORDER BY display_name'
     )
     res.json(result.rows)
+  } catch (err: unknown) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) })
+  }
+})
+
+// Upload / update player photo
+app.post('/api/players/:id/photo', upload.single('photo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+    const photoUrl = `/uploads/${req.file.filename}`
+    // Delete old photo file if it exists
+    const old = await pool.query('SELECT photo_url FROM players WHERE id = $1', [req.params.id])
+    const oldUrl: string | null = old.rows[0]?.photo_url ?? null
+    if (oldUrl) {
+      const oldPath = path.join(process.cwd(), oldUrl)
+      if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath)
+    }
+    await pool.query('UPDATE players SET photo_url = $1 WHERE id = $2', [photoUrl, req.params.id])
+    res.json({ photo_url: photoUrl })
   } catch (err: unknown) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) })
   }
