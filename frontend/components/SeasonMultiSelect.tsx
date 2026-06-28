@@ -34,11 +34,14 @@ export default function SeasonMultiSelect({ seasons, selectedIds, onChange, plac
   const selectAll = () => onChange(seasons.map(s => s.id))
   const clearAll = () => onChange([])
 
+  const singleMatch = selectedIds.length === 1 ? seasons.find(s => s.id === selectedIds[0]!) : undefined
   const label = selectedIds.length === 0
     ? placeholder
-    : selectedIds.length === 1
-      ? seasonLabel(seasons.find(s => s.id === selectedIds[0]!)!)
-      : `${selectedIds.length} seasons`
+    : singleMatch
+      ? seasonLabel(singleMatch)
+      : selectedIds.length === 1
+        ? placeholder
+        : `${selectedIds.length} seasons`
 
   return (
     <div ref={ref} className={`relative ${className}`}>
