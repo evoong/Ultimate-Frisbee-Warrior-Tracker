@@ -22,9 +22,76 @@ function getOrCreateSession(): string {
   return sid
 }
 
-function formatMessage(content: string) {
-  // Remove ACTION tags from display
+function cleanContent(content: string) {
   return content.replace(/ACTION:\s+\w+\s+\{[^}]+\}/g, '').trim()
+}
+
+function renderInline(text: string): React.ReactNode[] {
+  const parts: React.ReactNode[] = []
+  const re = /(\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`)/g
+  let last = 0, m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parts.push(text.slice(last, m.index))
+    if (m[2]) parts.push(<strong key={m.index}><em>{m[2]}</em></strong>)
+    else if (m[3]) parts.push(<strong key={m.index}>{m[3]}</strong>)
+    else if (m[4]) parts.push(<em key={m.index}>{m[4]}</em>)
+    else if (m[5]) parts.push(<code key={m.index} className="bg-muted px-1 py-0.5 rounded text-xs font-mono">{m[5]}</code>)
+    last = m.index + m[0].length
+  }
+  if (last < text.length) parts.push(text.slice(last))
+  return parts
+}
+
+function MarkdownMessage({ content }: { content: string }) {
+  const cleaned = cleanContent(content)
+  const lines = cleaned.split('\n')
+  const elements: React.ReactNode[] = []
+  let i = 0
+
+  while (i < lines.length) {
+    const line = lines[i]!
+    const trimmed = line.trim()
+
+    if (!trimmed) { i++; continue }
+
+    // Heading
+    const hMatch = trimmed.match(/^(#{1,3})\s+(.+)/)
+    if (hMatch) {
+      const level = hMatch[1]!.length
+      const text = hMatch[2]!
+      const cls = level === 1 ? 'text-base font-bold mt-2 mb-1' : level === 2 ? 'text-sm font-bold mt-2 mb-0.5' : 'text-sm font-semibold mt-1'
+      elements.push(<div key={i} className={cls}>{renderInline(text)}</div>)
+      i++; continue
+    }
+
+    // Bullet list — collect consecutive bullet lines
+    if (/^[-*•]\s/.test(trimmed)) {
+      const items: React.ReactNode[] = []
+      while (i < lines.length && /^[-*•]\s/.test(lines[i]!.trim())) {
+        items.push(<li key={i} className="ml-1">{renderInline(lines[i]!.trim().replace(/^[-*•]\s/, ''))}</li>)
+        i++
+      }
+      elements.push(<ul key={`ul-${i}`} className="list-disc list-inside space-y-0.5 my-1 text-sm">{items}</ul>)
+      continue
+    }
+
+    // Numbered list — collect consecutive numbered lines
+    if (/^\d+\.\s/.test(trimmed)) {
+      const items: React.ReactNode[] = []
+      while (i < lines.length && /^\d+\.\s/.test(lines[i]!.trim())) {
+        items.push(<li key={i}>{renderInline(lines[i]!.trim().replace(/^\d+\.\s/, ''))}</li>)
+        i++
+      }
+      elements.push(<ol key={`ol-${i}`} className="list-decimal list-inside space-y-0.5 my-1 text-sm">{items}</ol>)
+      continue
+    }
+
+    // Regular paragraph
+    elements.push(<p key={i} className="text-sm leading-relaxed">{renderInline(trimmed)}</p>)
+    i++
+  }
+
+  return <div className="space-y-1">{elements}</div>
 }
 
 export default function Chat() {
@@ -195,7 +262,7 @@ export default function Chat() {
                     ? 'bg-primary text-primary-foreground rounded-tr-sm'
                     : 'bg-card border border-border text-foreground rounded-tl-sm'
                 }`}>
-                  {formatMessage(msg.content)}
+                  <MarkdownMessage content={msg.content} />
                 </div>
                 {msg.actionResults && msg.actionResults.length > 0 && (
                   <div className="flex flex-col gap-1">
