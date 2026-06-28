@@ -372,17 +372,6 @@ export default function Stats() {
             </Select>
           </div>
 
-          {/* Stat tab */}
-          <div className="flex gap-1 mt-2 bg-muted rounded-lg p-1">
-            {CUMULATIVE_TABS.map(tab => (
-              <button key={tab.key} onClick={() => setCumulativeStat(tab.key)}
-                className={`flex-1 text-xs py-1.5 px-2 rounded-md font-medium transition-colors ${cumulativeStat === tab.key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
           {/* Player filter */}
           {allPlayersForSelection.length > 0 && (
             <div className="mt-2 space-y-1">
@@ -397,6 +386,17 @@ export default function Stats() {
               />
             </div>
           )}
+
+          {/* Stat tab */}
+          <div className="flex gap-1 mt-2 bg-muted rounded-lg p-1">
+            {CUMULATIVE_TABS.map(tab => (
+              <button key={tab.key} onClick={() => setCumulativeStat(tab.key)}
+                className={`flex-1 text-xs py-1.5 px-2 rounded-md font-medium transition-colors ${cumulativeStat === tab.key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </CardHeader>
         <CardContent className="pt-2">
           {cumulativeLoading ? (
