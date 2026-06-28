@@ -2,6 +2,9 @@
   "name": "frontend",
   "private": true,
   "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5000"
+  },
   "dependencies": {
     "@radix-ui/react-accordion": "1.2.12",
     "@radix-ui/react-alert-dialog": "1.1.15",
