@@ -4,7 +4,7 @@ type HookResult<T, P = void> = {
   data: T | undefined
   loading: boolean
   error: string | null
-  trigger: P extends void ? () => Promise<T | undefined> : (params: P) => Promise<T | undefined>
+  trigger: P extends void ? () => Promise<T | undefined> : (params?: P) => Promise<T | undefined>
 }
 
 function useApiCall<T, P = void>(
@@ -37,18 +37,18 @@ export function useGetGameEvents() {
   const fn = useCallback(async (params: { gameId: number }) => {
     const res = await fetch(`/api/events?gameId=${params.gameId}`)
     if (!res.ok) throw new Error(await res.text())
-    return res.json()
+    return res.json() as Promise<any[]>
   }, [])
-  return useApiCall<unknown, { gameId: number }>(fn)
+  return useApiCall<any[], { gameId: number }>(fn)
 }
 
 export function useGetEventTypes() {
   const fn = useCallback(async () => {
     const res = await fetch('/api/event-types')
     if (!res.ok) throw new Error(await res.text())
-    return res.json()
+    return res.json() as Promise<any[]>
   }, [])
-  return useApiCall(fn)
+  return useApiCall<any[]>(fn)
 }
 
 export function useCreateGoalEvent() {
@@ -70,6 +70,19 @@ export function useCreateOpponentGoalEvent() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),
+    })
+    if (!res.ok) throw new Error(await res.text())
+    return res.json()
+  }, [])
+  return useApiCall(fn)
+}
+
+export function useCreateTurnoverEvent() {
+  const fn = useCallback(async (params: { gameId: number; playerId: number }) => {
+    const res = await fetch('/api/events/goal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gameId: params.gameId, playerId: params.playerId, relatedPlayerId: null, eventType: 'Turnover' }),
     })
     if (!res.ok) throw new Error(await res.text())
     return res.json()
