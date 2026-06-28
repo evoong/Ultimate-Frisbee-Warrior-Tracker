@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useGetGames } from '../hooks/backend/games'
-import { useGetPlayerStats, useGetAllSeasons } from '../hooks/backend/stats'
+import { useGetPlayerStats, useGetAllSeasons, useGetSeasons } from '../hooks/backend/stats'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
 import { Label } from '../lib/shadcn/label'
@@ -17,6 +17,7 @@ function seasonLabel(s: { name: string; year: number; organizer: string | null }
 export default function Ranking() {
   const { data: games, trigger: fetchGames } = useGetGames()
   const { data: allSeasons, trigger: fetchAllSeasons } = useGetAllSeasons()
+  const { data: seasonsWithGames, trigger: fetchSeasonsWithGames } = useGetSeasons()
   const { data: stats, loading, error, trigger: fetchStats } = useGetPlayerStats()
 
   const [filterType, setFilterType] = useState<'all' | 'season' | 'games'>('all')
@@ -26,7 +27,15 @@ export default function Ranking() {
   useEffect(() => {
     fetchGames()
     fetchAllSeasons()
+    fetchSeasonsWithGames()
   }, [])
+
+  useEffect(() => {
+    const s = seasonsWithGames as { season_id: number }[] | undefined
+    if (!s || s.length === 0 || selectedSeasonIds.length > 0) return
+    setFilterType('season')
+    setSelectedSeasonIds([s[0]!.season_id])
+  }, [seasonsWithGames])
 
   useEffect(() => {
     if (filterType === 'all') fetchStats({})
