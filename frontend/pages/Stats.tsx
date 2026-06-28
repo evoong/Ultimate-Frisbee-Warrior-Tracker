@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
 import { Label } from '../lib/shadcn/label'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
+import PlayerMultiSelect from '../components/PlayerMultiSelect'
 import { BarChart3, TrendingUp, LineChart as LineChartIcon } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -65,7 +66,6 @@ export default function Stats() {
   const [cumulativeSeasonId, setCumulativeSeasonId] = useState<string>('')
   const [cumulativeStat, setCumulativeStat] = useState<CumulativeStat>('ga')
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<number[]>([])
-  const [showAllPlayers, setShowAllPlayers] = useState(false)
 
   useEffect(() => {
     fetchGames()
@@ -118,9 +118,6 @@ export default function Stats() {
 
   const handleUnselectAllGames = () => setSelectedGameIds([])
 
-  const handlePlayerToggle = (playerId: number) => {
-    setSelectedPlayerIds(prev => prev.includes(playerId) ? prev.filter(id => id !== playerId) : [...prev, playerId])
-  }
 
   // ── Bar chart data ──────────────────────────────────────────────────────────
   const chartData = stats
@@ -389,33 +386,15 @@ export default function Stats() {
           {/* Player filter */}
           {allPlayersForSelection.length > 0 && (
             <div className="mt-2 space-y-1">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs text-muted-foreground">Filter Players {selectedPlayerIds.length > 0 ? `(${selectedPlayerIds.length} selected)` : '(top 8)'}</Label>
-                <div className="flex gap-2">
-                  <button onClick={() => setShowAllPlayers(p => !p)} className="text-xs text-primary hover:underline">
-                    {showAllPlayers ? 'Hide' : 'Edit'}
-                  </button>
-                  {selectedPlayerIds.length > 0 && (
-                    <button onClick={() => setSelectedPlayerIds([])} className="text-xs text-muted-foreground hover:text-foreground">Clear</button>
-                  )}
-                </div>
-              </div>
-              {showAllPlayers && (
-                <div className="max-h-36 overflow-y-auto space-y-0.5 border border-border rounded-md p-2 bg-background">
-                  {allPlayersForSelection.map(p => (
-                    <label key={p.id} className="flex items-center gap-2 cursor-pointer hover:bg-accent rounded px-2 py-1 transition-colors">
-                      <input
-                        type="checkbox"
-                        checked={selectedPlayerIds.includes(p.id)}
-                        onChange={() => handlePlayerToggle(p.id)}
-                        className="w-3.5 h-3.5 rounded"
-                      />
-                      <span className="text-xs text-foreground flex-1">{p.name}</span>
-                      <span className="text-xs text-muted-foreground">{p.total}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
+              <Label className="text-xs text-muted-foreground">
+                Players {selectedPlayerIds.length === 0 ? '(top 8)' : ''}
+              </Label>
+              <PlayerMultiSelect
+                players={allPlayersForSelection}
+                selectedIds={selectedPlayerIds}
+                onChange={setSelectedPlayerIds}
+                placeholder="Top 8 players"
+              />
             </div>
           )}
         </CardHeader>
