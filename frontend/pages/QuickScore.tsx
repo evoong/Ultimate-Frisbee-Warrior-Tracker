@@ -47,7 +47,6 @@ export default function QuickScore() {
   const [selectedSeasonIds, setSelectedSeasonIds] = useState<number[]>([])
 
   useEffect(() => {
-    fetchGames()
     fetchEventTypes()
     fetchAllSeasons()
     fetchSeasonsWithGames()
