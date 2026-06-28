@@ -1,0 +1,145 @@
+{
+  "private": true,
+  "retool": {
+    "app": {
+      "uuid": "ca115e50-71fc-11f1-8c19-0b2bb978852c",
+      "name": null,
+      "resourceReferencesByFile": {
+        "/backend/events/createGoalEvent.ts": [
+          {
+            "name": "cee6385f-2e00-4a56-bb23-34c20e13c36d",
+            "displayName": "retool_db",
+            "type": "retoolDb"
+          }
+        ],
+        "/backend/events/createOpponentGoalEvent.ts": [
+          {
+            "name": "cee6385f-2e00-4a56-bb23-34c20e13c36d",
+            "displayName": "retool_db",
+            "type": "retoolDb"
+          }
+        ],
+        "/backend/events/createTurnoverEvent.ts": [
+          {
+            "name": "cee6385f-2e00-4a56-bb23-34c20e13c36d",
+            "displayName": "retool_db",
+            "type": "retoolDb"
+          }
+        ],
+        "/backend/events/getGameEvents.ts": [
+          {
+            "name": "cee6385f-2e00-4a56-bb23-34c20e13c36d",
+            "displayName": "retool_db",
+            "type": "retoolDb"
+          }
+        ],
+        "/backend/events/updateGameScore.ts": [
+          {
+            "name": "cee6385f-2e00-4a56-bb23-34c20e13c36d",
+            "displayName": "retool_db",
+            "type": "retoolDb"
+          }
+        ],
+        "/backend/games/createGame.ts": [
+          {
+            "name": "cee6385f-2e00-4a56-bb23-34c20e13c36d",
+            "displayName": "retool_db",
+            "type": "retoolDb"
+          }
+        ],
+        "/backend/games/getGames.ts": [
+          {
+            "name": "cee6385f-2e00-4a56-bb23-34c20e13c36d",
+            "displayName": "retool_db",
+            "type": "retoolDb"
+          }
+        ],
+        "/backend/players/getPlayers.ts": [
+          {
+            "name": "cee6385f-2e00-4a56-bb23-34c20e13c36d",
+            "displayName": "retool_db",
+            "type": "retoolDb"
+          }
+        ],
+        "/backend/user.d.ts": [],
+        "/backend/events/deleteEvent.ts": [
+          {
+            "name": "cee6385f-2e00-4a56-bb23-34c20e13c36d",
+            "displayName": "retool_db",
+            "type": "retoolDb"
+          }
+        ],
+        "/backend/events/updateEvent.ts": [
+          {
+            "name": "cee6385f-2e00-4a56-bb23-34c20e13c36d",
+            "displayName": "retool_db",
+            "type": "retoolDb"
+          }
+        ],
+        "/backend/stats/getPlayerStats.ts": [
+          {
+            "name": "cee6385f-2e00-4a56-bb23-34c20e13c36d",
+            "displayName": "retool_db",
+            "type": "retoolDb"
+          }
+        ],
+        "/backend/stats/getSeasons.ts": [
+          {
+            "name": "cee6385f-2e00-4a56-bb23-34c20e13c36d",
+            "displayName": "retool_db",
+            "type": "retoolDb"
+          }
+        ],
+        "/backend/players/getPlayerGameStats.ts": [
+          {
+            "name": "cee6385f-2e00-4a56-bb23-34c20e13c36d",
+            "displayName": "retool_db",
+            "type": "retoolDb"
+          }
+        ],
+        "/backend/players/getSeasonRoster.ts": [
+          {
+            "name": "cee6385f-2e00-4a56-bb23-34c20e13c36d",
+            "displayName": "retool_db",
+            "type": "retoolDb"
+          }
+        ],
+        "/backend/players/updateSeasonRoster.ts": [
+          {
+            "name": "cee6385f-2e00-4a56-bb23-34c20e13c36d",
+            "displayName": "retool_db",
+            "type": "retoolDb"
+          }
+        ],
+        "/backend/events/getEventTypes.ts": [
+          {
+            "name": "cee6385f-2e00-4a56-bb23-34c20e13c36d",
+            "displayName": "retool_db",
+            "type": "retoolDb"
+          }
+        ],
+        "/backend/players/createPlayerForGame.ts": [
+          {
+            "name": "cee6385f-2e00-4a56-bb23-34c20e13c36d",
+            "displayName": "retool_db",
+            "type": "retoolDb"
+          }
+        ],
+        "/backend/players/deleteSubPlayer.ts": [
+          {
+            "name": "cee6385f-2e00-4a56-bb23-34c20e13c36d",
+            "displayName": "retool_db",
+            "type": "retoolDb"
+          }
+        ],
+        "/backend/players/updatePlayerPosition.ts": [
+          {
+            "name": "cee6385f-2e00-4a56-bb23-34c20e13c36d",
+            "displayName": "retool_db",
+            "type": "retoolDb"
+          }
+        ]
+      }
+    }
+  }
+}
