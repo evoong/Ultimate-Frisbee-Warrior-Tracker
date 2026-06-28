@@ -7,9 +7,7 @@ type HookResult<T, P = void> = {
   trigger: P extends void ? () => Promise<T | undefined> : (params: P) => Promise<T | undefined>
 }
 
-function useApiCall<T, P = void>(
-  fn: (params: P) => Promise<T>
-): HookResult<T, P> {
+function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P> {
   const [data, setData] = useState<T | undefined>(undefined)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -34,21 +32,79 @@ function useApiCall<T, P = void>(
 }
 
 export function useGetGames() {
-  const fn = useCallback(async () => {
-    const res = await fetch('/api/games')
+  const fn = useCallback(async (params?: { seasonId?: string | number }) => {
+    const url = new URL('/api/games', window.location.origin)
+    if (params?.seasonId && params.seasonId !== 'all') url.searchParams.set('seasonId', String(params.seasonId))
+    const res = await fetch(url.toString())
+    if (!res.ok) throw new Error(await res.text())
+    return res.json()
+  }, [])
+  return useApiCall<unknown, { seasonId?: string | number } | undefined>(fn)
+}
+
+export function useCreateGame() {
+  const fn = useCallback(async (params: { opponent: string; game_date: string; game_time: string; game_type: string; season_id?: number | null; notes?: string }) => {
+    const res = await fetch('/api/games', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    })
     if (!res.ok) throw new Error(await res.text())
     return res.json()
   }, [])
   return useApiCall(fn)
 }
 
-export function useCreateGame() {
-  const fn = useCallback(async (params: { opponent: string; game_date: string; game_time: string; game_type: string }) => {
-    const res = await fetch('/api/games', {
+export function useUpdateGame() {
+  const fn = useCallback(async (params: { gameId: number; notes?: string; outcome_override?: string | null; result?: string }) => {
+    const { gameId, ...body } = params
+    const res = await fetch(`/api/games/${gameId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) throw new Error(await res.text())
+    return res.json()
+  }, [])
+  return useApiCall(fn)
+}
+
+export function useDeleteGame() {
+  const fn = useCallback(async (params: { gameId: number }) => {
+    const res = await fetch(`/api/games/${params.gameId}`, { method: 'DELETE' })
+    if (!res.ok) throw new Error(await res.text())
+    return res.json()
+  }, [])
+  return useApiCall(fn)
+}
+
+export function useGetLineups() {
+  const fn = useCallback(async (params: { gameId: number }) => {
+    const res = await fetch(`/api/games/${params.gameId}/lineups`)
+    if (!res.ok) throw new Error(await res.text())
+    return res.json()
+  }, [])
+  return useApiCall<unknown, { gameId: number }>(fn)
+}
+
+export function useAddToLineup() {
+  const fn = useCallback(async (params: { gameId: number; player_id: number; lineup_name?: string }) => {
+    const res = await fetch(`/api/games/${params.gameId}/lineups`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
+      body: JSON.stringify({ player_id: params.player_id, lineup_name: params.lineup_name ?? 'Starting' }),
     })
+    if (!res.ok) throw new Error(await res.text())
+    return res.json()
+  }, [])
+  return useApiCall(fn)
+}
+
+export function useRemoveFromLineup() {
+  const fn = useCallback(async (params: { gameId: number; playerId: number; lineup_name?: string }) => {
+    const url = new URL(`/api/games/${params.gameId}/lineups/${params.playerId}`, window.location.origin)
+    if (params.lineup_name) url.searchParams.set('lineup_name', params.lineup_name)
+    const res = await fetch(url.toString(), { method: 'DELETE' })
     if (!res.ok) throw new Error(await res.text())
     return res.json()
   }, [])
