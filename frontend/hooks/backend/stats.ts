@@ -64,6 +64,17 @@ export function useCreateSeason() {
   return useApiCall<unknown, { name: string; year: number; location?: string; league_name?: string }>(fn)
 }
 
+export function useGetCumulativeStats() {
+  const fn = useCallback(async (params?: { seasonId?: number }) => {
+    const url = new URL('/api/stats/cumulative', window.location.origin)
+    if (params?.seasonId != null) url.searchParams.set('seasonId', String(params.seasonId))
+    const res = await fetch(url.toString())
+    if (!res.ok) throw new Error(await res.text())
+    return res.json()
+  }, [])
+  return useApiCall<unknown, { seasonId?: number } | undefined>(fn)
+}
+
 export function useGetPlayerStats() {
   const fn = useCallback(async (params?: { seasonId?: number; gameIds?: number[] }) => {
     const url = new URL('/api/stats/players', window.location.origin)
