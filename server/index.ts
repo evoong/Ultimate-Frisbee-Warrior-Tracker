@@ -379,6 +379,38 @@ app.get('/api/stats/players', async (req, res) => {
   }
 })
 
+// Cumulative per-game stats for line chart
+app.get('/api/stats/cumulative', async (req, res) => {
+  try {
+    const { seasonId } = req.query
+    const params: unknown[] = []
+    const seasonFilter = seasonId ? `AND g.season_id = $1` : ''
+    if (seasonId) params.push(seasonId)
+
+    const query = `
+      SELECT
+        g.id AS game_id,
+        g.opponent,
+        g.game_date,
+        p.id AS player_id,
+        p.display_name AS player_name,
+        COUNT(DISTINCT CASE WHEN ge.event_type = 'Goal' AND ge.player_id = p.id THEN ge.id END) AS goals,
+        COUNT(DISTINCT CASE WHEN ge.event_type = 'Goal' AND ge.related_player_id = p.id THEN ge.id END) AS assists,
+        COUNT(DISTINCT CASE WHEN ge.event_type = 'Turnover' AND ge.player_id = p.id THEN ge.id END) AS turnovers
+      FROM games g
+      JOIN game_events ge ON ge.game_id = g.id
+      JOIN players p ON p.id = ge.player_id OR p.id = ge.related_player_id
+      WHERE 1=1 ${seasonFilter}
+      GROUP BY g.id, g.opponent, g.game_date, p.id, p.display_name
+      ORDER BY g.game_date, g.id, p.display_name
+    `
+    const result = await pool.query(query, params)
+    res.json(result.rows)
+  } catch (err: unknown) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) })
+  }
+})
+
 // Seasons
 app.get('/api/seasons', async (req, res) => {
   try {
