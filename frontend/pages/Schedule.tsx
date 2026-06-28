@@ -64,6 +64,7 @@ export default function Schedule() {
   const [showNewSeason, setShowNewSeason] = useState(false)
   const [newSeasonData, setNewSeasonData] = useState({ name: '', year: new Date().getFullYear().toString() })
   const [creatingSeasonLoading, setCreatingSeasonLoading] = useState(false)
+  const [scheduleSeasonFilter, setScheduleSeasonFilter] = useState<string>('all')
 
   useEffect(() => {
     fetchGames()
@@ -440,8 +441,32 @@ export default function Schedule() {
         </Dialog>
       </div>
 
+      {/* Season filter */}
+      <Select value={scheduleSeasonFilter} onValueChange={setScheduleSeasonFilter}>
+        <SelectTrigger className="bg-card border-border text-foreground">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All Seasons</SelectItem>
+          {(seasons as Season[] | undefined)?.map(s => (
+            <SelectItem key={s.id} value={String(s.id)}>
+              {s.name} {s.year}
+            </SelectItem>
+          ))}
+          <SelectItem value="__none__">No season</SelectItem>
+        </SelectContent>
+      </Select>
+
       <div className="space-y-3">
-        {games?.map((game: Game) => {
+        {(games as Game[] | undefined)
+          ?.filter(g =>
+            scheduleSeasonFilter === 'all'
+              ? true
+              : scheduleSeasonFilter === '__none__'
+              ? g.season_id == null
+              : g.season_id === parseInt(scheduleSeasonFilter)
+          )
+          .map((game: Game) => {
           const seasonLabel = getSeasonLabel(game.season_id)
           return (
             <Card
