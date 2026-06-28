@@ -1,0 +1,89 @@
+:root {
+  --background: 0 0.0% 98.0%;
+  --foreground: 240 5.9% 10.0%;
+  --card: 0 0.0% 100.0%;
+  --card-foreground: 240 10.0% 3.9%;
+  --popover: 0 0.0% 100.0%;
+  --popover-foreground: 240 10.0% 3.9%;
+  --primary: 240 5.9% 10.0%;
+  --primary-foreground: 0 0.0% 98.0%;
+  --secondary: 240 4.8% 95.9%;
+  --secondary-foreground: 240 10.0% 3.9%;
+  --muted: 240 4.8% 95.9%;
+  --muted-foreground: 240 3.8% 46.1%;
+  --body-foreground: 240 5.3% 26.1%;
+  --accent: 240 4.8% 95.9%;
+  --accent-foreground: 240 10.0% 3.9%;
+  --destructive: 15 68.6% 56.3%;
+  --destructive-foreground: 0 0.0% 98.0%;
+  --warning: 38 92.1% 50.2%;
+  --warning-foreground: 0 0.0% 98.0%;
+  --success: 160 84.1% 39.4%;
+  --success-foreground: 0 0.0% 98.0%;
+  --border: 240 5.9% 90.0%;
+  --input: 240 5.9% 90.0%;
+  --ring: 240 5.9% 10.0%;
+  --chart-1: 240 5.0% 64.9%;
+  --chart-2: 240 3.8% 46.1%;
+  --chart-3: 240 5.2% 33.9%;
+  --chart-4: 240 5.3% 26.1%;
+  --chart-5: 240 3.7% 15.9%;
+  --shadow-retool-sm: 0px 2px 4px rgba(55, 55, 55, 0.08), 0px 1px 1px rgba(0, 0, 0, 0.12);
+  --shadow-retool-md: 0px 6px 12px rgba(55, 55, 55, 0.08), 0px 2px 6px rgba(0, 0, 0, 0.12);
+  --shadow-retool-lg: 0px 10px 20px rgba(55, 55, 55, 0.08), 0px 4px 10px rgba(0, 0, 0, 0.12);
+  --radius: 0.5rem;
+  --radius-md: calc(0.5rem - 2px);
+  --radius-sm: calc(0.5rem - 4px);
+  --spacing: 0.75rem;
+  --density-xs: max(0px, calc(0.75rem - 0.375rem));
+  --density-sm: max(0px, calc(0.75rem - 0.25rem));
+  --density-md: 0.75rem;
+  --density-lg: calc(0.75rem + 0.25rem);
+  --density-xl: calc(0.75rem + 0.75rem);
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', SFMono-Regular, Consolas, monospace;
+}
+
+.dark {
+  --background: 240 5.9% 10.0%;
+  --foreground: 0 0.0% 98.0%;
+  --card: 240 3.7% 15.9%;
+  --card-foreground: 0 0.0% 98.0%;
+  --popover: 240 3.7% 15.9%;
+  --popover-foreground: 0 0.0% 98.0%;
+  --primary: 0 0.0% 98.0%;
+  --primary-foreground: 240 10.0% 3.9%;
+  --secondary: 240 3.7% 15.9%;
+  --secondary-foreground: 0 0.0% 98.0%;
+  --muted: 240 3.7% 15.9%;
+  --muted-foreground: 240 5.0% 64.9%;
+  --body-foreground: 240 5.9% 90.0%;
+  --accent: 240 3.7% 15.9%;
+  --accent-foreground: 0 0.0% 98.0%;
+  --destructive: 15 68.6% 56.3%;
+  --destructive-foreground: 0 0.0% 98.0%;
+  --warning: 38 92.1% 50.2%;
+  --warning-foreground: 0 0.0% 98.0%;
+  --success: 160 84.1% 39.4%;
+  --success-foreground: 0 0.0% 98.0%;
+  --border: 240 5.3% 26.1%;
+  --input: 240 5.3% 26.1%;
+  --ring: 0 0.0% 98.0%;
+  --chart-1: 240 3.8% 46.1%;
+  --chart-2: 240 5.0% 64.9%;
+  --chart-3: 240 4.9% 83.9%;
+  --chart-4: 240 5.9% 90.0%;
+  --chart-5: 240 4.8% 95.9%;
+  --shadow-retool-sm: 0px 2px 4px rgba(0, 0, 0, 0.4), 0px 1px 1px rgba(0, 0, 0, 0.5);
+  --shadow-retool-md: 0px 6px 12px rgba(0, 0, 0, 0.4), 0px 2px 6px rgba(0, 0, 0, 0.5);
+  --shadow-retool-lg: 0px 10px 20px rgba(0, 0, 0, 0.4), 0px 4px 10px rgba(0, 0, 0, 0.5);
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
