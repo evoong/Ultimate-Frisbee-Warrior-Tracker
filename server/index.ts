@@ -148,17 +148,25 @@ app.get("/api/games", async (req, res) => {
       if (!isNaN(n)) ids.push(n);
     }
 
-    let query =
-      "SELECT id, opponent, game_date, game_time, game_type, our_score, their_score, result, outcome_override, notes, season_id FROM games";
+    let query = `
+      SELECT
+        g.id, g.opponent, g.game_date, g.game_time, g.game_type,
+        COUNT(CASE WHEN ge.event_type = 'Goal' THEN 1 END)::int AS our_score,
+        COUNT(CASE WHEN ge.event_type = 'Opponent Goal' THEN 1 END)::int AS their_score,
+        g.result, g.outcome_override, g.notes, g.season_id
+      FROM games g
+      LEFT JOIN game_events ge ON ge.game_id = g.id
+    `;
     const params: unknown[] = [];
     if (ids.length === 1) {
-      query += " WHERE season_id = $1";
+      query += " WHERE g.season_id = $1";
       params.push(ids[0]);
     } else if (ids.length > 1) {
-      query += " WHERE season_id = ANY($1::int[])";
+      query += " WHERE g.season_id = ANY($1::int[])";
       params.push(ids);
     }
-    query += " ORDER BY game_date DESC, game_time DESC";
+    query += " GROUP BY g.id, g.opponent, g.game_date, g.game_time, g.game_type, g.result, g.outcome_override, g.notes, g.season_id";
+    query += " ORDER BY g.game_date DESC, g.game_time DESC";
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err: unknown) {
