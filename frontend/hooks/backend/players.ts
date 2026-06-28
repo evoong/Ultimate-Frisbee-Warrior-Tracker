@@ -32,15 +32,16 @@ function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P
 }
 
 export function useGetPlayers() {
-  const fn = useCallback(async (params?: { seasonId?: number | null }) => {
-    const url = params?.seasonId != null
-      ? `/api/players?seasonId=${params.seasonId}`
-      : '/api/players'
-    const res = await fetch(url)
+  const fn = useCallback(async (params?: { seasonIds?: number[] }) => {
+    const url = new URL('/api/players', window.location.origin)
+    if (params?.seasonIds && params.seasonIds.length > 0) {
+      for (const id of params.seasonIds) url.searchParams.append('seasonIds', String(id))
+    }
+    const res = await fetch(url.toString())
     if (!res.ok) throw new Error(await res.text())
     return res.json()
   }, [])
-  return useApiCall<unknown, { seasonId?: number | null } | undefined>(fn)
+  return useApiCall<unknown, { seasonIds?: number[] } | undefined>(fn)
 }
 
 export function useGetSeasonRoster() {

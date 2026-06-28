@@ -4,6 +4,7 @@ import { useGetPlayerStats, useGetSeasons, useGetCumulativeStats, useGetAllSeaso
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
 import { Label } from '../lib/shadcn/label'
+import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import { BarChart3, TrendingUp, LineChart as LineChartIcon } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -57,7 +58,7 @@ export default function Stats() {
   const { data: cumulativeRaw, loading: cumulativeLoading, trigger: fetchCumulative } = useGetCumulativeStats()
 
   const [filterType, setFilterType] = useState<'all' | 'season' | 'games'>('all')
-  const [selectedSeasonId, setSelectedSeasonId] = useState<string>('')
+  const [selectedSeasonIds, setSelectedSeasonIds] = useState<number[]>([])
   const [selectedGameIds, setSelectedGameIds] = useState<number[]>([])
   const [chartTab, setChartTab] = useState<ChartTab>('combined')
 
@@ -81,9 +82,12 @@ export default function Stats() {
 
   useEffect(() => {
     if (filterType === 'all') fetchStats({})
-    else if (filterType === 'season' && selectedSeasonId) fetchStats({ seasonId: parseInt(selectedSeasonId) })
+    else if (filterType === 'season') {
+      if (selectedSeasonIds.length > 0) fetchStats({ seasonIds: selectedSeasonIds })
+      else fetchStats({})
+    }
     else if (filterType === 'games' && selectedGameIds.length > 0) fetchStats({ gameIds: selectedGameIds })
-  }, [filterType, selectedSeasonId, selectedGameIds])
+  }, [filterType, selectedSeasonIds, selectedGameIds])
 
   useEffect(() => {
     if (cumulativeSeasonId && cumulativeSeasonId !== '__all__') {
@@ -244,17 +248,13 @@ export default function Stats() {
 
           {filterType === 'season' && (
             <div className="space-y-2">
-              <Label>Select Season</Label>
-              <Select value={selectedSeasonId} onValueChange={setSelectedSeasonId}>
-                <SelectTrigger className="bg-background text-foreground border-border"><SelectValue placeholder="Choose season..." /></SelectTrigger>
-                <SelectContent>
-                  {(seasons as StatsSeasonRow[] | undefined)?.map(s => (
-                    <SelectItem key={s.season_id} value={String(s.season_id)}>
-                      {seasonLabel(s)} ({s.game_count} games)
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label>Select Season(s)</Label>
+              <SeasonMultiSelect
+                seasons={(allSeasons as Season[] | undefined) ?? []}
+                selectedIds={selectedSeasonIds}
+                onChange={setSelectedSeasonIds}
+                placeholder="All Seasons"
+              />
             </div>
           )}
 

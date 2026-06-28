@@ -32,14 +32,16 @@ function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P
 }
 
 export function useGetGames() {
-  const fn = useCallback(async (params?: { seasonId?: string | number }) => {
+  const fn = useCallback(async (params?: { seasonIds?: number[] }) => {
     const url = new URL('/api/games', window.location.origin)
-    if (params?.seasonId && params.seasonId !== 'all') url.searchParams.set('seasonId', String(params.seasonId))
+    if (params?.seasonIds && params.seasonIds.length > 0) {
+      for (const id of params.seasonIds) url.searchParams.append('seasonIds', String(id))
+    }
     const res = await fetch(url.toString())
     if (!res.ok) throw new Error(await res.text())
     return res.json()
   }, [])
-  return useApiCall<unknown, { seasonId?: string | number } | undefined>(fn)
+  return useApiCall<unknown, { seasonIds?: number[] } | undefined>(fn)
 }
 
 export function useCreateGame() {
