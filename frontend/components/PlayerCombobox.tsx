@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, ChevronsUpDown, UserPlus, X } from 'lucide-react'
+import { Check, ChevronsUpDown, UserPlus, X, Users } from 'lucide-react'
 import { Button } from '../lib/shadcn/button'
 import {
   Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
@@ -11,9 +11,11 @@ type Player = { id: string; label: string; isSub?: boolean }
 
 type Props = {
   players: Player[]
+  otherPlayers?: Player[]
   value: string
   onValueChange: (value: string) => void
   onAddPlayer?: (name: string) => Promise<void>
+  onAddExistingPlayer?: (id: string) => Promise<void>
   onDeletePlayer?: (id: string) => Promise<void>
   placeholder?: string
   className?: string
@@ -21,9 +23,11 @@ type Props = {
 
 export default function PlayerCombobox({
   players,
+  otherPlayers = [],
   value,
   onValueChange,
   onAddPlayer,
+  onAddExistingPlayer,
   onDeletePlayer,
   placeholder = 'None',
   className,
@@ -31,13 +35,13 @@ export default function PlayerCombobox({
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [adding, setAdding] = useState(false)
+  const [addingExistingId, setAddingExistingId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
-  const selected = players.find(p => p.id === value)
+  const selected = players.find(p => p.id === value) ?? otherPlayers.find(p => p.id === value)
 
-  const hasExactMatch = players.some(
-    p => p.label.toLowerCase() === search.toLowerCase()
-  )
+  const hasExactMatch = players.some(p => p.label.toLowerCase() === search.toLowerCase())
+    || otherPlayers.some(p => p.label.toLowerCase() === search.toLowerCase())
   const showAdd = onAddPlayer && search.trim().length > 1 && !hasExactMatch
 
   const handleAdd = async () => {
@@ -49,12 +53,21 @@ export default function PlayerCombobox({
     setOpen(false)
   }
 
+  const handleAddExisting = async (id: string) => {
+    if (!onAddExistingPlayer) return
+    setAddingExistingId(id)
+    onValueChange(id)
+    await onAddExistingPlayer(id)
+    setSearch('')
+    setAddingExistingId(null)
+    setOpen(false)
+  }
+
   const handleDelete = async (e: React.MouseEvent, playerId: string) => {
     e.stopPropagation()
     if (!onDeletePlayer) return
     setDeletingId(playerId)
     await onDeletePlayer(playerId)
-    // If the deleted player was selected, clear selection
     if (value === playerId) onValueChange('__none__')
     setDeletingId(null)
   }
@@ -97,6 +110,7 @@ export default function PlayerCombobox({
                 <p className="py-2 px-3 text-sm text-muted-foreground">No player found.</p>
               )}
             </CommandEmpty>
+
             <CommandGroup>
               <CommandItem
                 value="__none__"
@@ -140,6 +154,23 @@ export default function PlayerCombobox({
                 </CommandItem>
               )}
             </CommandGroup>
+
+            {otherPlayers.length > 0 && (
+              <CommandGroup heading="From other seasons">
+                {otherPlayers.map(p => (
+                  <CommandItem
+                    key={p.id}
+                    value={p.label}
+                    onSelect={() => handleAddExisting(p.id)}
+                    disabled={addingExistingId === p.id}
+                    className="flex items-center gap-2 text-muted-foreground"
+                  >
+                    <Users className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate flex-1">{addingExistingId === p.id ? 'Adding...' : p.label}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
           </CommandList>
         </Command>
       </PopoverContent>
