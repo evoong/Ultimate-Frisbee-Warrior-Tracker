@@ -20,7 +20,7 @@ type Season = { id: number; name: string; year: number; organizer: string | null
 type PlayerSeason = { id: number; name: string; year: number; organizer: string | null; active: boolean }
 
 const POSITIONS = ['Handler', 'Cutter', 'Hybrid', 'Deep Cutter']
-const GENDERS = ['Male', 'Female', 'Non-binary', 'Open']
+const GENDERS = ['Man', 'Woman']
 
 function seasonLabel(s: { name: string; year: number; organizer: string | null }) {
   return [s.organizer, s.name, s.year].filter(Boolean).join(' ')
