@@ -10,7 +10,7 @@ import { GoogleGenAI } from "@google/genai";
 types.setTypeParser(1082, (val: string) => val);
 
 const app = express();
-const PORT = 3001;
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
 
 app.use(cors());
 app.use(express.json());
@@ -1223,6 +1223,15 @@ When you want to perform an action, include the ACTION tag in your response foll
   }
 });
 
-app.listen(PORT, "localhost", () => {
-  console.log(`API server running on http://localhost:${PORT}`);
+// In production, serve the built frontend from Express
+if (process.env.NODE_ENV === "production") {
+  const distPath = path.join(process.cwd(), "frontend", "dist");
+  app.use(express.static(distPath));
+  app.get("*", (_req, res) => {
+    res.sendFile(path.join(distPath, "index.html"));
+  });
+}
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`API server running on http://0.0.0.0:${PORT}`);
 });
