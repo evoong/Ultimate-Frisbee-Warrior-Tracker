@@ -287,7 +287,7 @@ export default function QuickScore() {
                   />
                 </div>
 
-                <div className="grid grid-cols-[60px_1fr] items-center gap-2">
+                <div className="flex items-center justify-center">
                   <button
                     onClick={() => {
                       const tmp = defaultScorerId
@@ -295,12 +295,16 @@ export default function QuickScore() {
                       setDefaultAssisterId(tmp)
                     }}
                     title={`Swap ${scorerLabel} ↔ ${assisterLabel}`}
-                    className="flex flex-col items-end gap-0.5 text-muted-foreground hover:text-foreground transition-colors"
                     aria-label="Swap scorer and assister"
+                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-0.5 rounded hover:bg-accent"
                   >
-                    <span className="text-xs font-medium">{assisterLabel}</span>
                     <ArrowLeftRight className="w-3 h-3" />
+                    <span>swap</span>
                   </button>
+                </div>
+
+                <div className="grid grid-cols-[60px_1fr] items-center gap-2">
+                  <span className="text-xs font-medium text-muted-foreground text-right">{assisterLabel}</span>
                   <PlayerCombobox
                     players={playerOptions}
                     value={defaultAssisterId || '__none__'}
