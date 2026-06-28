@@ -86,7 +86,7 @@ export default function Schedule() {
   const [outcomeValue, setOutcomeValue] = useState<string>('')
 
   // Lineup
-  const [lineupName, setLineupName] = useState('Starting')
+  const [lineupName, setLineupName] = useState('Lineup 1')
   const [lineupPlayerSelect, setLineupPlayerSelect] = useState<string>('')
 
   useEffect(() => {
@@ -506,7 +506,7 @@ export default function Schedule() {
                 <Select value={lineupName} onValueChange={setLineupName}>
                   <SelectTrigger className="h-8 text-sm bg-card border-border text-foreground"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {['Starting', 'Bench', 'O-Line', 'D-Line', 'Mixed'].map(n => <SelectItem key={n} value={n}>{n}</SelectItem>)}
+                    {['Lineup 1', 'Lineup 2'].map(n => <SelectItem key={n} value={n}>{n}</SelectItem>)}
                   </SelectContent>
                 </Select>
                 <div className="flex gap-2">
