@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react'
-import { useGetGames } from '../hooks/backend/games'
-import { useCreateGame } from '../hooks/backend/games'
+import { useGetGames, useCreateGame } from '../hooks/backend/games'
 import { useGetGameEvents } from '../hooks/backend/events'
 import { useGetPlayers } from '../hooks/backend/players'
+import { useGetAllSeasons, useCreateSeason } from '../hooks/backend/stats'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../lib/shadcn/dialog'
 import { Input } from '../lib/shadcn/input'
 import { Label } from '../lib/shadcn/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
-import { Calendar, Plus, Trophy, ChevronLeft, ChevronRight, Target, TrendingUp } from 'lucide-react'
+import { Calendar, Plus, Trophy, ChevronLeft, ChevronRight, Target, TrendingUp, PlusCircle } from 'lucide-react'
 
 type Game = {
   id: number
@@ -21,6 +21,7 @@ type Game = {
   their_score: number
   result: string
   notes: string
+  season_id: number | null
 }
 
 type GameEvent = {
@@ -36,11 +37,20 @@ type Player = {
   display_name: string
 }
 
+type Season = {
+  id: number
+  name: string
+  year: number
+  league_name: string | null
+}
+
 export default function Schedule() {
   const { data: games, loading, error, trigger: fetchGames } = useGetGames()
   const { data: events, loading: eventsLoading, trigger: fetchEvents } = useGetGameEvents()
   const { data: players, trigger: fetchPlayers } = useGetPlayers()
   const { trigger: createGame } = useCreateGame()
+  const { data: seasons, trigger: fetchSeasons } = useGetAllSeasons()
+  const { trigger: createSeason } = useCreateSeason()
 
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [selectedGame, setSelectedGame] = useState<Game | null>(null)
@@ -48,12 +58,17 @@ export default function Schedule() {
     opponent: '',
     game_date: '',
     game_time: '',
-    game_type: 'Regular'
+    game_type: 'Regular',
+    season_id: '',
   })
+  const [showNewSeason, setShowNewSeason] = useState(false)
+  const [newSeasonData, setNewSeasonData] = useState({ name: '', year: new Date().getFullYear().toString() })
+  const [creatingSeasonLoading, setCreatingSeasonLoading] = useState(false)
 
   useEffect(() => {
     fetchGames()
     fetchPlayers()
+    fetchSeasons()
   }, [])
 
   const handleSelectGame = (game: Game) => {
@@ -65,11 +80,41 @@ export default function Schedule() {
     setSelectedGame(null)
   }
 
+  const handleSeasonSelect = (value: string) => {
+    if (value === '__new__') {
+      setShowNewSeason(true)
+      setFormData(f => ({ ...f, season_id: '' }))
+    } else {
+      setShowNewSeason(false)
+      setFormData(f => ({ ...f, season_id: value }))
+    }
+  }
+
+  const handleCreateNewSeason = async () => {
+    if (!newSeasonData.name || !newSeasonData.year) return
+    setCreatingSeasonLoading(true)
+    const created = await createSeason({ name: newSeasonData.name, year: parseInt(newSeasonData.year) }) as Season | undefined
+    if (created) {
+      await fetchSeasons()
+      setFormData(f => ({ ...f, season_id: String(created.id) }))
+      setShowNewSeason(false)
+      setNewSeasonData({ name: '', year: new Date().getFullYear().toString() })
+    }
+    setCreatingSeasonLoading(false)
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    await createGame(formData)
+    await createGame({
+      opponent: formData.opponent,
+      game_date: formData.game_date,
+      game_time: formData.game_time,
+      game_type: formData.game_type,
+      season_id: formData.season_id ? parseInt(formData.season_id) : null,
+    })
     setIsDialogOpen(false)
-    setFormData({ opponent: '', game_date: '', game_time: '', game_type: 'Regular' })
+    setFormData({ opponent: '', game_date: '', game_time: '', game_type: 'Regular', season_id: '' })
+    setShowNewSeason(false)
     fetchGames()
   }
 
@@ -93,12 +138,17 @@ export default function Schedule() {
   const getPlayerName = (id: number | null) =>
     id ? (players as Player[] | undefined)?.find((p) => p.id === id)?.display_name ?? null : null
 
+  const getSeasonLabel = (seasonId: number | null) => {
+    if (!seasonId || !seasons) return null
+    const s = (seasons as Season[]).find(s => s.id === seasonId)
+    return s ? `${s.name} ${s.year}` : null
+  }
+
   // --- Game Detail View ---
   if (selectedGame) {
     const ourGoals = (events as GameEvent[] | undefined)?.filter(e => e.event_type === 'Goal').length ?? 0
     const theirGoals = (events as GameEvent[] | undefined)?.filter(e => e.event_type === 'Opponent Goal').length ?? 0
 
-    // Group goals, assists, turnovers per player
     const playerMap: Record<number, { name: string; goals: number; assists: number; turnovers: number }> = {}
     const ensurePlayer = (id: number, name: string) => {
       if (!playerMap[id]) playerMap[id] = { name, goals: 0, assists: 0, turnovers: 0 }
@@ -108,23 +158,15 @@ export default function Schedule() {
       const scorerName = getPlayerName(e.player_id)
       const assisterName = getPlayerName(e.related_player_id)
       if (e.event_type === 'Goal') {
-        if (e.player_id && scorerName) {
-          ensurePlayer(e.player_id, scorerName)
-          playerMap[e.player_id]!.goals++
-        }
-        if (e.related_player_id && assisterName) {
-          ensurePlayer(e.related_player_id, assisterName)
-          playerMap[e.related_player_id]!.assists++
-        }
+        if (e.player_id && scorerName) { ensurePlayer(e.player_id, scorerName); playerMap[e.player_id]!.goals++ }
+        if (e.related_player_id && assisterName) { ensurePlayer(e.related_player_id, assisterName); playerMap[e.related_player_id]!.assists++ }
       } else if (e.event_type === 'Turnover') {
-        if (e.player_id && scorerName) {
-          ensurePlayer(e.player_id, scorerName)
-          playerMap[e.player_id]!.turnovers++
-        }
+        if (e.player_id && scorerName) { ensurePlayer(e.player_id, scorerName); playerMap[e.player_id]!.turnovers++ }
       }
     })
 
     const playerStats = Object.values(playerMap).sort((a, b) => b.goals - a.goals || b.assists - a.assists)
+    const seasonLabel = getSeasonLabel(selectedGame.season_id)
 
     return (
       <div className="space-y-4">
@@ -136,7 +178,6 @@ export default function Schedule() {
           <span className="text-sm font-medium">Back to Schedule</span>
         </button>
 
-        {/* Game Header */}
         <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
           <CardContent className="pt-6 pb-4">
             <div className="text-center mb-4">
@@ -147,6 +188,9 @@ export default function Schedule() {
                 <span>•</span>
                 <span>{formatTime(selectedGame.game_time)}</span>
               </div>
+              {seasonLabel && (
+                <div className="mt-1 text-xs text-muted-foreground">{seasonLabel} Season</div>
+              )}
             </div>
 
             <div className="flex items-center justify-center gap-8">
@@ -163,9 +207,7 @@ export default function Schedule() {
 
             {selectedGame.result && (
               <div className={`text-center mt-4 text-sm font-semibold ${
-                selectedGame.result.startsWith('Win')
-                  ? 'text-green-600 dark:text-green-400'
-                  : 'text-red-600 dark:text-red-400'
+                selectedGame.result.startsWith('Win') ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
               }`}>
                 {selectedGame.result}
               </div>
@@ -173,7 +215,6 @@ export default function Schedule() {
           </CardContent>
         </Card>
 
-        {/* Player Box Scores */}
         {playerStats.length > 0 && (
           <Card className="bg-card text-card-foreground border-border">
             <CardHeader>
@@ -181,7 +222,6 @@ export default function Schedule() {
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                {/* Header */}
                 <div className="flex items-center gap-3 px-3 text-xs text-muted-foreground font-medium">
                   <div className="flex-1">Player</div>
                   <div className="w-10 text-center text-green-600 dark:text-green-400">G</div>
@@ -201,7 +241,6 @@ export default function Schedule() {
           </Card>
         )}
 
-        {/* Event Log */}
         <Card className="bg-card text-card-foreground border-border">
           <CardHeader>
             <CardTitle className="text-base flex items-center justify-between">
@@ -237,12 +276,7 @@ export default function Schedule() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium text-foreground">
-                          {isGoal && (
-                            <>
-                              {scorer ?? 'Unknown'} scored
-                              {assister && <span className="text-muted-foreground font-normal"> (from {assister})</span>}
-                            </>
-                          )}
+                          {isGoal && (<>{scorer ?? 'Unknown'} scored{assister && <span className="text-muted-foreground font-normal"> (from {assister})</span>}</>)}
                           {isOpponentGoal && 'Opponent goal'}
                           {isTurnover && <>{scorer ?? 'Unknown'} turned it over</>}
                           {!isGoal && !isOpponentGoal && !isTurnover && event.event_type}
@@ -267,26 +301,18 @@ export default function Schedule() {
 
   // --- Schedule List View ---
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-muted-foreground">Loading games...</div>
-      </div>
-    )
+    return <div className="flex items-center justify-center h-64"><div className="text-muted-foreground">Loading games...</div></div>
   }
 
   if (error) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-destructive">Error: {error}</div>
-      </div>
-    )
+    return <div className="flex items-center justify-center h-64"><div className="text-destructive">Error: {error}</div></div>
   }
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-foreground">Schedule</h1>
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <Dialog open={isDialogOpen} onOpenChange={(open) => { setIsDialogOpen(open); if (!open) { setShowNewSeason(false) } }}>
           <DialogTrigger asChild>
             <Button className="bg-primary text-primary-foreground hover:bg-primary/90">
               <Plus className="w-4 h-4 mr-2" />
@@ -344,6 +370,68 @@ export default function Schedule() {
                   </SelectContent>
                 </Select>
               </div>
+
+              {/* Season select / create */}
+              <div className="space-y-2">
+                <Label>Season <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                <Select value={showNewSeason ? '__new__' : formData.season_id} onValueChange={handleSeasonSelect}>
+                  <SelectTrigger className="bg-background text-foreground">
+                    <SelectValue placeholder="No season selected" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">No season</SelectItem>
+                    {(seasons as Season[] | undefined)?.map(s => (
+                      <SelectItem key={s.id} value={String(s.id)}>
+                        {s.name} {s.year}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="__new__">
+                      <span className="flex items-center gap-2 text-primary">
+                        <PlusCircle className="w-4 h-4" />
+                        Create new season…
+                      </span>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {/* Inline new season form */}
+                {showNewSeason && (
+                  <div className="border border-border rounded-lg p-3 space-y-3 bg-background">
+                    <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">New Season</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Name</Label>
+                        <Input
+                          placeholder="e.g. Spring"
+                          value={newSeasonData.name}
+                          onChange={e => setNewSeasonData(d => ({ ...d, name: e.target.value }))}
+                          className="bg-card text-foreground h-8 text-sm"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Year</Label>
+                        <Input
+                          type="number"
+                          placeholder={String(new Date().getFullYear())}
+                          value={newSeasonData.year}
+                          onChange={e => setNewSeasonData(d => ({ ...d, year: e.target.value }))}
+                          className="bg-card text-foreground h-8 text-sm"
+                        />
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={!newSeasonData.name || !newSeasonData.year || creatingSeasonLoading}
+                      onClick={handleCreateNewSeason}
+                      className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
+                    >
+                      {creatingSeasonLoading ? 'Creating…' : 'Create Season'}
+                    </Button>
+                  </div>
+                )}
+              </div>
+
               <Button type="submit" className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
                 Create Game
               </Button>
@@ -353,60 +441,62 @@ export default function Schedule() {
       </div>
 
       <div className="space-y-3">
-        {games?.map((game: Game) => (
-          <Card
-            key={game.id}
-            onClick={() => handleSelectGame(game)}
-            className="bg-card text-card-foreground border-border cursor-pointer hover:bg-accent/50 active:scale-[0.99] transition-all"
-          >
-            <CardHeader className="pb-3">
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <CardTitle className="text-lg font-bold text-foreground">
-                    vs {game.opponent}
-                  </CardTitle>
-                  <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
-                    <Calendar className="w-4 h-4" />
-                    <span>{formatDate(game.game_date)}</span>
-                    <span>•</span>
-                    <span>{formatTime(game.game_time)}</span>
+        {games?.map((game: Game) => {
+          const seasonLabel = getSeasonLabel(game.season_id)
+          return (
+            <Card
+              key={game.id}
+              onClick={() => handleSelectGame(game)}
+              className="bg-card text-card-foreground border-border cursor-pointer hover:bg-accent/50 active:scale-[0.99] transition-all"
+            >
+              <CardHeader className="pb-3">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <CardTitle className="text-lg font-bold text-foreground">vs {game.opponent}</CardTitle>
+                    <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
+                      <Calendar className="w-4 h-4" />
+                      <span>{formatDate(game.game_date)}</span>
+                      <span>•</span>
+                      <span>{formatTime(game.game_time)}</span>
+                    </div>
+                    {seasonLabel && (
+                      <div className="text-xs text-muted-foreground mt-0.5">{seasonLabel} Season</div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {game.game_type === 'Playoff' && (
+                      <Trophy className="w-5 h-5 text-yellow-500 dark:text-yellow-400" />
+                    )}
+                    <div className={`px-2 py-1 rounded text-xs font-semibold ${
+                      game.game_type === 'Playoff'
+                        ? 'bg-yellow-100 text-yellow-900 dark:bg-yellow-950 dark:text-yellow-100'
+                        : 'bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-100'
+                    }`}>
+                      {game.game_type}
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-muted-foreground" />
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  {game.game_type === 'Playoff' && (
-                    <Trophy className="w-5 h-5 text-yellow-500 dark:text-yellow-400" />
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-between">
+                  <div className="text-3xl font-bold">
+                    <span className="text-primary">{game.our_score}</span>
+                    <span className="text-muted-foreground mx-2">-</span>
+                    <span className="text-muted-foreground">{game.their_score}</span>
+                  </div>
+                  {game.result && (
+                    <div className={`text-sm font-medium ${
+                      game.result.startsWith('Win') ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
+                    }`}>
+                      {game.result}
+                    </div>
                   )}
-                  <div className={`px-2 py-1 rounded text-xs font-semibold ${
-                    game.game_type === 'Playoff'
-                      ? 'bg-yellow-100 text-yellow-900 dark:bg-yellow-950 dark:text-yellow-100'
-                      : 'bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-100'
-                  }`}>
-                    {game.game_type}
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-muted-foreground" />
                 </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <div className="text-3xl font-bold">
-                  <span className="text-primary">{game.our_score}</span>
-                  <span className="text-muted-foreground mx-2">-</span>
-                  <span className="text-muted-foreground">{game.their_score}</span>
-                </div>
-                {game.result && (
-                  <div className={`text-sm font-medium ${
-                    game.result.startsWith('Win')
-                      ? 'text-green-600 dark:text-green-400'
-                      : 'text-red-600 dark:text-red-400'
-                  }`}>
-                    {game.result}
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+              </CardContent>
+            </Card>
+          )
+        })}
       </div>
     </div>
   )

@@ -42,6 +42,28 @@ export function useGetSeasons() {
   return useApiCall(fn)
 }
 
+export function useGetAllSeasons() {
+  const fn = useCallback(async () => {
+    const res = await fetch('/api/seasons')
+    if (!res.ok) throw new Error(await res.text())
+    return res.json()
+  }, [])
+  return useApiCall(fn)
+}
+
+export function useCreateSeason() {
+  const fn = useCallback(async (params: { name: string; year: number; location?: string; league_name?: string }) => {
+    const res = await fetch('/api/seasons', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    })
+    if (!res.ok) throw new Error(await res.text())
+    return res.json()
+  }, [])
+  return useApiCall<unknown, { name: string; year: number; location?: string; league_name?: string }>(fn)
+}
+
 export function useGetPlayerStats() {
   const fn = useCallback(async (params?: { seasonId?: number; gameIds?: number[] }) => {
     const url = new URL('/api/stats/players', window.location.origin)
