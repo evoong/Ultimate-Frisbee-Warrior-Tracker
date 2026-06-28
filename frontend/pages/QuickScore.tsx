@@ -4,7 +4,7 @@ import { useGetSeasonRoster } from '../hooks/backend/players'
 import { useGetGameEvents } from '../hooks/backend/events'
 import { useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useGetEventTypes } from '../hooks/backend/events'
 import { useCreatePlayerForGame, useDeleteSubPlayer } from '../hooks/backend/players'
-import { useGetAllSeasons } from '../hooks/backend/stats'
+import { useGetAllSeasons, useGetSeasons } from '../hooks/backend/stats'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
@@ -25,6 +25,7 @@ function seasonLabel(s: Season) {
 export default function QuickScore() {
   const { data: games, trigger: fetchGames } = useGetGames()
   const { data: allSeasons, trigger: fetchAllSeasons } = useGetAllSeasons()
+  const { data: seasonsWithGames, trigger: fetchSeasonsWithGames } = useGetSeasons()
   const { data: players, trigger: fetchPlayers } = useGetSeasonRoster()
   const { data: events, trigger: fetchEvents } = useGetGameEvents()
   const { trigger: createGoal } = useCreateGoalEvent()
@@ -49,7 +50,14 @@ export default function QuickScore() {
     fetchGames()
     fetchEventTypes()
     fetchAllSeasons()
+    fetchSeasonsWithGames()
   }, [])
+
+  useEffect(() => {
+    const s = seasonsWithGames as { season_id: number }[] | undefined
+    if (!s || s.length === 0 || selectedSeasonIds.length > 0) return
+    setSelectedSeasonIds([s[0]!.season_id])
+  }, [seasonsWithGames])
 
   useEffect(() => {
     fetchGames({ seasonIds: selectedSeasonIds.length > 0 ? selectedSeasonIds : undefined })

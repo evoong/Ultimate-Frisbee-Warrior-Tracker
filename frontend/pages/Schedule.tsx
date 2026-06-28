@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useGetGames, useCreateGame, useUpdateGame, useDeleteGame, useGetLineups, useAddToLineup, useRemoveFromLineup } from '../hooks/backend/games'
 import { useGetGameEvents, useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useGetEventTypes } from '../hooks/backend/events'
 import { useGetPlayers } from '../hooks/backend/players'
-import { useGetAllSeasons, useCreateSeason, useGetSeasonsMeta } from '../hooks/backend/stats'
+import { useGetAllSeasons, useGetSeasons, useCreateSeason, useGetSeasonsMeta } from '../hooks/backend/stats'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
@@ -40,6 +40,7 @@ export default function Schedule() {
   const { data: seasons, trigger: fetchSeasons } = useGetAllSeasons()
   const { trigger: createSeason } = useCreateSeason()
   const { data: seasonsMeta, trigger: fetchSeasonsMeta } = useGetSeasonsMeta()
+  const { data: seasonsWithGames, trigger: fetchSeasonsWithGames } = useGetSeasons()
   const { data: lineups, trigger: fetchLineups } = useGetLineups()
   const { trigger: addToLineup } = useAddToLineup()
   const { trigger: removeFromLineup } = useRemoveFromLineup()
@@ -94,7 +95,14 @@ export default function Schedule() {
     fetchSeasons()
     fetchSeasonsMeta()
     fetchEventTypes()
+    fetchSeasonsWithGames()
   }, [])
+
+  useEffect(() => {
+    const s = seasonsWithGames as { season_id: number }[] | undefined
+    if (!s || s.length === 0 || scheduleSeasonIds.length > 0) return
+    setScheduleSeasonIds([s[0]!.season_id])
+  }, [seasonsWithGames])
 
   // Reload games when season filter changes
   useEffect(() => {

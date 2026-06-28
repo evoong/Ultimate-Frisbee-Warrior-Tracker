@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeleteSubPlayer, useDeletePlayer, useGetPlayerGameStats, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer } from '../hooks/backend/players'
-import { useGetAllSeasons } from '../hooks/backend/stats'
+import { useGetAllSeasons, useGetSeasons } from '../hooks/backend/stats'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import { Badge } from '../lib/shadcn/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
@@ -41,6 +41,7 @@ export default function Roster() {
   const { data: rawPlayers, loading, error, trigger: fetchPlayers } = useGetPlayers()
   const { data: gameStats, loading: statsLoading, trigger: fetchGameStats } = useGetPlayerGameStats()
   const { data: allSeasons, trigger: fetchAllSeasons } = useGetAllSeasons()
+  const { data: seasonsWithGames, trigger: fetchSeasonsWithGames } = useGetSeasons()
   const { data: playerSeasons, trigger: fetchPlayerSeasons } = useGetPlayerSeasons()
   const { trigger: updatePlayer } = useUpdatePlayer()
   const { trigger: updatePosition } = useUpdatePlayerPosition()
@@ -72,7 +73,16 @@ export default function Roster() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => { fetchAllSeasons() }, [])
+  useEffect(() => {
+    fetchAllSeasons()
+    fetchSeasonsWithGames()
+  }, [])
+
+  useEffect(() => {
+    const s = seasonsWithGames as { season_id: number }[] | undefined
+    if (!s || s.length === 0 || rosterSeasonIds.length > 0) return
+    setRosterSeasonIds([s[0]!.season_id])
+  }, [seasonsWithGames])
 
   useEffect(() => {
     fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined })
