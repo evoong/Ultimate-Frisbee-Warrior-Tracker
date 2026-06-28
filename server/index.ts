@@ -99,12 +99,23 @@ app.patch('/api/seasons/:id', async (req, res) => {
 
 app.get('/api/games', async (req, res) => {
   try {
-    const { seasonId } = req.query
+    // Support single seasonId or multiple seasonIds (array)
+    const rawSeasonIds = req.query['seasonIds']
+    const rawSeasonId = req.query['seasonId']
+    const ids: number[] = []
+    if (rawSeasonIds) {
+      const arr = Array.isArray(rawSeasonIds) ? rawSeasonIds : [rawSeasonIds]
+      arr.forEach(v => { const n = parseInt(String(v)); if (!isNaN(n)) ids.push(n) })
+    } else if (rawSeasonId && rawSeasonId !== 'all') {
+      const n = parseInt(String(rawSeasonId)); if (!isNaN(n)) ids.push(n)
+    }
+
     let query = 'SELECT id, opponent, game_date, game_time, game_type, our_score, their_score, result, outcome_override, notes, season_id FROM games'
     const params: unknown[] = []
-    if (seasonId && seasonId !== 'all') {
-      query += ' WHERE season_id = $1'
-      params.push(seasonId)
+    if (ids.length === 1) {
+      query += ' WHERE season_id = $1'; params.push(ids[0])
+    } else if (ids.length > 1) {
+      query += ' WHERE season_id = ANY($1::int[])'; params.push(ids)
     }
     query += ' ORDER BY game_date DESC, game_time DESC'
     const result = await pool.query(query, params)
@@ -346,16 +357,26 @@ async function updateGameScore(gameId: number | string) {
 
 app.get('/api/players', async (req, res) => {
   try {
-    const { seasonId } = req.query
-    if (seasonId && seasonId !== 'null') {
+    // Support single seasonId or multiple seasonIds
+    const rawSeasonIds = req.query['seasonIds']
+    const rawSeasonId = req.query['seasonId']
+    const ids: number[] = []
+    if (rawSeasonIds) {
+      const arr = Array.isArray(rawSeasonIds) ? rawSeasonIds : [rawSeasonIds]
+      arr.forEach(v => { const n = parseInt(String(v)); if (!isNaN(n)) ids.push(n) })
+    } else if (rawSeasonId && rawSeasonId !== 'null') {
+      const n = parseInt(String(rawSeasonId)); if (!isNaN(n)) ids.push(n)
+    }
+
+    if (ids.length > 0) {
       const result = await pool.query(
-        `SELECT p.id, p.first_name, p.last_name, p.display_name, p.gender_match, p.phone, p.number,
+        `SELECT DISTINCT p.id, p.first_name, p.last_name, p.display_name, p.gender_match, p.phone, p.number,
                 COALESCE(p.is_sub, false) as is_sub, p.position, p.photo_url
          FROM players p
          INNER JOIN season_players sp ON sp.player_id = p.id
-         WHERE sp.season_id = $1 AND sp.active = true
+         WHERE sp.season_id = ANY($1::int[]) AND sp.active = true
          ORDER BY p.display_name`,
-        [seasonId]
+        [ids]
       )
       return res.json(result.rows)
     }
@@ -630,7 +651,19 @@ app.get('/api/stats/seasons', async (req, res) => {
 
 app.get('/api/stats/players', async (req, res) => {
   try {
-    const { seasonId, gameIds } = req.query
+    const { gameIds } = req.query
+
+    // Support single seasonId or multiple seasonIds
+    const rawSeasonIds = req.query['seasonIds']
+    const rawSeasonId = req.query['seasonId']
+    const seasonIdArr: number[] = []
+    if (rawSeasonIds) {
+      const arr = Array.isArray(rawSeasonIds) ? rawSeasonIds : [rawSeasonIds]
+      arr.forEach(v => { const n = parseInt(String(v)); if (!isNaN(n)) seasonIdArr.push(n) })
+    } else if (rawSeasonId) {
+      const n = parseInt(String(rawSeasonId)); if (!isNaN(n)) seasonIdArr.push(n)
+    }
+    const hasSeasons = seasonIdArr.length > 0
 
     let gameFilter = ''
     let playerFilter = ''
@@ -643,15 +676,15 @@ app.get('/api/stats/players', async (req, res) => {
         gameFilter = 'AND ge.game_id = ANY($1::int[])'
         params.push(idNums)
       }
-    } else if (seasonId) {
-      gameFilter = 'AND g.season_id = $1'
-      playerFilter = `INNER JOIN season_players sp_filter ON sp_filter.player_id = p.id AND sp_filter.season_id = $1 AND sp_filter.active = true`
-      params.push(seasonId)
+    } else if (hasSeasons) {
+      params.push(seasonIdArr)
+      gameFilter = 'AND g.season_id = ANY($1::int[])'
+      playerFilter = `INNER JOIN season_players sp_filter ON sp_filter.player_id = p.id AND sp_filter.season_id = ANY($1::int[]) AND sp_filter.active = true`
     }
 
-    // games_played = all games in season for that player (not just games with events)
-    const gamesPlayedSubquery = seasonId && !gameIds
-      ? `(SELECT COUNT(*) FROM games g2 WHERE g2.season_id = $1 AND EXISTS (
+    // games_played = all games in season(s) for that player (backfill)
+    const gamesPlayedSubquery = hasSeasons && !gameIds
+      ? `(SELECT COUNT(*) FROM games g2 WHERE g2.season_id = ANY($1::int[]) AND EXISTS (
            SELECT 1 FROM season_players sp2 WHERE sp2.player_id = p.id AND sp2.season_id = g2.season_id AND sp2.active = true
          ))`
       : `COUNT(DISTINCT ge.game_id)`
