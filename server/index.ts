@@ -1077,8 +1077,10 @@ app.delete("/api/chat/history", async (req, res) => {
 app.post("/api/chat", async (req, res) => {
   try {
     const { message, session_id, history } = req.body;
-    const GEMINI_API_KEY =
-      process.env.GEMINI_API_KEY || "AIzaSyDOzMxmNWTenYfPW4eEauzF8P3QVmr0a0g";
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    if (!GEMINI_API_KEY) {
+      return res.status(500).json({ error: "GEMINI_API_KEY is not set. Please add it in your environment secrets." });
+    }
 
     // Fetch DB context for system prompt
     const seasonsData = await pool.query(
@@ -1139,7 +1141,7 @@ When you want to perform an action, include the ACTION tag in your response foll
     const genai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
     const geminiResponse = await genai.models.generateContent({
-      model: "gemini-2.0-flash-lite",
+      model: "gemini-2.5-flash",
       contents,
       config: {
         systemInstruction: systemPrompt,
