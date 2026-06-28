@@ -40,5 +40,5 @@ externalPort = 3001
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["bash", "-c", "npm install && node --experimental-specifier-resolution=node --loader tsx/esm server/index.ts & cd frontend && npx serve dist -l 5000"]
+run = ["bash", "-c", "NODE_ENV=production PORT=5000 npx tsx server/index.ts"]
 build = ["bash", "-c", "cd frontend && pnpm install && pnpm run build"]
