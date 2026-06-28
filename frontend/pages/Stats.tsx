@@ -235,7 +235,7 @@ export default function Stats() {
           <div className="space-y-2">
             <Label>Filter By</Label>
             <Select value={filterType} onValueChange={(val: 'all' | 'season' | 'games') => {
-              setFilterType(val); setSelectedGameIds([]); setSelectedSeasonId('')
+              setFilterType(val); setSelectedGameIds([]); setSelectedSeasonIds([])
             }}>
               <SelectTrigger className="bg-background text-foreground border-border"><SelectValue /></SelectTrigger>
               <SelectContent>
