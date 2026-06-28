@@ -4,6 +4,7 @@ import { Pool, types } from "pg";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import { GoogleGenAI } from "@google/genai";
 
 // Return DATE columns as strings (not JS Date objects)
 types.setTypeParser(1082, (val: string) => val);
@@ -1135,30 +1136,19 @@ When you want to perform an action, include the ACTION tag in your response foll
     // Add current message
     contents.push({ role: "user", parts: [{ text: message }] });
 
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemPrompt }] },
-          contents,
-          generationConfig: { maxOutputTokens: 1024, temperature: 0.7 },
-        }),
+    const genai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+
+    const geminiResponse = await genai.models.generateContent({
+      model: "gemini-2.0-flash-lite",
+      contents,
+      config: {
+        systemInstruction: systemPrompt,
+        maxOutputTokens: 1024,
+        temperature: 0.7,
       },
-    );
+    });
 
-    if (!geminiRes.ok) {
-      const errText = await geminiRes.text();
-      return res.status(500).json({ error: `Gemini API error: ${errText}` });
-    }
-
-    const geminiData = (await geminiRes.json()) as {
-      candidates?: { content: { parts: { text: string }[] } }[];
-    };
-    const reply =
-      geminiData.candidates?.[0]?.content?.parts?.[0]?.text ??
-      "Sorry, I could not generate a response.";
+    const reply = geminiResponse.text ?? "Sorry, I could not generate a response.";
 
     // Parse and execute any actions
     const actionResults: string[] = [];
