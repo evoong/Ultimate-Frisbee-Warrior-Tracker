@@ -29,10 +29,10 @@ app.get('/api/games', async (req, res) => {
 
 app.post('/api/games', async (req, res) => {
   try {
-    const { opponent, game_date, game_time, game_type } = req.body
+    const { opponent, game_date, game_time, game_type, season_id } = req.body
     const result = await pool.query(
-      'INSERT INTO games (opponent, game_date, game_time, game_type, our_score, their_score, season_id) VALUES ($1, $2, $3, $4, 0, 0, 1) RETURNING *',
-      [opponent, game_date, game_time, game_type]
+      'INSERT INTO games (opponent, game_date, game_time, game_type, our_score, their_score, season_id) VALUES ($1, $2, $3, $4, 0, 0, $5) RETURNING *',
+      [opponent, game_date, game_time, game_type, season_id ?? null]
     )
     res.json(result.rows[0])
   } catch (err: unknown) {
@@ -330,6 +330,31 @@ app.get('/api/stats/players', async (req, res) => {
 
     const result = await pool.query(query, params)
     res.json(result.rows)
+  } catch (err: unknown) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) })
+  }
+})
+
+// Seasons
+app.get('/api/seasons', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, name, year, start_date, end_date, location, league_name, organizer FROM seasons ORDER BY year DESC, id DESC'
+    )
+    res.json(result.rows)
+  } catch (err: unknown) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) })
+  }
+})
+
+app.post('/api/seasons', async (req, res) => {
+  try {
+    const { name, year, location, league_name, organizer } = req.body
+    const result = await pool.query(
+      'INSERT INTO seasons (name, year, location, league_name, organizer) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [name, year, location ?? null, league_name ?? null, organizer ?? null]
+    )
+    res.json(result.rows[0])
   } catch (err: unknown) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) })
   }
