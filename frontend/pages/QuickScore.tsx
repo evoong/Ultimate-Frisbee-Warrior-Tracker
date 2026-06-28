@@ -4,6 +4,7 @@ import { useGetSeasonRoster } from '../hooks/backend/players'
 import { useGetGameEvents } from '../hooks/backend/events'
 import { useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useGetEventTypes } from '../hooks/backend/events'
 import { useCreatePlayerForGame, useDeleteSubPlayer } from '../hooks/backend/players'
+import { useGetAllSeasons } from '../hooks/backend/stats'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
@@ -12,8 +13,17 @@ import PlayerCombobox from '../components/PlayerCombobox'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
 import { Target, Plus, Minus, TrendingUp, Undo2, Edit2, ChevronLeft, Trash2, Calendar, ArrowLeftRight } from 'lucide-react'
 
+type Season = { id: number; name: string; year: number; organizer: string | null }
+type Game = { id: number; opponent: string; game_date: string; season_id: number | null }
+
+function seasonLabel(s: Season) {
+  const parts = [s.organizer, s.name, s.year].filter(Boolean)
+  return parts.join(' ')
+}
+
 export default function QuickScore() {
   const { data: games, trigger: fetchGames } = useGetGames()
+  const { data: allSeasons, trigger: fetchAllSeasons } = useGetAllSeasons()
   const { data: players, trigger: fetchPlayers } = useGetSeasonRoster()
   const { data: events, trigger: fetchEvents } = useGetGameEvents()
   const { trigger: createGoal } = useCreateGoalEvent()
@@ -32,17 +42,18 @@ export default function QuickScore() {
   const [editingEventId, setEditingEventId] = useState<number | null>(null)
   const [editScorerId, setEditScorerId] = useState<string>('')
   const [editAssisterId, setEditAssisterId] = useState<string>('')
+  const [seasonFilter, setSeasonFilter] = useState<string>('all')
 
   useEffect(() => {
     fetchGames()
     fetchEventTypes()
+    fetchAllSeasons()
   }, [])
 
-  // Auto-select the latest game once games load
   useEffect(() => {
     if (games && games.length > 0 && selectedGameId === null) {
-      const latest = games[0] as { id: number }
-      setSelectedGameId(latest.id)
+      const filtered = filteredGames
+      if (filtered.length > 0) setSelectedGameId((filtered[0] as Game).id)
     }
   }, [games])
 
@@ -54,7 +65,11 @@ export default function QuickScore() {
     }
   }, [selectedGameId])
 
-  const selectedGame = games?.find((g: { id: number }) => g.id === selectedGameId)
+  const filteredGames = ((games as Game[] | undefined) ?? []).filter(g =>
+    seasonFilter === 'all' || g.season_id?.toString() === seasonFilter
+  )
+
+  const selectedGame = (games as Game[] | undefined)?.find(g => g.id === selectedGameId)
   const ourGoals = events?.filter((e: { event_type: string }) => e.event_type === 'Goal').length || 0
   const theirGoals = events?.filter((e: { event_type: string }) => e.event_type === 'Opponent Goal').length || 0
 
@@ -93,13 +108,11 @@ export default function QuickScore() {
 
   const handleSaveEdit = async () => {
     if (!editingEventId) return
-    
     await updateEvent({
       eventId: editingEventId,
       playerId: (editScorerId && editScorerId !== '__none__') ? parseInt(editScorerId) : null,
       relatedPlayerId: (editAssisterId && editAssisterId !== '__none__') ? parseInt(editAssisterId) : null
     })
-    
     setEditingEventId(null)
     fetchEvents({ gameId: selectedGameId })
   }
@@ -114,7 +127,6 @@ export default function QuickScore() {
     setSelectedGameId(null)
   }
 
-  // Goal-like events show Scorer/Assister; others show Player/Related Player
   const isGoalEvent = ['Goal', 'Caught OB'].includes(selectedEventType)
   const scorerLabel = isGoalEvent ? 'Scorer' : 'Player'
   const assisterLabel = isGoalEvent ? 'Assister' : 'Related'
@@ -154,6 +166,12 @@ export default function QuickScore() {
     }
   }
 
+  const getSeasonLabel = (seasonId: number | null) => {
+    if (!seasonId || !allSeasons) return null
+    const s = (allSeasons as Season[]).find(s => s.id === seasonId)
+    return s ? seasonLabel(s) : null
+  }
+
   return (
     <div className="space-y-4">
       {selectedGame && !showGameSelect && (
@@ -169,7 +187,20 @@ export default function QuickScore() {
       {!selectedGame || showGameSelect ? (
         <>
           <h1 className="text-2xl font-bold text-foreground">Quick Score</h1>
-          
+
+          {/* Season Filter */}
+          <Select value={seasonFilter} onValueChange={(v) => { setSeasonFilter(v); setSelectedGameId(null) }}>
+            <SelectTrigger className="bg-card border-border text-foreground">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Seasons</SelectItem>
+              {(allSeasons as Season[] | undefined)?.map(s => (
+                <SelectItem key={s.id} value={String(s.id)}>{seasonLabel(s)}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
           {/* Game Selection */}
           <Card className="bg-card text-card-foreground border-border">
             <CardHeader>
@@ -181,9 +212,10 @@ export default function QuickScore() {
                   <SelectValue placeholder="Choose a game..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {games?.map((game: { id: number; opponent: string; game_date: string }) => (
+                  {filteredGames.map((game) => (
                     <SelectItem key={game.id} value={game.id.toString()}>
                       vs {game.opponent} - {new Date(game.game_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      {game.season_id && getSeasonLabel(game.season_id) ? ` (${getSeasonLabel(game.season_id)})` : ''}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -197,16 +229,17 @@ export default function QuickScore() {
           <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
             <CardContent className="py-4 px-5">
               <div className="grid grid-cols-[1fr_auto_1fr] items-center">
-                {/* Game info - left */}
                 <div className="min-w-0">
                   <div className="text-base font-bold text-foreground truncate">vs {selectedGame.opponent}</div>
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
                     <Calendar className="w-3 h-3 flex-shrink-0" />
                     <span>{new Date((selectedGame as { game_date: string }).game_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
                   </div>
+                  {selectedGame.season_id && (
+                    <div className="text-xs text-muted-foreground mt-0.5">{getSeasonLabel(selectedGame.season_id)}</div>
+                  )}
                 </div>
 
-                {/* Score - center */}
                 <div className="flex items-center gap-3 px-4">
                   <div className="text-center">
                     <div className="text-7xl font-bold text-primary tabular-nums leading-none">{ourGoals}</div>
@@ -219,7 +252,6 @@ export default function QuickScore() {
                   </div>
                 </div>
 
-                {/* Right spacer */}
                 <div />
               </div>
             </CardContent>
@@ -228,7 +260,6 @@ export default function QuickScore() {
           {/* Controls */}
           <Card className="bg-card border-border">
             <CardContent className="pt-4 pb-4 space-y-3">
-              {/* Aligned label-control rows */}
               <div className="space-y-2">
                 <div className="grid grid-cols-[60px_1fr] items-center gap-2">
                   <span className="text-xs font-medium text-muted-foreground text-right">Event</span>
@@ -285,7 +316,6 @@ export default function QuickScore() {
 
               <div className="border-t border-border" />
 
-              {/* Score buttons — equal size */}
               <div className="grid grid-cols-2 gap-2">
                 <Button
                   onClick={handleQuickGoal}
@@ -325,14 +355,12 @@ export default function QuickScore() {
             </CardContent>
           </Card>
 
-          {/* Recent Events Summary */}
+          {/* Recent Events */}
           <Card className="bg-card text-card-foreground border-border">
             <CardHeader>
               <CardTitle className="text-base flex items-center justify-between">
                 <span>Recent Activity</span>
-                <span className="text-sm font-normal text-muted-foreground">
-                  {events?.length || 0} events
-                </span>
+                <span className="text-sm font-normal text-muted-foreground">{events?.length || 0} events</span>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -343,32 +371,20 @@ export default function QuickScore() {
                     const assister = players?.find((p: { id: number }) => p.id === event.related_player_id)
                     const isGoal = event.event_type === 'Goal'
                     const isOpponentGoal = event.event_type === 'Opponent Goal'
-                    
                     return (
                       <div key={event.id} className="flex items-center gap-3 py-2 border-b border-border last:border-0">
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                          isGoal 
-                            ? 'bg-green-100 dark:bg-green-950' 
-                            : isOpponentGoal 
-                            ? 'bg-red-100 dark:bg-red-950' 
-                            : 'bg-orange-100 dark:bg-orange-950'
+                          isGoal ? 'bg-green-100 dark:bg-green-950'
+                          : isOpponentGoal ? 'bg-red-100 dark:bg-red-950'
+                          : 'bg-orange-100 dark:bg-orange-950'
                         }`}>
-                          {isGoal ? (
-                            <Target className="w-5 h-5 text-green-600 dark:text-green-400" />
-                          ) : isOpponentGoal ? (
-                            <Target className="w-5 h-5 text-red-600 dark:text-red-400" />
-                          ) : (
-                            <TrendingUp className="w-5 h-5 text-orange-600 dark:text-orange-400" />
-                          )}
+                          {isGoal ? <Target className="w-5 h-5 text-green-600 dark:text-green-400" />
+                          : isOpponentGoal ? <Target className="w-5 h-5 text-red-600 dark:text-red-400" />
+                          : <TrendingUp className="w-5 h-5 text-orange-600 dark:text-orange-400" />}
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="font-medium text-foreground text-sm">
-                            {isGoal && player && (
-                              <>
-                                {player.display_name}
-                                {assister && <span className="text-xs text-muted-foreground ml-1">(from {assister.display_name})</span>}
-                              </>
-                            )}
+                            {isGoal && player && (<>{player.display_name}{assister && <span className="text-xs text-muted-foreground ml-1">(from {assister.display_name})</span>}</>)}
                             {isGoal && !player && 'Our Goal'}
                             {isOpponentGoal && 'Opponent Goal'}
                             {!isGoal && !isOpponentGoal && event.event_type}
@@ -378,35 +394,23 @@ export default function QuickScore() {
                           </div>
                         </div>
                         <div className="flex items-center gap-1">
-                          {isGoal && (
-                            <button
-                              onClick={() => handleEditEvent(event)}
-                              className="p-1.5 rounded hover:bg-accent transition-colors"
-                              aria-label="Edit event"
-                            >
+                          {(isGoal || !isOpponentGoal) && (
+                            <button onClick={() => handleEditEvent(event)} className="p-1.5 rounded hover:bg-accent transition-colors" aria-label="Edit event">
                               <Edit2 className="w-4 h-4 text-muted-foreground hover:text-foreground" />
                             </button>
                           )}
-                          <button
-                            onClick={() => handleDeleteEvent(event.id)}
-                            className="p-1.5 rounded hover:bg-destructive/10 transition-colors"
-                            aria-label="Delete event"
-                          >
+                          <button onClick={() => handleDeleteEvent(event.id)} className="p-1.5 rounded hover:bg-destructive/10 transition-colors" aria-label="Delete event">
                             <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive" />
                           </button>
-                          <div className={`text-lg font-bold tabular-nums ml-1 ${
-                            isGoal ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
-                          }`}>
-                            {isGoal ? '+1' : isOpponentGoal ? '+1' : ''}
+                          <div className={`text-lg font-bold tabular-nums ml-1 ${isGoal ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                            {isGoal || isOpponentGoal ? '+1' : ''}
                           </div>
                         </div>
                       </div>
                     )
                   })
                 ) : (
-                  <div className="text-center text-muted-foreground py-8 text-sm">
-                    No events yet - start scoring!
-                  </div>
+                  <div className="text-center text-muted-foreground py-8 text-sm">No events yet - start scoring!</div>
                 )}
               </div>
             </CardContent>
@@ -427,11 +431,11 @@ export default function QuickScore() {
       <Dialog open={editingEventId !== null} onOpenChange={(open) => !open && setEditingEventId(null)}>
         <DialogContent className="bg-card text-card-foreground">
           <DialogHeader>
-            <DialogTitle>Edit Goal</DialogTitle>
+            <DialogTitle>Edit Event</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Scorer</Label>
+              <Label>Scorer / Player</Label>
               <PlayerCombobox
                 players={playerOptions}
                 value={editScorerId || '__none__'}
@@ -441,7 +445,7 @@ export default function QuickScore() {
               />
             </div>
             <div className="space-y-2">
-              <Label>Assister (optional)</Label>
+              <Label>Assister / Related (optional)</Label>
               <PlayerCombobox
                 players={playerOptions}
                 value={editAssisterId || '__none__'}
@@ -450,10 +454,7 @@ export default function QuickScore() {
                 className="w-full bg-background border-border"
               />
             </div>
-            <Button
-              onClick={handleSaveEdit}
-              className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
-            >
+            <Button onClick={handleSaveEdit} className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
               Save Changes
             </Button>
           </div>
