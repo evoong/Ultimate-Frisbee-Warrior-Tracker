@@ -73,12 +73,21 @@ export default function Stats() {
     fetchAllSeasons()
   }, [])
 
+  // Default both filters to the latest season that has games
   useEffect(() => {
-    const s = allSeasons as Season[] | undefined
-    if (s && s.length > 0 && !cumulativeSeasonId) {
-      setCumulativeSeasonId(String(s[s.length - 1]!.id))
+    const s = seasons as StatsSeasonRow[] | undefined
+    if (!s || s.length === 0) return
+    const latest = s[0]!
+    // Default main filter
+    if (filterType === 'all' && selectedSeasonIds.length === 0) {
+      setFilterType('season')
+      setSelectedSeasonIds([latest.season_id])
     }
-  }, [allSeasons])
+    // Default cumulative filter
+    if (!cumulativeSeasonId) {
+      setCumulativeSeasonId(String(latest.season_id))
+    }
+  }, [seasons])
 
   useEffect(() => {
     if (filterType === 'all') fetchStats({})
