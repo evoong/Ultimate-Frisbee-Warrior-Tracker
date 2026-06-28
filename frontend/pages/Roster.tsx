@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeleteSubPlayer, useDeletePlayer, useGetPlayerGameStats, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer } from '../hooks/backend/players'
 import { useGetAllSeasons } from '../hooks/backend/stats'
+import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import { Badge } from '../lib/shadcn/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
@@ -54,7 +55,7 @@ export default function Roster() {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
   const [seasonFilter, setSeasonFilter] = useState<string>('all')
-  const [rosterSeasonFilter, setRosterSeasonFilter] = useState<string | null>(null)
+  const [rosterSeasonIds, setRosterSeasonIds] = useState<number[]>([])
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
 
@@ -74,16 +75,8 @@ export default function Roster() {
   useEffect(() => { fetchAllSeasons() }, [])
 
   useEffect(() => {
-    const s = allSeasons as Season[] | undefined
-    if (s && rosterSeasonFilter === null) {
-      setRosterSeasonFilter(s.length > 0 ? String(s[0]!.id) : 'all')
-    }
-  }, [allSeasons])
-
-  useEffect(() => {
-    if (rosterSeasonFilter === null) return
-    fetchPlayers({ seasonId: rosterSeasonFilter === 'all' ? null : parseInt(rosterSeasonFilter) })
-  }, [rosterSeasonFilter])
+    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined })
+  }, [rosterSeasonIds])
 
   const handleSelectPlayer = (player: Player) => {
     setSelectedPlayer(player)
@@ -121,7 +114,7 @@ export default function Roster() {
     }) as Player | undefined
     if (updated) {
       setSelectedPlayer(updated)
-      fetchPlayers({ seasonId: rosterSeasonFilter === 'all' ? null : parseInt(rosterSeasonFilter!) })
+      fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined })
     }
     setEditing(false)
   }
@@ -144,19 +137,19 @@ export default function Roster() {
     await deletePlayer({ playerId: selectedPlayer.id })
     setDeleteConfirm(false)
     handleBack()
-    fetchPlayers({ seasonId: rosterSeasonFilter === 'all' ? null : parseInt(rosterSeasonFilter ?? 'null') })
+    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined })
   }
 
   const handleDeleteSub = async (playerId: number) => {
     await deleteSubPlayer({ playerId, gameId: 0 })
-    fetchPlayers({ seasonId: rosterSeasonFilter === 'all' || rosterSeasonFilter === null ? null : parseInt(rosterSeasonFilter!) })
+    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined })
   }
 
   const handlePositionChange = async (player: Player, position: string) => {
     const newPos = position === '__none__' ? null : position
     setSelectedPlayer({ ...player, position: newPos })
     await updatePosition({ playerId: player.id, position: newPos })
-    fetchPlayers({ seasonId: rosterSeasonFilter === 'all' ? null : parseInt(rosterSeasonFilter!) })
+    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined })
   }
 
   const handlePhotoClick = () => fileInputRef.current?.click()
@@ -169,7 +162,7 @@ export default function Roster() {
     if (result?.photo_url) {
       const updated = { ...selectedPlayer, photo_url: result.photo_url }
       setSelectedPlayer(updated)
-      fetchPlayers({ seasonId: rosterSeasonFilter === 'all' ? null : parseInt(rosterSeasonFilter!) })
+      fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined })
     } else setUploadError('Upload failed. Please try again.')
     e.target.value = ''
   }
@@ -187,7 +180,7 @@ export default function Roster() {
     setShowNewPlayer(false)
     setNewPlayerData({ display_name: '', number: '', gender_match: '', position: '', season_ids: [] })
     setCreatingPlayer(false)
-    fetchPlayers({ seasonId: rosterSeasonFilter === 'all' ? null : parseInt(rosterSeasonFilter ?? 'null') })
+    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined })
   }
 
   const filteredPlayers = players?.filter(p => p.display_name.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -500,13 +493,12 @@ export default function Roster() {
       </div>
 
       {/* Season filter */}
-      <Select value={rosterSeasonFilter ?? 'all'} onValueChange={setRosterSeasonFilter}>
-        <SelectTrigger className="bg-card border-border text-foreground"><SelectValue /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">All Seasons</SelectItem>
-          {allSeasonsArr.map(s => <SelectItem key={s.id} value={String(s.id)}>{seasonLabel(s)}</SelectItem>)}
-        </SelectContent>
-      </Select>
+      <SeasonMultiSelect
+        seasons={allSeasonsArr}
+        selectedIds={rosterSeasonIds}
+        onChange={setRosterSeasonIds}
+        placeholder="All Seasons"
+      />
 
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />

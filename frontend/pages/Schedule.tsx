@@ -3,6 +3,7 @@ import { useGetGames, useCreateGame, useUpdateGame, useDeleteGame, useGetLineups
 import { useGetGameEvents, useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useGetEventTypes } from '../hooks/backend/events'
 import { useGetPlayers } from '../hooks/backend/players'
 import { useGetAllSeasons, useCreateSeason, useGetSeasonsMeta } from '../hooks/backend/stats'
+import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
@@ -65,7 +66,7 @@ export default function Schedule() {
   const [newSeasonYearMode, setNewSeasonYearMode] = useState<'select' | 'new'>('select')
   const [newSeasonLocationMode, setNewSeasonLocationMode] = useState<'select' | 'new'>('select')
   const [creatingSeasonLoading, setCreatingSeasonLoading] = useState(false)
-  const [scheduleSeasonFilter, setScheduleSeasonFilter] = useState<string>('all')
+  const [scheduleSeasonIds, setScheduleSeasonIds] = useState<number[]>([])
 
   // Delete game
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null)
@@ -97,8 +98,8 @@ export default function Schedule() {
 
   // Reload games when season filter changes
   useEffect(() => {
-    fetchGames({ seasonId: scheduleSeasonFilter === 'all' ? undefined : scheduleSeasonFilter })
-  }, [scheduleSeasonFilter])
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined })
+  }, [scheduleSeasonIds])
 
   const handleSelectGame = (game: Game) => {
     setSelectedGame(game)
@@ -161,14 +162,14 @@ export default function Schedule() {
     setIsDialogOpen(false)
     setFormData({ opponent: '', game_date: '', game_time: '', game_type: 'Regular', season_id: '' })
     setShowNewSeason(false)
-    fetchGames({ seasonId: scheduleSeasonFilter === 'all' ? undefined : scheduleSeasonFilter })
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined })
   }
 
   const handleDeleteGame = async (gameId: number) => {
     await deleteGame({ gameId })
     setDeleteConfirmId(null)
     setSelectedGame(null)
-    fetchGames({ seasonId: scheduleSeasonFilter === 'all' ? undefined : scheduleSeasonFilter })
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined })
   }
 
   const handleSaveNotes = async () => {
@@ -764,16 +765,12 @@ export default function Schedule() {
       </div>
 
       {/* Season filter */}
-      <Select value={scheduleSeasonFilter} onValueChange={setScheduleSeasonFilter}>
-        <SelectTrigger className="bg-card border-border text-foreground"><SelectValue /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">All Seasons</SelectItem>
-          {(seasons as Season[] | undefined)?.map(s => (
-            <SelectItem key={s.id} value={String(s.id)}>{seasonLabel(s)}</SelectItem>
-          ))}
-          <SelectItem value="__none__">No season</SelectItem>
-        </SelectContent>
-      </Select>
+      <SeasonMultiSelect
+        seasons={(seasons as Season[] | undefined) ?? []}
+        selectedIds={scheduleSeasonIds}
+        onChange={setScheduleSeasonIds}
+        placeholder="All Seasons"
+      />
 
       {/* Calendar View */}
       {viewMode === 'calendar' ? (
