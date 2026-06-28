@@ -101,7 +101,7 @@ export default function QuickScore() {
     if (!events || events.length === 0) return
     const lastEvent = events[0]
     await deleteEvent({ eventId: lastEvent.id })
-    fetchEvents({ gameId: selectedGameId })
+    if (selectedGameId) fetchEvents({ gameId: selectedGameId })
   }
 
   const handleEditEvent = (event: { id: number; player_id: number | null; related_player_id: number | null }) => {
@@ -118,12 +118,12 @@ export default function QuickScore() {
       relatedPlayerId: (editAssisterId && editAssisterId !== '__none__') ? parseInt(editAssisterId) : null
     })
     setEditingEventId(null)
-    fetchEvents({ gameId: selectedGameId })
+    if (selectedGameId) fetchEvents({ gameId: selectedGameId })
   }
 
   const handleDeleteEvent = async (eventId: number) => {
     await deleteEvent({ eventId })
-    fetchEvents({ gameId: selectedGameId })
+    if (selectedGameId) fetchEvents({ gameId: selectedGameId })
   }
 
   const handleBackToGameSelect = () => {
