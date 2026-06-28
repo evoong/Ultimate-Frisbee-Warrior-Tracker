@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run frontend\"",
     "server": "tsx server/index.ts",
-    "frontend": "cd frontend && pnpm run dev"
+    "frontend": "cd frontend && pnpm run dev",
+    "build": "cd frontend && pnpm run build",
+    "start": "npm run server"
   },
   "retool": {
     "app": {
