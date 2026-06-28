@@ -1,0 +1,44 @@
+
+Create a build cmd
+
+
+Create a light and dark mode 
+
+for the create a new season, they should also be able to set orgnaizer, also when dispalying theseason it should display  organizer + name + year.
+when selection roganizer should be drop of the currrent distinct or beable to create a new one,  same with name same with year, same with location   create google auth. at the start they can claim someone from the roaster, or make someone new if someone logged there defaults should be the seasons they are currently participating in   also in roaster people should be able to make edit to field like name number gender, for gender and position, seasons  also in games there should be attendance where ppl can mark them selves as going or absent  
+
+Also event log after you click a game should be editable
+
+
+Also season progression shouldn’t’t just be top 8 players, should be able to filter by players and add extra emphasis on the person who is logged like thicker line  or giving everyone else’s dash lines and the progression should be able to filter for stats  
+Also in quick score should be able to filter for seasons as well
+
+Also include avg points / assist per game somewhere  Also for games played  for each player do not use sum distinct game event player_id, just backfill game attendance with everyone attending all games  for their seasonfor now and I will edit in the schedule later of who actually attended which games  fix roaster to display seasons using season table and make it show Organizer Name Year format same with any other season filter that display season
+
+
+Also from position please remove hybrid cutter and hrybid handler
+And add in deep cutter  also when you click a game in the schedule section I want you to be able to create lineups. Also add a notes section as well
+
+
+Also for score tracker we dont need   also outcome by default should use the score, but can be overrides for example if score says tie, but was actually a default
+
+
+Also need the ability to delete game with confirmation warning
+
+
+Also delete player with confirmation warning  Also when creating a new season should have an option to select default game start 
+
+
+Also when selecting multiple games in ranking should be an option  unselect all, same with stats
+  for the swap button  I want it between scorer/player and assister /related
+
+Create user settings if someone is logged in
+
+
+Also create a new section that uses this gemini key that ppl can use to chat with the database and create a system prompt base on whoever is logged if someone is logged in AIzaSyDOzMxmNWTenYfPW4eEauzF8P3QVmr0a0g
+it  should use Gemini 3.1 Flash Lite
+Should store chat logs if user is logged in  also give the chat the ability to add points ,  to games,  create games 
+
+Also for schedule make a calendar view as well  also for the player selection should only be limited to the players
+
+Also for game event automacilly make the date of all game events to the day of the game, but still keeps timestamps the same 
