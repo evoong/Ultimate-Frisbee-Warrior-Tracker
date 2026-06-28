@@ -1020,11 +1020,11 @@ app.get("/api/stats/cumulative", async (req, res) => {
         g.id AS game_id,
         g.opponent,
         g.game_date,
-        p.id AS player_id,
-        p.display_name AS player_name,
-        COUNT(DISTINCT CASE WHEN ge.event_type = 'Goal' AND ge.player_id = p.id THEN ge.id END) AS goals,
-        COUNT(DISTINCT CASE WHEN ge.event_type = 'Goal' AND ge.related_player_id = p.id THEN ge.id END) AS assists,
-        COUNT(DISTINCT CASE WHEN ge.event_type = 'Turnover' AND ge.player_id = p.id THEN ge.id END) AS turnovers
+        p.player_id,
+        p.player_name,
+        COUNT(DISTINCT CASE WHEN ge.event_type = 'Goal' AND ge.player_id = p.player_id THEN ge.id END) AS goals,
+        COUNT(DISTINCT CASE WHEN ge.event_type = 'Goal' AND ge.related_player_id = p.player_id THEN ge.id END) AS assists,
+        COUNT(DISTINCT CASE WHEN ge.event_type = 'Turnover' AND ge.player_id = p.player_id THEN ge.id END) AS turnovers
       FROM games g
       CROSS JOIN (${playersQuery}) p
       LEFT JOIN game_events ge ON ge.game_id = g.id AND (ge.player_id = p.player_id OR ge.related_player_id = p.player_id)
