@@ -3,7 +3,7 @@ import { useGetGames } from '../hooks/backend/games'
 import { useGetSeasonRoster } from '../hooks/backend/players'
 import { useGetGameEvents } from '../hooks/backend/events'
 import { useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useGetEventTypes } from '../hooks/backend/events'
-import { useCreatePlayerForGame, useDeleteSubPlayer } from '../hooks/backend/players'
+import { useCreatePlayerForGame, useDeleteSubPlayer, useGetPlayersNotInSeason, useAddPlayerToGame } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons } from '../hooks/backend/stats'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
@@ -35,6 +35,8 @@ export default function QuickScore() {
   const { data: eventTypes, trigger: fetchEventTypes } = useGetEventTypes()
   const { trigger: createPlayerForGame } = useCreatePlayerForGame()
   const { trigger: deleteSubPlayer } = useDeleteSubPlayer()
+  const { data: otherPlayers, trigger: fetchOtherPlayers } = useGetPlayersNotInSeason()
+  const { trigger: addPlayerToGame } = useAddPlayerToGame()
 
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null)
   const [showGameSelect, setShowGameSelect] = useState(false)
@@ -74,6 +76,7 @@ export default function QuickScore() {
     if (selectedGameId) {
       fetchEvents({ gameId: selectedGameId })
       fetchPlayers({ gameId: selectedGameId })
+      fetchOtherPlayers({ gameId: selectedGameId })
       setShowGameSelect(false)
     }
   }, [selectedGameId])
@@ -147,11 +150,15 @@ export default function QuickScore() {
     ...((players as { id: number; display_name: string; is_sub: boolean | null }[] | undefined) ?? []).map(p => ({ id: p.id.toString(), label: p.display_name, isSub: !!p.is_sub }))
   ]
 
+  const otherPlayerOptions = ((otherPlayers as { id: number; display_name: string }[] | undefined) ?? [])
+    .map(p => ({ id: p.id.toString(), label: p.display_name }))
+
   const handleAddPlayer = async (name: string) => {
     if (!selectedGameId) return
     const result = await createPlayerForGame({ displayName: name, gameId: selectedGameId })
     if (result) {
       await fetchPlayers({ gameId: selectedGameId })
+      await fetchOtherPlayers({ gameId: selectedGameId })
       const newId = (result as { id: number }).id.toString()
       setDefaultScorerId(newId)
     }
@@ -161,6 +168,7 @@ export default function QuickScore() {
     if (!selectedGameId) return
     await deleteSubPlayer({ playerId: parseInt(playerId), gameId: selectedGameId })
     await fetchPlayers({ gameId: selectedGameId })
+    await fetchOtherPlayers({ gameId: selectedGameId })
     if (defaultScorerId === playerId) setDefaultScorerId('')
     if (defaultAssisterId === playerId) setDefaultAssisterId('')
     if (editScorerId === playerId) setEditScorerId('')
@@ -172,9 +180,26 @@ export default function QuickScore() {
     const result = await createPlayerForGame({ displayName: name, gameId: selectedGameId })
     if (result) {
       await fetchPlayers({ gameId: selectedGameId })
+      await fetchOtherPlayers({ gameId: selectedGameId })
       const newId = (result as { id: number }).id.toString()
       setDefaultAssisterId(newId)
     }
+  }
+
+  const handleAddExistingScorer = async (playerId: string) => {
+    if (!selectedGameId) return
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGameId })
+    await fetchPlayers({ gameId: selectedGameId })
+    await fetchOtherPlayers({ gameId: selectedGameId })
+    setDefaultScorerId(playerId)
+  }
+
+  const handleAddExistingAssister = async (playerId: string) => {
+    if (!selectedGameId) return
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGameId })
+    await fetchPlayers({ gameId: selectedGameId })
+    await fetchOtherPlayers({ gameId: selectedGameId })
+    setDefaultAssisterId(playerId)
   }
 
   const getSeasonLabel = (seasonId: number | null) => {
@@ -285,9 +310,11 @@ export default function QuickScore() {
                   <span className="text-xs font-medium text-muted-foreground text-right">{scorerLabel}</span>
                   <PlayerCombobox
                     players={playerOptions}
+                    otherPlayers={otherPlayerOptions}
                     value={defaultScorerId || '__none__'}
                     onValueChange={setDefaultScorerId}
                     onAddPlayer={handleAddPlayer}
+                    onAddExistingPlayer={handleAddExistingScorer}
                     onDeletePlayer={handleDeleteSub}
                     placeholder="None"
                     className="w-full h-9 text-sm bg-background border-border"

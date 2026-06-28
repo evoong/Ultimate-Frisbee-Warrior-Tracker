@@ -165,6 +165,28 @@ export function useUpdatePlayerSeasons() {
   return useApiCall(fn)
 }
 
+export function useGetPlayersNotInSeason() {
+  const fn = useCallback(async (params: { gameId: number }) => {
+    const res = await fetch(`/api/players/not-in-season?gameId=${params.gameId}`)
+    if (!res.ok) throw new Error(await res.text())
+    return res.json() as Promise<{ id: number; display_name: string }[]>
+  }, [])
+  return useApiCall<{ id: number; display_name: string }[], { gameId: number }>(fn)
+}
+
+export function useAddPlayerToGame() {
+  const fn = useCallback(async (params: { playerId: number; gameId: number }) => {
+    const res = await fetch(`/api/players/${params.playerId}/add-to-game`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gameId: params.gameId }),
+    })
+    if (!res.ok) throw new Error(await res.text())
+    return res.json()
+  }, [])
+  return useApiCall(fn)
+}
+
 export function useUploadPlayerPhoto() {
   const fn = useCallback(async (params: { playerId: number; file: File }) => {
     const form = new FormData()

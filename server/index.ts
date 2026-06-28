@@ -580,6 +580,30 @@ app.get("/api/players/season-roster", async (req, res) => {
   }
 });
 
+app.get("/api/players/not-in-season", async (req, res) => {
+  try {
+    const { gameId } = req.query;
+    const gameResult = await pool.query(
+      "SELECT season_id FROM games WHERE id = $1", [gameId]
+    );
+    const seasonId = gameResult.rows[0]?.season_id;
+    if (!seasonId) return res.json([]);
+    const result = await pool.query(
+      `SELECT p.id, p.display_name
+       FROM players p
+       WHERE COALESCE(p.is_sub, false) = false
+         AND p.id NOT IN (
+           SELECT player_id FROM season_players WHERE season_id = $1
+         )
+       ORDER BY p.display_name`,
+      [seasonId]
+    );
+    res.json(result.rows);
+  } catch (err: unknown) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 // Get seasons for a player
 app.get("/api/players/:id/seasons", async (req, res) => {
   try {
@@ -748,6 +772,30 @@ app.post("/api/players/for-game", async (req, res) => {
     res
       .status(500)
       .json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.post("/api/players/:id/add-to-game", async (req, res) => {
+  try {
+    const { gameId } = req.body;
+    const playerId = req.params.id;
+    const gameResult = await pool.query(
+      "SELECT season_id FROM games WHERE id = $1", [gameId]
+    );
+    const seasonId = gameResult.rows[0]?.season_id;
+    if (seasonId) {
+      await pool.query(
+        "INSERT INTO season_players (season_id, player_id, active) VALUES ($1, $2, true) ON CONFLICT DO NOTHING",
+        [seasonId, playerId]
+      );
+    }
+    const player = await pool.query(
+      "SELECT id, display_name, gender_match, is_sub, number FROM players WHERE id = $1",
+      [playerId]
+    );
+    res.json(player.rows[0]);
+  } catch (err: unknown) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 
