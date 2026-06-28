@@ -4,7 +4,7 @@ type HookResult<T, P = void> = {
   data: T | undefined
   loading: boolean
   error: string | null
-  trigger: P extends void ? () => Promise<T | undefined> : (params: P) => Promise<T | undefined>
+  trigger: P extends void ? () => Promise<T | undefined> : (params?: P) => Promise<T | undefined>
 }
 
 function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P> {
@@ -39,9 +39,9 @@ export function useGetGames() {
     }
     const res = await fetch(url.toString())
     if (!res.ok) throw new Error(await res.text())
-    return res.json()
+    return res.json() as Promise<any[]>
   }, [])
-  return useApiCall<unknown, { seasonIds?: number[] } | undefined>(fn)
+  return useApiCall<any[], { seasonIds?: number[] }>(fn)
 }
 
 export function useCreateGame() {
@@ -84,9 +84,9 @@ export function useGetLineups() {
   const fn = useCallback(async (params: { gameId: number }) => {
     const res = await fetch(`/api/games/${params.gameId}/lineups`)
     if (!res.ok) throw new Error(await res.text())
-    return res.json()
+    return res.json() as Promise<any[]>
   }, [])
-  return useApiCall<unknown, { gameId: number }>(fn)
+  return useApiCall<any[], { gameId: number }>(fn)
 }
 
 export function useAddToLineup() {

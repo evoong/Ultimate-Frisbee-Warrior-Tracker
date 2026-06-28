@@ -4,7 +4,7 @@ type HookResult<T, P = void> = {
   data: T | undefined
   loading: boolean
   error: string | null
-  trigger: P extends void ? () => Promise<T | undefined> : (params: P) => Promise<T | undefined>
+  trigger: P extends void ? () => Promise<T | undefined> : (params?: P) => Promise<T | undefined>
 }
 
 function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P> {
@@ -35,18 +35,18 @@ export function useGetSeasons() {
   const fn = useCallback(async () => {
     const res = await fetch('/api/stats/seasons')
     if (!res.ok) throw new Error(await res.text())
-    return res.json()
+    return res.json() as Promise<any[]>
   }, [])
-  return useApiCall(fn)
+  return useApiCall<any[]>(fn)
 }
 
 export function useGetAllSeasons() {
   const fn = useCallback(async () => {
     const res = await fetch('/api/seasons')
     if (!res.ok) throw new Error(await res.text())
-    return res.json()
+    return res.json() as Promise<any[]>
   }, [])
-  return useApiCall(fn)
+  return useApiCall<any[]>(fn)
 }
 
 export function useGetSeasonsMeta() {
@@ -85,9 +85,9 @@ export function useGetPlayerStats() {
     }
     const res = await fetch(url.toString())
     if (!res.ok) throw new Error(await res.text())
-    return res.json()
+    return res.json() as Promise<any[]>
   }, [])
-  return useApiCall<unknown, { seasonIds?: number[]; gameIds?: number[] } | undefined>(fn)
+  return useApiCall<any[], { seasonIds?: number[]; gameIds?: number[] }>(fn)
 }
 
 export function useGetCumulativeStats() {
@@ -96,7 +96,7 @@ export function useGetCumulativeStats() {
     if (params?.seasonId != null) url.searchParams.set('seasonId', String(params.seasonId))
     const res = await fetch(url.toString())
     if (!res.ok) throw new Error(await res.text())
-    return res.json()
+    return res.json() as Promise<any[]>
   }, [])
-  return useApiCall<unknown, { seasonId?: number } | undefined>(fn)
+  return useApiCall<any[], { seasonId?: number }>(fn)
 }
