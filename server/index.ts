@@ -14,7 +14,9 @@ app.use(cors());
 app.use(express.json());
 
 // Serve uploaded player photos as static files
-const uploadsDir = path.join(process.cwd(), "uploads");
+const uploadsDir = process.env.VERCEL 
+  ? path.join("/tmp", "uploads")
+  : path.join(process.cwd(), "uploads");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 app.use("/uploads", express.static(uploadsDir));
 
