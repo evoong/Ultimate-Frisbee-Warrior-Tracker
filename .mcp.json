@@ -2,7 +2,10 @@
   "mcpServers": {
     "supabase": {
       "type": "http",
-      "url": "https://mcp.supabase.com/mcp?features=storage%2Cbranching%2Caccount%2Cdevelopment%2Cfunctions%2Cdatabase%2Cdebugging%2Cdocs"
+      "url": "https://mcp.supabase.com/mcp?features=storage%2Cbranching%2Caccount%2Cdevelopment%2Cfunctions%2Cdatabase%2Cdebugging%2Cdocs",
+      "headers": {
+        "Authorization": "Bearer [YOUR_SUPABASE_TOKEN]"
+      }
     }
   }
 }
