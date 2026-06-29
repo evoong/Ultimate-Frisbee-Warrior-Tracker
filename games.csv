@@ -1,8 +1,0 @@
-id,season_id,opponent,game_date,our_score,their_score,result,notes,game_time,game_type
-1,1,"Huck, Huck, Goose",2026-05-03,1,8,Loss,Final score.jamsports,18:30:00,Regular
-2,1,UFO,2026-05-10,3,10,Loss,Final score.jamsports,16:30:00,Regular
-3,1,The Tamsters,2026-05-24,3,16,Loss,Final score.jamsports,17:30:00,Regular
-4,1,Magic Skule Bus,2026-05-31,0,20,Loss,Final score.jamsports,16:30:00,Regular
-5,1,PlsGoEasyWeNew,2026-06-07,6,12,Loss,Final score.jamsports,17:30:00,Regular
-6,1,"Huck, Huck, Goose",2026-06-14,0,0,Win (by default),Playoff Week 1.jamsports,18:30:00,Playoff
-7,1,UFO,2026-06-21,0,0,Loss (by default),Playoff Week 2.jamsports,17:30:00,Playoff
