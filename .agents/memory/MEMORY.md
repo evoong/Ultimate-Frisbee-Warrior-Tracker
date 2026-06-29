@@ -1,0 +1,5 @@
+- [Season label format](season-label.md) — seasons display as "Organizer Name Year" using [s.organizer, s.name, s.year].filter(Boolean).join(' ')
+- [Positions list](positions.md) — valid positions are Handler, Cutter, Hybrid, Deep Cutter (no Hybrid Cutter/Handler)
+- [Gemini AI chat](gemini-chat.md) — uses gemini-2.0-flash-lite model, key in GEMINI_API_KEY env var or hardcoded fallback, stores chat logs in chat_logs table
+- [Games played backfill](games-played-backfill.md) — games_played counts all games in season for season roster players, not just games with events
+- [DB schema additions](db-schema.md) — players.number, seasons.default_game_time, games.outcome_override, games.notes, game_lineups table, chat_logs table
