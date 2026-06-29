@@ -1,0 +1,4 @@
+"id","team_id","name","year","start_date","end_date","location","league_name","organizer","default_game_time"
+"1","1","Spring","2026","""2026-05-03T00:00:00.000Z""","""2026-06-21T00:00:00.000Z""","De La Salle College","Mixed Ultimate - Outdoor Turf 5s","Jam","17:30:00"
+"2","2","Summer","2026","""2026-07-05T00:00:00.000Z""",,"De La Salle College","Mixed Ultimate - Outdoor Turf 5s (De La Salle College)","Jam",
+"3","3","Spring","2026","""2026-05-14T00:00:00.000Z""","""2026-08-13T00:00:00.000Z""","Fletcher Field","2026 Summer Thursday 7-on-7 @ Fletcher's Fields","RHUC","19:00:00"
