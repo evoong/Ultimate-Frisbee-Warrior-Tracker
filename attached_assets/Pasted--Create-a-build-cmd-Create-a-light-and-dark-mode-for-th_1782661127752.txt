@@ -35,7 +35,7 @@ Also when selecting multiple games in ranking should be an option  unselect all,
 Create user settings if someone is logged in
 
 
-Also create a new section that uses this gemini key that ppl can use to chat with the database and create a system prompt base on whoever is logged if someone is logged in AIzaSyDOzMxmNWTenYfPW4eEauzF8P3QVmr0a0g
+Also create a new section that uses this gemini key that ppl can use to chat with the database and create a system prompt base on whoever is logged if someone is logged 
 it  should use Gemini 3.1 Flash Lite
 Should store chat logs if user is logged in  also give the chat the ability to add points ,  to games,  create games 
 
