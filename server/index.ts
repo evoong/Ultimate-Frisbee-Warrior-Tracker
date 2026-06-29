@@ -1,13 +1,11 @@
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
-import { Pool, types } from "pg";
+import { createClient } from "@supabase/supabase-js";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
-
-// Return DATE columns as strings (not JS Date objects)
-types.setTypeParser(1082, (val: string) => val);
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
@@ -37,7 +35,42 @@ const upload = multer({
   },
 });
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+// ── Supabase admin client (bypasses RLS, uses HTTPS - no IPv4/IPv6 issues) ──
+const supabase = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SECRET_KEY!,
+  { auth: { persistSession: false } }
+);
+
+// pool.query() compatibility shim — executes raw SQL via Supabase's REST API
+const pool = {
+  query: async (text: string, params?: unknown[]) => {
+    // Replace $1, $2... placeholders with actual values for Supabase RPC
+    let sql = text;
+    if (params && params.length > 0) {
+      params.forEach((val, i) => {
+        const placeholder = `\$${i + 1}`;
+        let replacement: string;
+        if (val === null || val === undefined) {
+          replacement = "NULL";
+        } else if (typeof val === "number") {
+          replacement = String(val);
+        } else if (Array.isArray(val)) {
+          replacement = `ARRAY[${val.map((v) => `${Number(v)}`).join(",")}]`;
+        } else {
+          // Escape single quotes in strings
+          replacement = `'${String(val).replace(/'/g, "''")}'`;
+        }
+        sql = sql.split(placeholder).join(replacement);
+      });
+    }
+    const { data, error } = await supabase.rpc("execute_sql", { sql_query: sql });
+    if (error) throw new Error(error.message);
+    // Normalize response: execute_sql returns rows array
+    const rows = Array.isArray(data) ? data : (data ? [data] : []);
+    return { rows, rowCount: rows.length };
+  },
+};
 
 // ── Seasons ──────────────────────────────────────────────────────────────────
 
@@ -1271,8 +1304,8 @@ When you want to perform an action, include the ACTION tag in your response foll
   }
 });
 
-// In production, serve the built frontend from Express
-if (process.env.NODE_ENV === "production") {
+// In production (local), serve the built frontend from Express
+if (process.env.NODE_ENV === "production" && !process.env.VERCEL) {
   const distPath = path.join(process.cwd(), "frontend", "dist");
   app.use(express.static(distPath));
   app.get("*", (_req, res) => {
@@ -1280,6 +1313,11 @@ if (process.env.NODE_ENV === "production") {
   });
 }
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`API server running on http://0.0.0.0:${PORT}`);
-});
+// Only start listening when running locally (not on Vercel serverless)
+if (!process.env.VERCEL) {
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`API server running on http://0.0.0.0:${PORT}`);
+  });
+}
+
+export default app;
