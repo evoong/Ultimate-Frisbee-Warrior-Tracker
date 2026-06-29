@@ -1,0 +1,19 @@
+{
+  "name": "ultimate-frisbee-warrior-tracker",
+  "type": "javascript",
+  "main": "api/index.ts",
+  "compatibility_date": "2024-12-16",
+  "env": {
+    "production": {}
+  },
+  "assets": {
+    "directory": "./frontend/dist",
+    "binding": "ASSETS"
+  },
+  "routes": [
+    {
+      "pattern": "/api/*",
+      "custom_domain": false
+    }
+  ]
+}
