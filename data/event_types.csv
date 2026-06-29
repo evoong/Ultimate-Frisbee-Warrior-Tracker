@@ -1,8 +1,8 @@
-id,name,category
-1,Goal,Offense
-3,Block,Defense
-4,Throwaway,Offense
-5,Drop,Offense
-6,Pull,Special
-7,Opponent Goal,Defense
-8,Caught OB,Offense
+"id","name","category"
+"1","Goal","Offense"
+"3","Block","Defense"
+"4","Throwaway","Offense"
+"5","Drop","Offense"
+"6","Pull","Special"
+"7","Opponent Goal","Defense"
+"8","Caught OB","Offense"
