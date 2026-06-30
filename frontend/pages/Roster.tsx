@@ -84,8 +84,8 @@ export default function Roster() {
   useEffect(() => {
     const s = seasonsWithGames as { id: number }[] | undefined
     const allS = allSeasons as Season[] | undefined
-    if (!s || s.length === 0 || rosterSeasonIds.length > 0) return
-    const defaultId = getDefaultJamSeasonId(allS ?? [], s[0]!.id)
+    if (!s || s.length === 0 || !allS || allS.length === 0 || rosterSeasonIds.length > 0) return
+    const defaultId = getDefaultJamSeasonId(allS, s[0]!.id)
     setRosterSeasonIds([defaultId])
   }, [seasonsWithGames, allSeasons])
 

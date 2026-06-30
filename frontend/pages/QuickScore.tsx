@@ -5,7 +5,7 @@ import { useGetGameEvents } from '../hooks/backend/events'
 import { useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useGetEventTypes } from '../hooks/backend/events'
 import { useCreatePlayerForGame, useDeleteSubPlayer, useGetPlayersNotInSeason, useAddPlayerToGame } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons } from '../hooks/backend/stats'
-import { useGetGameAttendance, useSetAttendance } from '../hooks/backend/attendance'
+import { useGetGameAttendance, useSetAttendance, useSetAllAttendance } from '../hooks/backend/attendance'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
@@ -41,6 +41,7 @@ export default function QuickScore() {
   const { trigger: addPlayerToGame } = useAddPlayerToGame()
   const { data: attendingIds, trigger: fetchAttendance } = useGetGameAttendance()
   const { trigger: setAttendance } = useSetAttendance()
+  const { trigger: setAllAttendance } = useSetAllAttendance()
 
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null)
   const [showGameSelect, setShowGameSelect] = useState(false)
@@ -90,7 +91,10 @@ export default function QuickScore() {
     if (games && (games as Game[]).length > 0 && selectedGameId === null) {
       const g = games as Game[]
       const filtered = g.filter(gm => gm.season_id != null && selectedSeasonIds.includes(gm.season_id))
-      if (filtered.length > 0) setSelectedGameId(filtered[0]!.id)
+      if (filtered.length === 0) return
+      const today = new Date().toISOString().slice(0, 10)
+      const upcoming = filtered.slice().reverse().find(gm => gm.game_date >= today)
+      setSelectedGameId((upcoming ?? filtered[0]!).id)
     }
   }, [games, selectedSeasonIds])
 
@@ -339,7 +343,19 @@ export default function QuickScore() {
                 {showAttendance ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
               </button>
               {showAttendance && (
-                <CardContent className="pt-0 pb-3 px-5">
+                <CardContent className="pt-0 pb-3 px-5 space-y-2">
+                  <div className="flex justify-end">
+                    <button
+                      className="text-xs text-muted-foreground hover:text-foreground underline"
+                      onClick={async () => {
+                        const allIds = (players as { id: number }[]).map(p => p.id)
+                        await setAllAttendance({ gameId: selectedGameId!, attending: false, playerIds: allIds })
+                        fetchAttendance({ gameId: selectedGameId! })
+                      }}
+                    >
+                      Unselect all
+                    </button>
+                  </div>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                     {(players as { id: number; display_name: string; is_sub: boolean | null }[]).map(p => {
                       const row = (attendingIds as { player_id: number; in: boolean }[] | undefined)?.find(r => r.player_id === p.id)

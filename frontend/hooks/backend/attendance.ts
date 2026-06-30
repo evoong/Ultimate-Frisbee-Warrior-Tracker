@@ -57,3 +57,24 @@ export function useSetAttendance() {
   }, [])
   return useApiCall<void, { gameId: number; playerId: number; attending: boolean }>(fn)
 }
+
+// Sets `in` for a specific set of playerIds in one update, sets everyone else to false
+export function useSetAllAttendance() {
+  const fn = useCallback(async (params: { gameId: number; attending: boolean; playerIds?: number[] }) => {
+    if (params.playerIds && params.playerIds.length > 0) {
+      const { error } = await supabase
+        .from('game_attendance')
+        .update({ in: params.attending })
+        .eq('game_id', params.gameId)
+        .in('player_id', params.playerIds)
+      if (error) throw new Error(error.message)
+    } else {
+      const { error } = await supabase
+        .from('game_attendance')
+        .update({ in: params.attending })
+        .eq('game_id', params.gameId)
+      if (error) throw new Error(error.message)
+    }
+  }, [])
+  return useApiCall<void, { gameId: number; attending: boolean; playerIds?: number[] }>(fn)
+}
