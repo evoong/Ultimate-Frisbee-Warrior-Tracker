@@ -34,21 +34,36 @@ function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P
 
 export function useGetSeasons() {
   const fn = useCallback(async () => {
-    return [] as any[]
+    const { data, error } = await supabase
+      .from('seasons')
+      .select('*')
+      .order('year', { ascending: false })
+    if (error) throw new Error(error.message)
+    return data as any[]
   }, [])
   return useApiCall<any[]>(fn)
 }
 
 export function useGetAllSeasons() {
   const fn = useCallback(async () => {
-    return [] as any[]
+    const { data, error } = await supabase
+      .from('seasons')
+      .select('*')
+      .order('year', { ascending: false })
+    if (error) throw new Error(error.message)
+    return data as any[]
   }, [])
   return useApiCall<any[]>(fn)
 }
 
 export function useGetSeasonsMeta() {
   const fn = useCallback(async () => {
-    return [] as any[]
+    const { data, error } = await supabase
+      .from('seasons')
+      .select('id, name, year, organizer')
+      .order('year', { ascending: false })
+    if (error) throw new Error(error.message)
+    return data as any[]
   }, [])
   return useApiCall(fn)
 }
@@ -58,7 +73,12 @@ export function useCreateSeason() {
     name: string; year: number; location?: string; league_name?: string;
     organizer?: string; default_game_time?: string
   }) => {
-    return {} as any
+    const { data, error } = await supabase
+      .from('seasons')
+      .insert(params)
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0]
   }, [])
   return useApiCall(fn)
 }
