@@ -65,17 +65,39 @@ export function useCreateSeason() {
 
 export function useGetPlayerStats() {
   const fn = useCallback(async (params?: { seasonIds?: number[]; gameIds?: number[] }) => {
-    const { data: events, error } = await supabase
+    // Fetch events separately without relational joins to avoid ambiguous foreign key
+    const { data: events, error: eventsError } = await supabase
       .from('game_events')
-      .select('player_id, event_type, game_id, games(season_id), players(display_name)')
+      .select('player_id, event_type, game_id')
 
-    if (error) throw new Error(error.message)
+    if (eventsError) throw new Error(eventsError.message)
     if (!events) return []
+
+    // Fetch games to get season_id
+    const { data: games, error: gamesError } = await supabase
+      .from('games')
+      .select('id, season_id')
+
+    if (gamesError) throw new Error(gamesError.message)
+
+    const gamesMap = new Map(games?.map((g: any) => [g.id, g]) ?? [])
+
+    // Fetch all players
+    const { data: players, error: playersError } = await supabase
+      .from('players')
+      .select('id, display_name')
+
+    if (playersError) throw new Error(playersError.message)
+
+    const playersMap = new Map(players?.map((p: any) => [p.id, p]) ?? [])
 
     // Filter by seasons or games if specified
     let filtered = events
     if (params?.seasonIds && params.seasonIds.length > 0) {
-      filtered = events.filter((e: any) => params.seasonIds?.includes(e.games?.season_id))
+      filtered = events.filter((e: any) => {
+        const game = gamesMap.get(e.game_id)
+        return game && params.seasonIds?.includes(game.season_id)
+      })
     }
     if (params?.gameIds && params.gameIds.length > 0) {
       filtered = events.filter((e: any) => params.gameIds?.includes(e.game_id))
@@ -85,13 +107,13 @@ export function useGetPlayerStats() {
     const statsMap = new Map<number, any>()
     filtered.forEach((event: any) => {
       const playerId = event.player_id
-      const playerName = event.players?.display_name
-      if (!playerId || !playerName) return
+      const playerData = playersMap.get(playerId)
+      if (!playerId || !playerData) return
 
       if (!statsMap.has(playerId)) {
         statsMap.set(playerId, {
           player_id: playerId,
-          player_name: playerName,
+          player_name: playerData.display_name,
           goals: 0,
           assists: 0,
           turnovers: 0,
@@ -126,28 +148,55 @@ export function useGetPlayerStats() {
 
 export function useGetCumulativeStats() {
   const fn = useCallback(async (params?: { seasonId?: number }) => {
-    const { data: events, error } = await supabase
+    // Fetch events without relational joins to avoid ambiguous foreign key
+    const { data: events, error: eventsError } = await supabase
       .from('game_events')
-      .select('*, games(id, opponent, game_date, season_id), players(id, display_name)')
+      .select('player_id, event_type, game_id')
 
-    if (error) throw new Error(error.message)
+    if (eventsError) throw new Error(eventsError.message)
     if (!events) return []
 
+    // Fetch games
+    const { data: games, error: gamesError } = await supabase
+      .from('games')
+      .select('id, opponent, game_date, season_id')
+
+    if (gamesError) throw new Error(gamesError.message)
+
+    const gamesMap = new Map(games?.map((g: any) => [g.id, g]) ?? [])
+
+    // Fetch players
+    const { data: players, error: playersError } = await supabase
+      .from('players')
+      .select('id, display_name')
+
+    if (playersError) throw new Error(playersError.message)
+
+    const playersMap = new Map(players?.map((p: any) => [p.id, p]) ?? [])
+
+    // Filter by season if specified
     let filtered = events
     if (params?.seasonId != null) {
-      filtered = events.filter((e: any) => e.games?.season_id === params.seasonId)
+      filtered = events.filter((e: any) => {
+        const game = gamesMap.get(e.game_id)
+        return game && game.season_id === params.seasonId
+      })
     }
 
-    return filtered.map((e: any) => ({
-      game_id: e.games?.id,
-      opponent: e.games?.opponent,
-      game_date: e.games?.game_date,
-      player_id: e.player_id,
-      player_name: e.players?.display_name,
-      goals: e.event_type === 'Goal' ? 1 : 0,
-      assists: e.event_type === 'Assist' ? 1 : 0,
-      turnovers: e.event_type === 'Turnover' ? 1 : 0,
-    }))
+    return filtered.map((e: any) => {
+      const game = gamesMap.get(e.game_id)
+      const player = playersMap.get(e.player_id)
+      return {
+        game_id: game?.id,
+        opponent: game?.opponent,
+        game_date: game?.game_date,
+        player_id: e.player_id,
+        player_name: player?.display_name,
+        goals: e.event_type === 'Goal' ? 1 : 0,
+        assists: e.event_type === 'Assist' ? 1 : 0,
+        turnovers: e.event_type === 'Turnover' ? 1 : 0,
+      }
+    })
   }, [])
   return useApiCall<any[], { seasonId?: number }>(fn)
 }
