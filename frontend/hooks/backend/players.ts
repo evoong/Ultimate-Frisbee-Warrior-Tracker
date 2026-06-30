@@ -84,19 +84,15 @@ export function useCreatePlayer() {
 }
 
 export function useGetPlayersNotInSeason() {
-  const fn = useCallback(async (params?: { gameId?: number; seasonId?: number }) => {
-    let query = supabase.from('players').select('*')
-
-    // Filter by season if provided
-    if (params?.seasonId) {
-      query = query.eq('season_id', params.seasonId)
-    }
-
-    const { data, error } = await query.order('display_name')
+  const fn = useCallback(async (params: { gameId: number }) => {
+    const { data, error } = await supabase
+      .from('players')
+      .select('*')
+      .order('display_name')
     if (error) throw new Error(error.message)
     return data as any[]
   }, [])
-  return useApiCall<any[], { gameId?: number; seasonId?: number }>(fn)
+  return useApiCall<any[], { gameId: number }>(fn)
 }
 
 export function useCreatePlayerForGame() {
