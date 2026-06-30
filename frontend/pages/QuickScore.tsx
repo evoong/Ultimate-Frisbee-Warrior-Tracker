@@ -333,7 +333,7 @@ export default function QuickScore() {
                   <Users className="w-4 h-4 text-muted-foreground" />
                   <span>Attendance</span>
                   <span className="text-xs text-muted-foreground font-normal">
-                    {attendingIds ? `${(attendingIds as number[]).length} / ${(players as any[]).length}` : '…'}
+                    {attendingIds ? `${(attendingIds as { player_id: number; in: boolean }[]).filter(r => r.in).length} / ${(players as any[]).length}` : '…'}
                   </span>
                 </div>
                 {showAttendance ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
@@ -342,7 +342,8 @@ export default function QuickScore() {
                 <CardContent className="pt-0 pb-3 px-5">
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                     {(players as { id: number; display_name: string; is_sub: boolean | null }[]).map(p => {
-                      const attending = (attendingIds as number[] | undefined)?.includes(p.id) ?? false
+                      const row = (attendingIds as { player_id: number; in: boolean }[] | undefined)?.find(r => r.player_id === p.id)
+                      const attending = row?.in ?? true
                       return (
                         <label key={p.id} className="flex items-center gap-2 py-1 cursor-pointer select-none">
                           <input
