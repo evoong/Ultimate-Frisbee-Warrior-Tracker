@@ -34,11 +34,11 @@ function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P
 
 export function useGetPlayers() {
   const fn = useCallback(async (params?: { seasonIds?: number[] }) => {
-    // Just return all players - season filtering happens through season_players table
-    const { data, error } = await supabase
-      .from('players')
-      .select('*')
-      .order('display_name')
+    let query = supabase.from('players').select('*').order('display_name')
+    if (params?.seasonIds && params.seasonIds.length > 0) {
+      query = query.in('season_id', params.seasonIds)
+    }
+    const { data, error } = await query
     if (error) throw new Error(error.message)
     return data as any[]
   }, [])
