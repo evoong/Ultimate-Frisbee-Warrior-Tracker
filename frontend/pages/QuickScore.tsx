@@ -77,16 +77,10 @@ export default function QuickScore() {
     if (selectedGameId) {
       fetchEvents({ gameId: selectedGameId })
       fetchPlayers({ gameId: selectedGameId })
-      // Load other players from the same season as the selected game
-      const game = filteredGames.find(g => g.id === selectedGameId)
-      if (game?.season_id) {
-        fetchOtherPlayers({ seasonId: game.season_id })
-      } else {
-        fetchOtherPlayers({})
-      }
+      fetchOtherPlayers({ gameId: selectedGameId })
       setShowGameSelect(false)
     }
-  }, [selectedGameId, filteredGames])
+  }, [selectedGameId])
 
   const filteredGames = (games as Game[] | undefined) ?? []
 
@@ -350,11 +344,9 @@ export default function QuickScore() {
                   <span className="text-xs font-medium text-muted-foreground text-right">{assisterLabel}</span>
                   <PlayerCombobox
                     players={playerOptions}
-                    otherPlayers={otherPlayerOptions}
                     value={defaultAssisterId || '__none__'}
                     onValueChange={setDefaultAssisterId}
                     onAddPlayer={handleAddAssister}
-                    onAddExistingPlayer={handleAddExistingAssister}
                     onDeletePlayer={handleDeleteSub}
                     placeholder="None"
                     className="w-full h-9 text-sm bg-background border-border"
