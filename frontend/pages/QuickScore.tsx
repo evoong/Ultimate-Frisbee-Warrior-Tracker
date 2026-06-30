@@ -77,16 +77,11 @@ export default function QuickScore() {
     if (selectedGameId) {
       fetchEvents({ gameId: selectedGameId })
       fetchPlayers({ gameId: selectedGameId })
-      // Load other players from the same season as the selected game
-      const game = filteredGames.find(g => g.id === selectedGameId)
-      if (game?.season_id) {
-        fetchOtherPlayers({ seasonId: game.season_id })
-      } else {
-        fetchOtherPlayers({})
-      }
+      // Load all other players
+      fetchOtherPlayers({})
       setShowGameSelect(false)
     }
-  }, [selectedGameId, filteredGames])
+  }, [selectedGameId])
 
   const filteredGames = (games as Game[] | undefined) ?? []
 
@@ -157,8 +152,10 @@ export default function QuickScore() {
     ...((players as { id: number; display_name: string; is_sub: boolean | null }[] | undefined) ?? []).map(p => ({ id: p.id.toString(), label: p.display_name, isSub: !!p.is_sub }))
   ]
 
+  // Fallback to all players if no season-specific players found
   const otherPlayerOptions = ((otherPlayers as { id: number; display_name: string }[] | undefined) ?? [])
     .map(p => ({ id: p.id.toString(), label: p.display_name }))
+    .filter(p => !players?.some(pl => pl.id === parseInt(p.id)))
 
   const handleAddPlayer = async (name: string) => {
     if (!selectedGameId) return
