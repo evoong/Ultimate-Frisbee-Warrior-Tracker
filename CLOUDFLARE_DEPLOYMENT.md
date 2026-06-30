@@ -39,9 +39,9 @@ The fix involved three main components:
     "binding": "ASSETS"
   },
   "vars": {
-    "SUPABASE_URL": "https://pyqngqyqwevfpaxcmfnd.supabase.co",
-    "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_oUie8kxlAp6DD0UPMSG-ZQ_QBEWo3vT",
-    "SUPABASE_JWKS_URL": "https://pyqngqyqwevfpaxcmfnd.supabase.co/auth/v1/.well-known/jwks.json"
+    "SUPABASE_URL": "https://your-supabase-project.supabase.co",
+    "SUPABASE_PUBLISHABLE_KEY": "your-supabase-publishable-key",
+    "SUPABASE_JWKS_URL": "https://your-supabase-project.supabase.co/auth/v1/.well-known/jwks.json"
   }
 }
 ```
@@ -169,9 +169,9 @@ These are safe to commit because they don't contain secrets:
 
 ```jsonc
 "vars": {
-  "SUPABASE_URL": "https://pyqngqyqwevfpaxcmfnd.supabase.co",
-  "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_oUie8kxlAp6DD0UPMSG-ZQ_QBEWo3vT",
-  "SUPABASE_JWKS_URL": "https://pyqngqyqwevfpaxcmfnd.supabase.co/auth/v1/.well-known/jwks.json"
+  "SUPABASE_URL": "https://your-supabase-project.supabase.co",
+  "SUPABASE_PUBLISHABLE_KEY": "your-supabase-publishable-key",
+  "SUPABASE_JWKS_URL": "https://your-supabase-project.supabase.co/auth/v1/.well-known/jwks.json"
 }
 ```
 
@@ -180,18 +180,20 @@ These are safe to commit because they don't contain secrets:
 These are stored securely on Cloudflare and NOT committed to git:
 
 ```bash
-# Set DATABASE_URL
-echo "postgresql://postgres.pyqngqyqwevfpaxcmfnd:lPnWim83BtahiK8D@aws-0-ca-central-1.pooler.supabase.com:5432/postgres" | \
+# Set DATABASE_URL (replace with your actual value from .env)
+echo "YOUR_DATABASE_URL_HERE" | \
   npx wrangler secret put DATABASE_URL --name ultimate-frisbee-warrior-tracker
 
-# Set SUPABASE_SECRET_KEY
+# Set SUPABASE_SECRET_KEY (from your .env file)
 echo "YOUR_SUPABASE_SECRET_KEY_HERE" | \
   npx wrangler secret put SUPABASE_SECRET_KEY --name ultimate-frisbee-warrior-tracker
 
-# Set GEMINI_API_KEY
+# Set GEMINI_API_KEY (from your .env file)
 echo "YOUR_GEMINI_API_KEY_HERE" | \
   npx wrangler secret put GEMINI_API_KEY --name ultimate-frisbee-warrior-tracker
 ```
+
+**Note:** Get actual values from your `.env` file. Never commit secrets to git.
 
 ### Accessing Variables in Code
 
