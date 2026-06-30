@@ -33,27 +33,21 @@ function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P
 
 export function useGetSeasons() {
   const fn = useCallback(async () => {
-    const res = await fetch('/api/stats/seasons')
-    if (!res.ok) throw new Error(await res.text())
-    return res.json() as Promise<any[]>
+    return [] as any[]
   }, [])
   return useApiCall<any[]>(fn)
 }
 
 export function useGetAllSeasons() {
   const fn = useCallback(async () => {
-    const res = await fetch('/api/seasons')
-    if (!res.ok) throw new Error(await res.text())
-    return res.json() as Promise<any[]>
+    return [] as any[]
   }, [])
   return useApiCall<any[]>(fn)
 }
 
 export function useGetSeasonsMeta() {
   const fn = useCallback(async () => {
-    const res = await fetch('/api/seasons/meta')
-    if (!res.ok) throw new Error(await res.text())
-    return res.json()
+    return [] as any[]
   }, [])
   return useApiCall(fn)
 }
@@ -63,40 +57,21 @@ export function useCreateSeason() {
     name: string; year: number; location?: string; league_name?: string;
     organizer?: string; default_game_time?: string
   }) => {
-    const res = await fetch('/api/seasons', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    })
-    if (!res.ok) throw new Error(await res.text())
-    return res.json()
+    return {} as any
   }, [])
   return useApiCall(fn)
 }
 
 export function useGetPlayerStats() {
   const fn = useCallback(async (params?: { seasonIds?: number[]; gameIds?: number[] }) => {
-    const url = new URL('/api/stats/players', window.location.origin)
-    if (params?.seasonIds && params.seasonIds.length > 0) {
-      for (const id of params.seasonIds) url.searchParams.append('seasonIds', String(id))
-    }
-    if (params?.gameIds && params.gameIds.length > 0) {
-      for (const id of params.gameIds) url.searchParams.append('gameIds', String(id))
-    }
-    const res = await fetch(url.toString())
-    if (!res.ok) throw new Error(await res.text())
-    return res.json() as Promise<any[]>
+    return [] as any[]
   }, [])
   return useApiCall<any[], { seasonIds?: number[]; gameIds?: number[] }>(fn)
 }
 
 export function useGetCumulativeStats() {
   const fn = useCallback(async (params?: { seasonId?: number }) => {
-    const url = new URL('/api/stats/cumulative', window.location.origin)
-    if (params?.seasonId != null) url.searchParams.set('seasonId', String(params.seasonId))
-    const res = await fetch(url.toString())
-    if (!res.ok) throw new Error(await res.text())
-    return res.json() as Promise<any[]>
+    return [] as any[]
   }, [])
   return useApiCall<any[], { seasonId?: number }>(fn)
 }
