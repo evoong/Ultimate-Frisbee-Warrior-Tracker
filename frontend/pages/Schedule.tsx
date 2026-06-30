@@ -3,6 +3,7 @@ import { useGetGames, useCreateGame, useUpdateGame, useDeleteGame, useGetLineups
 import { useGetGameEvents, useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useGetEventTypes } from '../hooks/backend/events'
 import { useGetPlayers } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons, useCreateSeason, useGetSeasonsMeta } from '../hooks/backend/stats'
+import { useGetGameAttendance, useSetAttendance } from '../hooks/backend/attendance'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
@@ -13,7 +14,7 @@ import { Label } from '../lib/shadcn/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
 import { Badge } from '../lib/shadcn/badge'
 import PlayerCombobox from '../components/PlayerCombobox'
-import { Calendar, Plus, Trophy, ChevronLeft, ChevronRight, Target, TrendingUp, PlusCircle, Trash2, Edit2, Save, X, Users, LayoutList, CalendarDays, StickyNote } from 'lucide-react'
+import { Calendar, Plus, Trophy, ChevronLeft, ChevronRight, Target, TrendingUp, PlusCircle, Trash2, Edit2, Save, X, Users, LayoutList, CalendarDays, StickyNote, ClipboardCheck } from 'lucide-react'
 
 type Game = {
   id: number; opponent: string; game_date: string; game_time: string; game_type: string
@@ -52,8 +53,10 @@ export default function Schedule() {
   const { data: eventTypes, trigger: fetchEventTypes } = useGetEventTypes()
 
   const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const { data: attendanceRows, trigger: fetchAttendance } = useGetGameAttendance()
+  const { trigger: setAttendance } = useSetAttendance()
   const [selectedGame, setSelectedGame] = useState<Game | null>(null)
-  const [activeTab, setActiveTab] = useState<'events' | 'lineups' | 'notes'>('events')
+  const [activeTab, setActiveTab] = useState<'events' | 'lineups' | 'attendance' | 'notes'>('events')
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list')
   const [calendarDate, setCalendarDate] = useState(() => new Date())
 
@@ -116,6 +119,7 @@ export default function Schedule() {
     setSelectedGame(game)
     fetchEvents({ gameId: game.id })
     fetchLineups({ gameId: game.id })
+    fetchAttendance({ gameId: game.id })
     setActiveTab('events')
     setEditingNotes(false)
     setEditingOutcome(false)
@@ -406,6 +410,7 @@ export default function Schedule() {
           {[
             { key: 'events' as const, icon: LayoutList, label: 'Events' },
             { key: 'lineups' as const, icon: Users, label: 'Lineups' },
+            { key: 'attendance' as const, icon: ClipboardCheck, label: 'Attendance' },
             { key: 'notes' as const, icon: StickyNote, label: 'Notes' },
           ].map(({ key, icon: Icon, label }) => (
             <button key={key} onClick={() => setActiveTab(key)}
@@ -555,6 +560,54 @@ export default function Schedule() {
                     </div>
                   </div>
                 ))
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Attendance */}
+        {activeTab === 'attendance' && (
+          <Card className="bg-card text-card-foreground border-border">
+            <CardHeader>
+              <CardTitle className="text-base flex items-center justify-between">
+                <span className="flex items-center gap-2"><ClipboardCheck className="w-4 h-4" />Attendance</span>
+                <span className="text-sm font-normal text-muted-foreground">
+                  {attendanceRows ? `${(attendanceRows as { player_id: number; in: boolean }[]).filter(r => r.in).length} / ${(attendanceRows as any[]).length}` : '…'}
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {!attendanceRows || (attendanceRows as any[]).length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">No roster data for this game.</p>
+              ) : (
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                  {(attendanceRows as { player_id: number; in: boolean }[])
+                    .slice()
+                    .sort((a, b) => {
+                      const pa = (players as { id: number; display_name: string }[] | undefined)?.find(p => p.id === a.player_id)?.display_name ?? ''
+                      const pb = (players as { id: number; display_name: string }[] | undefined)?.find(p => p.id === b.player_id)?.display_name ?? ''
+                      return pa.localeCompare(pb)
+                    })
+                    .map(row => {
+                      const player = (players as { id: number; display_name: string }[] | undefined)?.find(p => p.id === row.player_id)
+                      return (
+                        <label key={row.player_id} className="flex items-center gap-2 py-1 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={row.in}
+                            onChange={async e => {
+                              await setAttendance({ gameId: selectedGame!.id, playerId: row.player_id, attending: e.target.checked })
+                              fetchAttendance({ gameId: selectedGame!.id })
+                            }}
+                            className="accent-primary w-4 h-4 rounded cursor-pointer"
+                          />
+                          <span className={`text-sm ${row.in ? 'text-foreground' : 'text-muted-foreground line-through'}`}>
+                            {player?.display_name ?? `Player ${row.player_id}`}
+                          </span>
+                        </label>
+                      )
+                    })}
+                </div>
               )}
             </CardContent>
           </Card>
