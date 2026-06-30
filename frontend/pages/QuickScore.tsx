@@ -80,11 +80,13 @@ export default function QuickScore() {
   }, [allSeasons, games, seasonsWithGames])
 
   useEffect(() => {
+    // Wait for the default season to be chosen before auto-picking a game,
+    // otherwise we'd grab the latest game across ALL seasons (e.g. RHUC)
+    // before the Jam default above has had a chance to run.
+    if (selectedSeasonIds.length === 0) return
     if (games && (games as Game[]).length > 0 && selectedGameId === null) {
       const g = games as Game[]
-      const filtered = selectedSeasonIds.length > 0
-        ? g.filter(gm => gm.season_id != null && selectedSeasonIds.includes(gm.season_id))
-        : g
+      const filtered = g.filter(gm => gm.season_id != null && selectedSeasonIds.includes(gm.season_id))
       if (filtered.length > 0) setSelectedGameId(filtered[0]!.id)
     }
   }, [games, selectedSeasonIds])
