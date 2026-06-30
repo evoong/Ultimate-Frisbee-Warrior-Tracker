@@ -331,7 +331,7 @@ export function useGetPlayerGameStats() {
       if (stat) stat.assists++
     })
 
-    return [...statsMap.values()].sort((a, b) => a.game_date.localeCompare(b.game_date)) as any[]
+    return [...statsMap.values()].sort((a, b) => b.game_date.localeCompare(a.game_date)) as any[]
   }, [])
   return useApiCall<any[], { playerId: number }>(fn)
 }
