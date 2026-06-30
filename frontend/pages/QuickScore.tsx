@@ -55,15 +55,16 @@ export default function QuickScore() {
   }, [])
 
   useEffect(() => {
+    // Fetch all games on mount, don't filter by season
+    fetchGames()
+  }, [])
+
+  useEffect(() => {
+    // Load seasons for filter display only
     const s = seasonsWithGames as { season_id: number }[] | undefined
     if (!s || s.length === 0 || selectedSeasonIds.length > 0) return
     setSelectedSeasonIds([s[0]!.season_id])
   }, [seasonsWithGames])
-
-  useEffect(() => {
-    fetchGames({ seasonIds: selectedSeasonIds.length > 0 ? selectedSeasonIds : undefined })
-    setSelectedGameId(null)
-  }, [selectedSeasonIds])
 
   useEffect(() => {
     if (games && (games as Game[]).length > 0 && selectedGameId === null) {
@@ -233,26 +234,28 @@ export default function QuickScore() {
           />
 
           {/* Game Selection */}
-          <Card className="bg-card text-card-foreground border-border">
-            <CardHeader>
-              <CardTitle className="text-base">Select Game</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Select value={selectedGameId?.toString() || ''} onValueChange={(val) => setSelectedGameId(parseInt(val))}>
-                <SelectTrigger className="bg-background text-foreground border-border">
-                  <SelectValue placeholder="Choose a game..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {filteredGames.map((game) => (
-                    <SelectItem key={game.id} value={game.id.toString()}>
-                      vs {game.opponent} - {new Date(game.game_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                      {game.season_id && getSeasonLabel(game.season_id) ? ` (${getSeasonLabel(game.season_id)})` : ''}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </CardContent>
-          </Card>
+          <div>
+            <h2 className="text-lg font-semibold text-foreground mb-3">Select Game</h2>
+            <div className="grid grid-cols-1 gap-2 max-h-96 overflow-y-auto">
+              {filteredGames.map((game) => (
+                <button
+                  key={game.id}
+                  onClick={() => setSelectedGameId(game.id)}
+                  className={`p-3 rounded-lg border transition-all text-left ${
+                    selectedGameId === game.id
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'bg-card border-border hover:bg-accent hover:border-primary/50'
+                  }`}
+                >
+                  <div className="font-medium">vs {game.opponent}</div>
+                  <div className="text-sm text-muted-foreground mt-1">
+                    {new Date(game.game_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                    {game.season_id && getSeasonLabel(game.season_id) ? ` • ${getSeasonLabel(game.season_id)}` : ''}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
         </>
       ) : (
         <>
