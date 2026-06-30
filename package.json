@@ -20,13 +20,15 @@
   "dependencies": {
     "@google/genai": "^2.10.0",
     "@supabase/server": "^1.2.0",
+    "@supabase/ssr": "^0.12.0",
     "@supabase/supabase-js": "^2.108.2",
     "@types/multer": "^2.1.0",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
     "express": "^4.18.2",
     "multer": "^2.2.0",
-    "pg": "^8.11.3"
+    "pg": "^8.11.3",
+    "postgres": "^3.4.9"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
