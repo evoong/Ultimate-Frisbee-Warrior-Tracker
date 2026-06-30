@@ -7,7 +7,7 @@ import { Label } from '../lib/shadcn/label'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import { Award, Target } from 'lucide-react'
 
-type Season = { id: number; name: string; year: number; organizer: string | null }
+type Season = { id: number; name: string; year: number; organizer: string | null; start_date: string | null; end_date: string | null }
 type Game = { id: number; opponent: string; game_date: string; season_id: number | null }
 
 function seasonLabel(s: { name: string; year: number; organizer: string | null }) {
@@ -32,10 +32,17 @@ export default function Ranking() {
 
   useEffect(() => {
     const s = seasonsWithGames as { id: number }[] | undefined
+    const allS = allSeasons as Season[] | undefined
     if (!s || s.length === 0 || selectedSeasonIds.length > 0) return
+    const today = new Date().toISOString().slice(0, 10)
+    const jamSeasons = (allS ?? []).filter(s => s.organizer === 'Jam')
+    const active = jamSeasons.find(s => s.start_date && s.start_date <= today && (s.end_date == null || today <= s.end_date))
+    const upcoming = jamSeasons.filter(s => s.start_date && s.start_date > today).sort((a, b) => (a.start_date ?? '').localeCompare(b.start_date ?? ''))[0]
+    const recentlyEnded = jamSeasons.filter(s => s.end_date && s.end_date < today).sort((a, b) => (b.end_date ?? '').localeCompare(a.end_date ?? ''))[0]
+    const defaultId = (active ?? upcoming ?? recentlyEnded)?.id ?? s[0]!.id
     setFilterType('season')
-    setSelectedSeasonIds([s[0]!.id])
-  }, [seasonsWithGames])
+    setSelectedSeasonIds([defaultId])
+  }, [seasonsWithGames, allSeasons])
 
   useEffect(() => {
     if (filterType === 'all') fetchStats({})

@@ -20,7 +20,7 @@ type CumulativeRow = {
   game_id: number; opponent: string; game_date: string
   player_id: number; player_name: string; goals: string; assists: string; turnovers: string
 }
-type Season = { id: number; name: string; year: number; organizer: string | null }
+type Season = { id: number; name: string; year: number; organizer: string | null; start_date: string | null; end_date: string | null }
 type StatsSeasonRow = { id: number; name: string; year: number; organizer: string | null; game_count: string }
 type Game = { id: number; opponent: string; game_date: string; season_id: number | null }
 
@@ -73,21 +73,25 @@ export default function Stats() {
     fetchAllSeasons()
   }, [])
 
-  // Default both filters to the latest season that has games
+  // Default both filters to the most relevant Jam season
   useEffect(() => {
     const s = seasons as StatsSeasonRow[] | undefined
+    const allS = allSeasons as Season[] | undefined
     if (!s || s.length === 0) return
-    const latest = s[0]!
-    // Default main filter
+    const today = new Date().toISOString().slice(0, 10)
+    const jamSeasons = (allS ?? []).filter(s => s.organizer === 'Jam')
+    const active = jamSeasons.find(s => s.start_date && s.start_date <= today && (s.end_date == null || today <= s.end_date))
+    const upcoming = jamSeasons.filter(s => s.start_date && s.start_date > today).sort((a, b) => (a.start_date ?? '').localeCompare(b.start_date ?? ''))[0]
+    const recentlyEnded = jamSeasons.filter(s => s.end_date && s.end_date < today).sort((a, b) => (b.end_date ?? '').localeCompare(a.end_date ?? ''))[0]
+    const defaultId = (active ?? upcoming ?? recentlyEnded)?.id ?? s[0]!.id
     if (filterType === 'all' && selectedSeasonIds.length === 0) {
       setFilterType('season')
-      setSelectedSeasonIds([latest.id])
+      setSelectedSeasonIds([defaultId])
     }
-    // Default cumulative filter
     if (!cumulativeSeasonId) {
-      setCumulativeSeasonId(String(latest.id))
+      setCumulativeSeasonId(String(defaultId))
     }
-  }, [seasons])
+  }, [seasons, allSeasons])
 
   useEffect(() => {
     if (filterType === 'all') fetchStats({})
