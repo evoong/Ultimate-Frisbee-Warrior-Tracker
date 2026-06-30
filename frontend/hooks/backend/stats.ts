@@ -36,7 +36,7 @@ export function useGetSeasons() {
   const fn = useCallback(async () => {
     const { data, error } = await supabase
       .from('seasons')
-      .select('id, name, year, organizer')
+      .select('*')
       .order('year', { ascending: false })
     if (error) throw new Error(error.message)
     return data as any[]
