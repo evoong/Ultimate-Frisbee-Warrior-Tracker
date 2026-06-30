@@ -31,10 +31,10 @@ export default function Ranking() {
   }, [])
 
   useEffect(() => {
-    const s = seasonsWithGames as { season_id: number }[] | undefined
+    const s = seasonsWithGames as { id: number }[] | undefined
     if (!s || s.length === 0 || selectedSeasonIds.length > 0) return
     setFilterType('season')
-    setSelectedSeasonIds([s[0]!.season_id])
+    setSelectedSeasonIds([s[0]!.id])
   }, [seasonsWithGames])
 
   useEffect(() => {
@@ -108,14 +108,18 @@ export default function Ranking() {
                 </div>
               </div>
               <div className="max-h-48 overflow-y-auto space-y-1 bg-background rounded-md border border-border p-3">
-                {allGames?.map(game => (
-                  <label key={game.id} className="flex items-center gap-3 cursor-pointer hover:bg-accent rounded px-2 py-1.5 transition-colors">
-                    <input type="checkbox" checked={selectedGameIds.includes(game.id)} onChange={() => handleGameToggle(game.id)} className="w-4 h-4 rounded border-border" />
-                    <span className="text-sm text-foreground">
-                      vs {game.opponent} — {new Date(game.game_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                    </span>
-                  </label>
-                ))}
+                {allGames?.map(game => {
+                  const s = allSeasonsArr.find(s => s.id === game.season_id)
+                  return (
+                    <label key={game.id} className="flex items-center gap-3 cursor-pointer hover:bg-accent rounded px-2 py-1.5 transition-colors">
+                      <input type="checkbox" checked={selectedGameIds.includes(game.id)} onChange={() => handleGameToggle(game.id)} className="w-4 h-4 rounded border-border" />
+                      <span className="text-sm text-foreground">
+                        vs {game.opponent} — {new Date(game.game_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                        {s && <span className="text-xs text-muted-foreground ml-1">· {seasonLabel(s)}</span>}
+                      </span>
+                    </label>
+                  )
+                })}
               </div>
             </div>
           )}
@@ -184,7 +188,7 @@ export default function Ranking() {
                       <td className="py-2 pr-3 text-foreground">{row.player_name}</td>
                       <td className="py-2 pr-3 text-right text-foreground">{row.goals}</td>
                       <td className="py-2 pr-3 text-right text-foreground">{row.assists}</td>
-                      <td className="py-2 text-right font-bold text-primary">{row.ga}</td>
+                      <td className="py-2 text-right font-bold text-primary">{parseInt(row.goals) + parseInt(row.assists)}</td>
                     </tr>
                   ))}
                 </tbody>

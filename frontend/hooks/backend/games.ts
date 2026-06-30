@@ -40,7 +40,28 @@ export function useGetGames() {
     }
     const { data, error } = await query
     if (error) throw new Error(error.message)
-    return data as any[]
+    if (!data || data.length === 0) return []
+
+    // Compute live scores from game_events (our_score/their_score in DB are not updated)
+    const gameIds = data.map((g: any) => g.id)
+    const { data: goalEvents } = await supabase
+      .from('game_events')
+      .select('game_id, event_type')
+      .in('game_id', gameIds)
+      .in('event_type', ['Goal', 'Opponent Goal'])
+
+    const scoreMap = new Map<number, { our: number; their: number }>()
+    ;(goalEvents ?? []).forEach((e: any) => {
+      if (!scoreMap.has(e.game_id)) scoreMap.set(e.game_id, { our: 0, their: 0 })
+      const s = scoreMap.get(e.game_id)!
+      if (e.event_type === 'Goal') s.our++
+      else s.their++
+    })
+
+    return data.map((g: any) => {
+      const s = scoreMap.get(g.id)
+      return s ? { ...g, our_score: s.our, their_score: s.their } : g
+    }) as any[]
   }, [])
   return useApiCall<any[], { seasonIds?: number[] }>(fn)
 }

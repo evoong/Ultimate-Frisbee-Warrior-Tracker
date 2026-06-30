@@ -21,7 +21,7 @@ type CumulativeRow = {
   player_id: number; player_name: string; goals: string; assists: string; turnovers: string
 }
 type Season = { id: number; name: string; year: number; organizer: string | null }
-type StatsSeasonRow = { season_id: number; name: string; year: number; organizer: string | null; game_count: string }
+type StatsSeasonRow = { id: number; name: string; year: number; organizer: string | null; game_count: string }
 type Game = { id: number; opponent: string; game_date: string; season_id: number | null }
 
 type ChartTab = 'combined' | 'goals' | 'assists' | 'turnovers'
@@ -81,11 +81,11 @@ export default function Stats() {
     // Default main filter
     if (filterType === 'all' && selectedSeasonIds.length === 0) {
       setFilterType('season')
-      setSelectedSeasonIds([latest.season_id])
+      setSelectedSeasonIds([latest.id])
     }
     // Default cumulative filter
     if (!cumulativeSeasonId) {
-      setCumulativeSeasonId(String(latest.season_id))
+      setCumulativeSeasonId(String(latest.id))
     }
   }, [seasons])
 
@@ -151,9 +151,13 @@ export default function Stats() {
     const perGamePlayer: Record<number, Record<number, { goals: number; assists: number; turnovers: number }>> = {}
     for (const r of rows) {
       if (!perGamePlayer[r.game_id]) perGamePlayer[r.game_id] = {}
-      perGamePlayer[r.game_id]![r.player_id] = {
-        goals: parseInt(r.goals), assists: parseInt(r.assists), turnovers: parseInt(r.turnovers),
+      if (!perGamePlayer[r.game_id]![r.player_id]) {
+        perGamePlayer[r.game_id]![r.player_id] = { goals: 0, assists: 0, turnovers: 0 }
       }
+      const existing = perGamePlayer[r.game_id]![r.player_id]!
+      existing.goals += parseInt(r.goals)
+      existing.assists += parseInt(r.assists)
+      existing.turnovers += parseInt(r.turnovers)
     }
 
     const playerTotals: Record<number, { name: string; total: number }> = {}
@@ -275,14 +279,18 @@ export default function Stats() {
                 </div>
               </div>
               <div className="max-h-40 overflow-y-auto space-y-1 bg-background rounded-md border border-border p-3">
-                {(games as Game[] | undefined)?.map(game => (
-                  <label key={game.id} className="flex items-center gap-3 cursor-pointer hover:bg-accent rounded px-2 py-1.5 transition-colors">
-                    <input type="checkbox" checked={selectedGameIds.includes(game.id)} onChange={() => handleGameToggle(game.id)} className="w-4 h-4 rounded border-border" />
-                    <span className="text-sm text-foreground">
-                      vs {game.opponent} — {new Date(game.game_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                    </span>
-                  </label>
-                ))}
+                {(games as Game[] | undefined)?.map(game => {
+                  const s = (allSeasons as Season[] | undefined)?.find(s => s.id === game.season_id)
+                  return (
+                    <label key={game.id} className="flex items-center gap-3 cursor-pointer hover:bg-accent rounded px-2 py-1.5 transition-colors">
+                      <input type="checkbox" checked={selectedGameIds.includes(game.id)} onChange={() => handleGameToggle(game.id)} className="w-4 h-4 rounded border-border" />
+                      <span className="text-sm text-foreground">
+                        vs {game.opponent} — {new Date(game.game_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                        {s && <span className="text-xs text-muted-foreground ml-1">· {seasonLabel(s)}</span>}
+                      </span>
+                    </label>
+                  )
+                })}
               </div>
             </div>
           )}
