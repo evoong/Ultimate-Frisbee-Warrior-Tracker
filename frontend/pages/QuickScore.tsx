@@ -60,27 +60,26 @@ export default function QuickScore() {
   }, [])
 
   useEffect(() => {
-    // Default to the next upcoming Jam Sports game (earliest future game).
-    // Falls back to the most recent past Jam game, then to latest season with games.
     const seasons = allSeasons as Season[] | undefined
     const g = (games as Game[] | undefined) ?? []
     if (!seasons || seasons.length === 0 || g.length === 0) return
     if (selectedSeasonIds.length > 0) return
 
-    const today = new Date().toISOString().slice(0, 10)
-    const jamSeasonIds = seasons.filter(s => s.organizer === 'Jam').map(s => s.id)
-    const jamGames = g.filter(gm => gm.season_id != null && jamSeasonIds.includes(gm.season_id))
-
-    // Prefer next upcoming game (games are date-desc, so reverse to find earliest future)
-    const upcoming = jamGames.slice().reverse().find(gm => gm.game_date >= today)
-    const target = upcoming ?? jamGames[0] // fall back to most recent past Jam game
-
-    if (target?.season_id != null) {
-      setSelectedSeasonIds([target.season_id])
-      if (selectedGameId === null) setSelectedGameId(target.id)
-    } else {
+    // Default to the latest Jam season (highest id), then next upcoming game in that season
+    const jamSeasons = seasons.filter(s => s.organizer === 'Jam').sort((a, b) => b.id - a.id)
+    const defaultSeason = jamSeasons[0]
+    if (!defaultSeason) {
       const swg = seasonsWithGames as { id: number }[] | undefined
       if (swg && swg.length > 0) setSelectedSeasonIds([swg[0]!.id])
+      return
+    }
+    setSelectedSeasonIds([defaultSeason.id])
+    if (selectedGameId === null) {
+      const today = new Date().toISOString().slice(0, 10)
+      const seasonGames = g.filter(gm => gm.season_id === defaultSeason.id)
+      const upcoming = seasonGames.slice().reverse().find(gm => gm.game_date >= today)
+      const target = upcoming ?? seasonGames[0]
+      if (target) setSelectedGameId(target.id)
     }
   }, [allSeasons, games, seasonsWithGames])
 
