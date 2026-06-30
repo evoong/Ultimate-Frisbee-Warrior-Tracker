@@ -84,15 +84,41 @@ export function useCreatePlayer() {
 }
 
 export function useGetPlayersNotInSeason() {
-  const fn = useCallback(async (params: { gameId: number }) => {
+  const fn = useCallback(async (params?: { gameId?: number; seasonId?: number }) => {
+    if (!params?.seasonId) {
+      const { data, error } = await supabase
+        .from('players')
+        .select('*')
+        .order('display_name')
+      if (error) throw new Error(error.message)
+      return data as any[]
+    }
+
+    // Get player IDs for this season from season_players junction table
+    const { data: seasonPlayers, error: spError } = await supabase
+      .from('season_players')
+      .select('player_id')
+      .eq('season_id', params.seasonId)
+
+    if (spError) throw new Error(spError.message)
+
+    if (!seasonPlayers || seasonPlayers.length === 0) {
+      return []
+    }
+
+    const playerIds = seasonPlayers.map(sp => (sp as any).player_id)
+
+    // Get full player details
     const { data, error } = await supabase
       .from('players')
       .select('*')
+      .in('id', playerIds)
       .order('display_name')
+
     if (error) throw new Error(error.message)
     return data as any[]
   }, [])
-  return useApiCall<any[], { gameId: number }>(fn)
+  return useApiCall<any[], { gameId?: number; seasonId?: number }>(fn)
 }
 
 export function useCreatePlayerForGame() {
