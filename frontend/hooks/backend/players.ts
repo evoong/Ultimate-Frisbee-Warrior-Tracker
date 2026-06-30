@@ -47,12 +47,23 @@ export function useGetPlayers() {
 
 export function useGetSeasonRoster() {
   const fn = useCallback(async (params: { gameId: number }) => {
-    const { data, error } = await supabase
+    // Get players in this game's lineup
+    const { data: lineupData, error: lineupError } = await supabase
       .from('game_lineups')
-      .select('*, players(*)')
+      .select('*')
       .eq('game_id', params.gameId)
-    if (error) throw new Error(error.message)
-    return data as any[]
+    if (lineupError) throw new Error(lineupError.message)
+
+    // Get full player details for those in the lineup
+    if (!lineupData || lineupData.length === 0) return []
+
+    const playerIds = lineupData.map((l: any) => l.player_id)
+    const { data: playersData, error: playersError } = await supabase
+      .from('players')
+      .select('*')
+      .in('id', playerIds)
+    if (playersError) throw new Error(playersError.message)
+    return playersData as any[]
   }, [])
   return useApiCall<any[], { gameId: number }>(fn)
 }
