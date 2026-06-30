@@ -60,18 +60,33 @@ export default function QuickScore() {
   }, [])
 
   useEffect(() => {
-    // Load seasons for filter display only
-    const s = seasonsWithGames as { id: number }[] | undefined
-    if (!s || s.length === 0 || selectedSeasonIds.length > 0) return
-    setSelectedSeasonIds([s[0]!.id])
-  }, [seasonsWithGames])
+    // Default to the latest Jam Sports game (games are ordered date-desc).
+    // Falls back to the latest season that has games if there are no Jam games.
+    const seasons = allSeasons as Season[] | undefined
+    const g = (games as Game[] | undefined) ?? []
+    if (!seasons || seasons.length === 0 || g.length === 0) return
+    if (selectedSeasonIds.length > 0) return
+
+    const jamSeasonIds = seasons.filter(s => s.organizer === 'Jam').map(s => s.id)
+    const latestJamGame = g.find(gm => gm.season_id != null && jamSeasonIds.includes(gm.season_id))
+
+    if (latestJamGame?.season_id != null) {
+      setSelectedSeasonIds([latestJamGame.season_id])
+      if (selectedGameId === null) setSelectedGameId(latestJamGame.id)
+    } else {
+      const swg = seasonsWithGames as { id: number }[] | undefined
+      if (swg && swg.length > 0) setSelectedSeasonIds([swg[0]!.id])
+    }
+  }, [allSeasons, games, seasonsWithGames])
 
   useEffect(() => {
+    // Wait for the default season to be chosen before auto-picking a game,
+    // otherwise we'd grab the latest game across ALL seasons (e.g. RHUC)
+    // before the Jam default above has had a chance to run.
+    if (selectedSeasonIds.length === 0) return
     if (games && (games as Game[]).length > 0 && selectedGameId === null) {
       const g = games as Game[]
-      const filtered = selectedSeasonIds.length > 0
-        ? g.filter(gm => gm.season_id != null && selectedSeasonIds.includes(gm.season_id))
-        : g
+      const filtered = g.filter(gm => gm.season_id != null && selectedSeasonIds.includes(gm.season_id))
       if (filtered.length > 0) setSelectedGameId(filtered[0]!.id)
     }
   }, [games, selectedSeasonIds])
