@@ -1,19 +1,14 @@
 {
   "name": "ultimate-frisbee-warrior-tracker",
-  "type": "javascript",
   "main": "api/index.ts",
   "compatibility_date": "2024-12-16",
-  "env": {
-    "production": {}
-  },
   "assets": {
     "directory": "./frontend/dist",
     "binding": "ASSETS"
   },
-  "routes": [
-    {
-      "pattern": "/api/*",
-      "custom_domain": false
-    }
-  ]
+  "vars": {
+    "SUPABASE_URL": "https://pyqngqyqwevfpaxcmfnd.supabase.co",
+    "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_oUie8kxlAp6DD0UPMSG-ZQ_QBEWo3vT",
+    "SUPABASE_JWKS_URL": "https://pyqngqyqwevfpaxcmfnd.supabase.co/auth/v1/.well-known/jwks.json"
+  }
 }
