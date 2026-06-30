@@ -85,6 +85,8 @@ export function useCreatePlayer() {
 
 export function useGetPlayersNotInSeason() {
   const fn = useCallback(async (params?: { gameId?: number; seasonId?: number }) => {
+    let query = supabase.from('players').select('*')
+
     // If seasonId provided, filter by that season through season_players table
     if (params?.seasonId) {
       // Get player IDs for this season from season_players
@@ -92,29 +94,19 @@ export function useGetPlayersNotInSeason() {
         .from('season_players')
         .select('player_id')
         .eq('season_id', params.seasonId)
-        .eq('active', true)
 
       if (spError) throw new Error(spError.message)
 
       if (seasonPlayers && seasonPlayers.length > 0) {
         const playerIds = seasonPlayers.map(sp => (sp as any).player_id)
-        // Now fetch the player details for these IDs
-        const { data, error } = await supabase
-          .from('players')
-          .select('*')
-          .in('id', playerIds)
-          .order('display_name')
-
-        if (error) throw new Error(error.message)
-        return data as any[]
+        query = query.in('id', playerIds)
+      } else {
+        // No players for this season, return all players
+        query = supabase.from('players').select('*')
       }
     }
 
-    // Fallback: return all players if no season specified or no season_players found
-    const { data, error } = await supabase
-      .from('players')
-      .select('*')
-      .order('display_name')
+    const { data, error } = await query.order('display_name')
     if (error) throw new Error(error.message)
     return data as any[]
   }, [])
