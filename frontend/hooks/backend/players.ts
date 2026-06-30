@@ -265,6 +265,23 @@ export function useUploadPlayerPhoto() {
 
 export function useGetPlayerGameStats() {
   const fn = useCallback(async (params: { playerId: number }) => {
+    // Use game_attendance as the source of games played (not just games with events)
+    const { data: attendance, error: attendanceError } = await supabase
+      .from('game_attendance')
+      .select('game_id')
+      .eq('player_id', params.playerId)
+    if (attendanceError) throw new Error(attendanceError.message)
+
+    const attendedGameIds = ((attendance ?? []) as any[]).map((r: any) => r.game_id as number)
+    if (attendedGameIds.length === 0) return []
+
+    // Fetch game details for all attended games
+    const { data: games, error: gamesError } = await supabase
+      .from('games')
+      .select('id, opponent, game_date, game_type, season_id')
+      .in('id', attendedGameIds)
+    if (gamesError) throw new Error(gamesError.message)
+
     // Fetch events where this player scored
     const { data: scoringEvents, error } = await supabase
       .from('game_events')
@@ -272,7 +289,7 @@ export function useGetPlayerGameStats() {
       .eq('player_id', params.playerId)
     if (error) throw new Error(error.message)
 
-    // Fetch Goal events where this player was the assister (related_player_id)
+    // Fetch Goal events where this player assisted
     const { data: assistEvents, error: assistError } = await supabase
       .from('game_events')
       .select('game_id, event_type')
@@ -280,47 +297,34 @@ export function useGetPlayerGameStats() {
       .eq('event_type', 'Goal')
     if (assistError) throw new Error(assistError.message)
 
-    const allGameIds = new Set([
-      ...((scoringEvents ?? []) as any[]).map((e: any) => e.game_id),
-      ...((assistEvents ?? []) as any[]).map((e: any) => e.game_id),
-    ])
-    if (allGameIds.size === 0) return []
-
-    // Fetch game details
-    const { data: games, error: gamesError } = await supabase
-      .from('games')
-      .select('id, opponent, game_date, game_type, season_id')
-      .in('id', [...allGameIds])
-    if (gamesError) throw new Error(gamesError.message)
-
     const gamesMap = new Map((games ?? []).map((g: any) => [g.id, g]))
 
-    const ensureStat = (gameId: number) => {
-      if (!statsMap.has(gameId)) {
-        const g = gamesMap.get(gameId)
-        statsMap.set(gameId, {
-          game_id: gameId,
-          opponent: g?.opponent ?? 'Unknown',
-          game_date: g?.game_date ?? '',
-          game_type: g?.game_type ?? '',
-          season_id: g?.season_id ?? null,
-          goals: 0,
-          assists: 0,
-          turnovers: 0,
-        })
-      }
-      return statsMap.get(gameId)
-    }
-
-    // Aggregate by game
+    // Seed every attended game with zeroes so games with no events still appear
     const statsMap = new Map<number, any>()
+    attendedGameIds.forEach((gameId: number) => {
+      const g = gamesMap.get(gameId)
+      statsMap.set(gameId, {
+        game_id: gameId,
+        opponent: g?.opponent ?? 'Unknown',
+        game_date: g?.game_date ?? '',
+        game_type: g?.game_type ?? '',
+        season_id: g?.season_id ?? null,
+        goals: 0,
+        assists: 0,
+        turnovers: 0,
+      })
+    })
+
+    // Overlay event stats
     ;(scoringEvents as any[] ?? []).forEach((e: any) => {
-      const stat = ensureStat(e.game_id)
+      const stat = statsMap.get(e.game_id)
+      if (!stat) return
       if (e.event_type === 'Goal') stat.goals++
       else if (e.event_type === 'Turnover' || e.event_type === 'Throwaway' || e.event_type === 'Drop') stat.turnovers++
     })
     ;(assistEvents as any[] ?? []).forEach((e: any) => {
-      ensureStat(e.game_id).assists++
+      const stat = statsMap.get(e.game_id)
+      if (stat) stat.assists++
     })
 
     return [...statsMap.values()].sort((a, b) => a.game_date.localeCompare(b.game_date)) as any[]
