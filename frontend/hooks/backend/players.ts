@@ -265,15 +265,17 @@ export function useUploadPlayerPhoto() {
 
 export function useGetPlayerGameStats() {
   const fn = useCallback(async (params: { playerId: number }) => {
-    // Use game_attendance as the source of games played — only rows where `in` is true
+    // Fetch all game_attendance rows for this player (in = true or false)
     const { data: attendance, error: attendanceError } = await supabase
       .from('game_attendance')
-      .select('game_id')
+      .select('game_id, in')
       .eq('player_id', params.playerId)
-      .eq('in', true)
     if (attendanceError) throw new Error(attendanceError.message)
 
-    const attendedGameIds = ((attendance ?? []) as any[]).map((r: any) => r.game_id as number)
+    const attendanceByGame = new Map<number, boolean>(
+      ((attendance ?? []) as any[]).map((r: any) => [r.game_id as number, r.in as boolean])
+    )
+    const attendedGameIds = [...attendanceByGame.keys()]
     if (attendedGameIds.length === 0) return []
 
     // Fetch game details for all attended games
@@ -300,7 +302,7 @@ export function useGetPlayerGameStats() {
 
     const gamesMap = new Map((games ?? []).map((g: any) => [g.id, g]))
 
-    // Seed every attended game with zeroes so games with no events still appear
+    // Seed every game (in or out) with zeroes so all season games appear
     const statsMap = new Map<number, any>()
     attendedGameIds.forEach((gameId: number) => {
       const g = gamesMap.get(gameId)
@@ -310,6 +312,7 @@ export function useGetPlayerGameStats() {
         game_date: g?.game_date ?? '',
         game_type: g?.game_type ?? '',
         season_id: g?.season_id ?? null,
+        in: attendanceByGame.get(gameId) ?? true,
         goals: 0,
         assists: 0,
         turnovers: 0,

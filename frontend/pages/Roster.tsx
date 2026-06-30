@@ -16,7 +16,7 @@ type Player = {
   id: number; display_name: string; first_name: string | null; last_name: string | null
   gender_match: string | null; phone: string | null; is_sub: boolean; position: string | null; photo_url: string | null; number: number | null
 }
-type GameStat = { game_id: number; opponent: string; game_date: string; game_type: string; season_id: number | null; goals: string; assists: string; turnovers: string }
+type GameStat = { game_id: number; opponent: string; game_date: string; game_type: string; season_id: number | null; in: boolean; goals: string; assists: string; turnovers: string }
 type Season = { id: number; name: string; year: number; organizer: string | null; start_date: string | null; end_date: string | null }
 type PlayerSeason = { id: number; name: string; year: number; organizer: string | null; active: boolean }
 
@@ -204,7 +204,7 @@ export default function Roster() {
   )
 
   const summary = filteredStats.reduce(
-    (acc, g) => ({ goals: acc.goals + parseInt(g.goals), assists: acc.assists + parseInt(g.assists), turnovers: acc.turnovers + parseInt(g.turnovers), games: acc.games + 1 }),
+    (acc, g) => ({ goals: acc.goals + parseInt(g.goals), assists: acc.assists + parseInt(g.assists), turnovers: acc.turnovers + parseInt(g.turnovers), games: acc.games + (g.in ? 1 : 0) }),
     { goals: 0, assists: 0, turnovers: 0, games: 0 }
   )
 
@@ -441,12 +441,13 @@ export default function Roster() {
               <div className="space-y-2">
                 <div className="flex items-center gap-3 px-3 text-xs text-muted-foreground font-medium">
                   <div className="flex-1">Game</div>
+                  <div className="w-6 text-center">In</div>
                   <div className="w-8 text-center text-green-600 dark:text-green-400">G</div>
                   <div className="w-8 text-center text-blue-600 dark:text-blue-400">A</div>
                   <div className="w-8 text-center text-orange-600 dark:text-orange-400">TO</div>
                 </div>
                 {filteredStats.map(stat => (
-                  <div key={stat.game_id} className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-background">
+                  <div key={stat.game_id} className={`flex items-center gap-3 px-3 py-2.5 rounded-lg ${stat.in ? 'bg-background' : 'bg-muted/40 opacity-60'}`}>
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-foreground text-sm truncate">vs {stat.opponent}</div>
                       <div className="flex items-center gap-2 mt-0.5">
@@ -454,9 +455,10 @@ export default function Roster() {
                         {stat.game_type === 'Playoff' && <Trophy className="w-3 h-3 text-yellow-500" />}
                       </div>
                     </div>
-                    <div className="w-8 text-center font-bold text-green-600 dark:text-green-400">{stat.goals}</div>
-                    <div className="w-8 text-center font-bold text-blue-600 dark:text-blue-400">{stat.assists}</div>
-                    <div className="w-8 text-center font-bold text-orange-600 dark:text-orange-400">{stat.turnovers}</div>
+                    <div className="w-6 text-center text-xs">{stat.in ? '✓' : '—'}</div>
+                    <div className="w-8 text-center font-bold text-green-600 dark:text-green-400">{stat.in ? stat.goals : '—'}</div>
+                    <div className="w-8 text-center font-bold text-blue-600 dark:text-blue-400">{stat.in ? stat.assists : '—'}</div>
+                    <div className="w-8 text-center font-bold text-orange-600 dark:text-orange-400">{stat.in ? stat.turnovers : '—'}</div>
                   </div>
                 ))}
               </div>
