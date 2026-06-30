@@ -20,22 +20,32 @@ async function handleApiRequest(request: Request, env: Env) {
       const apiPath = path.slice(5);
 
       // Forward the request with Supabase credentials
-      const apiUrl = new URL(
-        `https://pyqngqyqwevfpaxcmfnd.supabase.co/rest/v1/${apiPath}`
-      );
+      const supabaseUrl = env.SUPABASE_URL;
+      const apiUrl = new URL(`${supabaseUrl}/rest/v1/${apiPath}`);
 
       // Copy query parameters
       url.searchParams.forEach((value, key) => {
         apiUrl.searchParams.append(key, value);
       });
 
+      // Create headers for Supabase
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        apikey: env.SUPABASE_PUBLISHABLE_KEY,
+      };
+
+      // Only add Authorization header if it exists in request or for writes
+      if (
+        request.method !== "GET" &&
+        request.method !== "HEAD" &&
+        request.method !== "DELETE"
+      ) {
+        headers.Authorization = `Bearer ${env.SUPABASE_SECRET_KEY}`;
+      }
+
       const apiResponse = await fetch(apiUrl.toString(), {
         method: request.method,
-        headers: {
-          ...Object.fromEntries(request.headers),
-          Authorization: `Bearer ${env.SUPABASE_SECRET_KEY}`,
-          apikey: env.SUPABASE_PUBLISHABLE_KEY,
-        },
+        headers,
         body:
           request.method === "GET" || request.method === "HEAD"
             ? undefined
