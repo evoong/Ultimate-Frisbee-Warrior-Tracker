@@ -85,12 +85,37 @@ export function useCreatePlayer() {
 
 export function useGetPlayersNotInSeason() {
   const fn = useCallback(async (params?: { gameId?: number; seasonId?: number }) => {
-    // Just return all available players
-    // Season filtering is done through game_lineups when selecting which game
+    if (!params?.seasonId) {
+      // No season specified, return all players
+      const { data, error } = await supabase
+        .from('players')
+        .select('*')
+        .order('display_name')
+      if (error) throw new Error(error.message)
+      return data as any[]
+    }
+
+    // Get all player IDs for this season from the season_players junction table
+    const { data: seasonPlayers, error: spError } = await supabase
+      .from('season_players')
+      .select('player_id')
+      .eq('season_id', params.seasonId)
+
+    if (spError) throw new Error(spError.message)
+
+    if (!seasonPlayers || seasonPlayers.length === 0) {
+      return []
+    }
+
+    const playerIds = seasonPlayers.map(sp => (sp as any).player_id)
+
+    // Get the full player details for these IDs
     const { data, error } = await supabase
       .from('players')
       .select('*')
+      .in('id', playerIds)
       .order('display_name')
+
     if (error) throw new Error(error.message)
     return data as any[]
   }, [])
