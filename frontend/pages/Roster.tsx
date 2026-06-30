@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeleteSubPlayer, useDeletePlayer, useGetPlayerGameStats, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons } from '../hooks/backend/stats'
+import { useSetAttendance } from '../hooks/backend/attendance'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import { Badge } from '../lib/shadcn/badge'
@@ -51,6 +52,7 @@ export default function Roster() {
   const { trigger: uploadPhoto, loading: uploadingPhoto } = useUploadPlayerPhoto()
   const { trigger: updatePlayerSeasons } = useUpdatePlayerSeasons()
   const { trigger: createPlayer } = useCreatePlayer()
+  const { trigger: setAttendance } = useSetAttendance()
 
   const players = rawPlayers as Player[] | undefined
 
@@ -455,7 +457,17 @@ export default function Roster() {
                         {stat.game_type === 'Playoff' && <Trophy className="w-3 h-3 text-yellow-500" />}
                       </div>
                     </div>
-                    <div className="w-6 text-center text-xs">{stat.in ? '✓' : '—'}</div>
+                    <div className="w-6 flex justify-center">
+                      <input
+                        type="checkbox"
+                        checked={stat.in}
+                        onChange={async e => {
+                          await setAttendance({ gameId: stat.game_id, playerId: selectedPlayer.id, attending: e.target.checked })
+                          fetchGameStats({ playerId: selectedPlayer.id })
+                        }}
+                        className="accent-primary w-4 h-4 cursor-pointer"
+                      />
+                    </div>
                     <div className="w-8 text-center font-bold text-green-600 dark:text-green-400">{stat.in ? stat.goals : '—'}</div>
                     <div className="w-8 text-center font-bold text-blue-600 dark:text-blue-400">{stat.in ? stat.assists : '—'}</div>
                     <div className="w-8 text-center font-bold text-orange-600 dark:text-orange-400">{stat.in ? stat.turnovers : '—'}</div>
