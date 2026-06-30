@@ -102,35 +102,8 @@ export function useGetPlayersNotInSeason() {
 
     if (spError) throw new Error(spError.message)
 
-    // If no season_players found, try to get players from game_lineups for that season
     if (!seasonPlayers || seasonPlayers.length === 0) {
-      const { data: gameLineups, error: glError } = await supabase
-        .from('game_lineups')
-        .select('player_id, games(season_id)')
-
-      if (glError) throw new Error(glError.message)
-
-      // Filter by season and get unique player IDs
-      const playerIds = Array.from(
-        new Set(
-          gameLineups
-            ?.filter((gl: any) => gl.games?.season_id === params.seasonId)
-            .map((gl: any) => gl.player_id) ?? []
-        )
-      )
-
-      if (playerIds.length === 0) {
-        return [] // No players found for this season
-      }
-
-      const { data, error } = await supabase
-        .from('players')
-        .select('*')
-        .in('id', playerIds)
-        .order('display_name')
-
-      if (error) throw new Error(error.message)
-      return data as any[]
+      return []
     }
 
     const playerIds = seasonPlayers.map(sp => (sp as any).player_id)
