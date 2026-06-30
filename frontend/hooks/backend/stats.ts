@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { supabase } from '../../lib/supabase'
 
 type HookResult<T, P = void> = {
   data: T | undefined
