@@ -1,5 +1,4 @@
 import { useState, useCallback } from 'react'
-import { supabase } from '../../lib/supabase'
 
 type HookResult<T, P = void> = {
   data: T | undefined
@@ -34,36 +33,27 @@ function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P
 
 export function useGetSeasons() {
   const fn = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('seasons')
-      .select('id, name, year, organizer')
-      .order('year', { ascending: false })
-    if (error) throw new Error(error.message)
-    return data as any[]
+    const res = await fetch('/api/stats/seasons')
+    if (!res.ok) throw new Error(await res.text())
+    return res.json() as Promise<any[]>
   }, [])
   return useApiCall<any[]>(fn)
 }
 
 export function useGetAllSeasons() {
   const fn = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('seasons')
-      .select('*')
-      .order('year', { ascending: false })
-    if (error) throw new Error(error.message)
-    return data as any[]
+    const res = await fetch('/api/seasons')
+    if (!res.ok) throw new Error(await res.text())
+    return res.json() as Promise<any[]>
   }, [])
   return useApiCall<any[]>(fn)
 }
 
 export function useGetSeasonsMeta() {
   const fn = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('seasons')
-      .select('id, name, year')
-      .order('year', { ascending: false })
-    if (error) throw new Error(error.message)
-    return data as any[]
+    const res = await fetch('/api/seasons/meta')
+    if (!res.ok) throw new Error(await res.text())
+    return res.json()
   }, [])
   return useApiCall(fn)
 }
@@ -73,26 +63,40 @@ export function useCreateSeason() {
     name: string; year: number; location?: string; league_name?: string;
     organizer?: string; default_game_time?: string
   }) => {
-    const { data, error } = await supabase
-      .from('seasons')
-      .insert(params)
-      .select()
-    if (error) throw new Error(error.message)
-    return data?.[0]
+    const res = await fetch('/api/seasons', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    })
+    if (!res.ok) throw new Error(await res.text())
+    return res.json()
   }, [])
   return useApiCall(fn)
 }
 
 export function useGetPlayerStats() {
   const fn = useCallback(async (params?: { seasonIds?: number[]; gameIds?: number[] }) => {
-    return [] as any[]
+    const url = new URL('/api/stats/players', window.location.origin)
+    if (params?.seasonIds && params.seasonIds.length > 0) {
+      for (const id of params.seasonIds) url.searchParams.append('seasonIds', String(id))
+    }
+    if (params?.gameIds && params.gameIds.length > 0) {
+      for (const id of params.gameIds) url.searchParams.append('gameIds', String(id))
+    }
+    const res = await fetch(url.toString())
+    if (!res.ok) throw new Error(await res.text())
+    return res.json() as Promise<any[]>
   }, [])
   return useApiCall<any[], { seasonIds?: number[]; gameIds?: number[] }>(fn)
 }
 
 export function useGetCumulativeStats() {
   const fn = useCallback(async (params?: { seasonId?: number }) => {
-    return [] as any[]
+    const url = new URL('/api/stats/cumulative', window.location.origin)
+    if (params?.seasonId != null) url.searchParams.set('seasonId', String(params.seasonId))
+    const res = await fetch(url.toString())
+    if (!res.ok) throw new Error(await res.text())
+    return res.json() as Promise<any[]>
   }, [])
   return useApiCall<any[], { seasonId?: number }>(fn)
 }
