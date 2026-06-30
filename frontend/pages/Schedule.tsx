@@ -20,7 +20,7 @@ type Game = {
 }
 type GameEvent = { id: number; event_type: string; event_timestamp: string; player_id: number | null; related_player_id: number | null; notes: string | null }
 type Player = { id: number; display_name: string; position: string | null; gender_match: string | null }
-type Season = { id: number; name: string; year: number; organizer: string | null; default_game_time: string | null }
+type Season = { id: number; name: string; year: number; organizer: string | null; default_game_time: string | null; start_date: string | null; end_date: string | null }
 type SeasonMeta = { organizers: string[]; names: string[]; years: number[]; locations: string[] }
 type LineupEntry = { id: number; player_id: number; lineup_name: string; display_name: string; position: string | null; gender_match: string | null }
 
@@ -100,9 +100,16 @@ export default function Schedule() {
 
   useEffect(() => {
     const s = seasonsWithGames as { id: number }[] | undefined
+    const allS = seasons as Season[] | undefined
     if (!s || s.length === 0 || scheduleSeasonIds.length > 0) return
-    setScheduleSeasonIds([s[0]!.id])
-  }, [seasonsWithGames])
+    const today = new Date().toISOString().slice(0, 10)
+    const jamSeasons = (allS ?? []).filter(s => s.organizer === 'Jam')
+    const active = jamSeasons.find(s => s.start_date && s.start_date <= today && (s.end_date == null || today <= s.end_date))
+    const upcoming = jamSeasons.filter(s => s.start_date && s.start_date > today).sort((a, b) => (a.start_date ?? '').localeCompare(b.start_date ?? ''))[0]
+    const recentlyEnded = jamSeasons.filter(s => s.end_date && s.end_date < today).sort((a, b) => (b.end_date ?? '').localeCompare(a.end_date ?? ''))[0]
+    const defaultId = (active ?? upcoming ?? recentlyEnded)?.id ?? s[0]!.id
+    setScheduleSeasonIds([defaultId])
+  }, [seasonsWithGames, seasons])
 
   // Reload games when season filter changes
   useEffect(() => {
