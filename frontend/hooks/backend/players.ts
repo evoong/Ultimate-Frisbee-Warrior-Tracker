@@ -72,26 +72,24 @@ export function useGetPlayers() {
 }
 
 export function useGetSeasonRoster() {
-  const fn = useCallback(async (params: { gameId: number }) => {
-    // Get players in this game's lineup
-    const { data: lineupData, error: lineupError } = await supabase
-      .from('game_lineups')
-      .select('*')
-      .eq('game_id', params.gameId)
-    if (lineupError) throw new Error(lineupError.message)
+  const fn = useCallback(async (params: { seasonId: number }) => {
+    const { data: seasonPlayers, error: spError } = await supabase
+      .from('season_players')
+      .select('player_id')
+      .eq('season_id', params.seasonId)
+    if (spError) throw new Error(spError.message)
+    if (!seasonPlayers || seasonPlayers.length === 0) return []
 
-    // Get full player details for those in the lineup
-    if (!lineupData || lineupData.length === 0) return []
-
-    const playerIds = lineupData.map((l: any) => l.player_id)
+    const playerIds = (seasonPlayers as any[]).map((sp: any) => sp.player_id)
     const { data: playersData, error: playersError } = await supabase
       .from('players')
       .select('*')
       .in('id', playerIds)
+      .order('display_name')
     if (playersError) throw new Error(playersError.message)
     return playersData as any[]
   }, [])
-  return useApiCall<any[], { gameId: number }>(fn)
+  return useApiCall<any[], { seasonId: number }>(fn)
 }
 
 export function useCreatePlayer() {
@@ -134,11 +132,11 @@ export function useGetPlayersNotInSeason() {
 
     const playerIds = seasonPlayers.map(sp => (sp as any).player_id)
 
-    // Get full player details
+    // Get players NOT in this season
     const { data, error } = await supabase
       .from('players')
       .select('*')
-      .in('id', playerIds)
+      .not('id', 'in', `(${playerIds.join(',')})`)
       .order('display_name')
 
     if (error) throw new Error(error.message)
@@ -236,13 +234,19 @@ export function useUpdatePlayerPosition() {
 
 export function useUpdatePlayerSeasons() {
   const fn = useCallback(async (params: { playerId: number; seasonIds: number[] }) => {
-    const { data, error } = await supabase
-      .from('players')
-      .update({ season_id: params.seasonIds[0] })
-      .eq('id', params.playerId)
-      .select()
-    if (error) throw new Error(error.message)
-    return data?.[0]
+    // Delete all existing season memberships for this player
+    const { error: deleteError } = await supabase
+      .from('season_players')
+      .delete()
+      .eq('player_id', params.playerId)
+    if (deleteError) throw new Error(deleteError.message)
+
+    // Re-insert for each selected season
+    if (params.seasonIds.length > 0) {
+      const rows = params.seasonIds.map(sid => ({ player_id: params.playerId, season_id: sid }))
+      const { error: insertError } = await supabase.from('season_players').insert(rows)
+      if (insertError) throw new Error(insertError.message)
+    }
   }, [])
   return useApiCall(fn)
 }
@@ -261,12 +265,65 @@ export function useUploadPlayerPhoto() {
 
 export function useGetPlayerGameStats() {
   const fn = useCallback(async (params: { playerId: number }) => {
-    const { data, error } = await supabase
+    // Fetch events where this player scored
+    const { data: scoringEvents, error } = await supabase
       .from('game_events')
-      .select('*')
+      .select('game_id, event_type')
       .eq('player_id', params.playerId)
     if (error) throw new Error(error.message)
-    return data as any[]
+
+    // Fetch Goal events where this player was the assister (related_player_id)
+    const { data: assistEvents, error: assistError } = await supabase
+      .from('game_events')
+      .select('game_id, event_type')
+      .eq('related_player_id', params.playerId)
+      .eq('event_type', 'Goal')
+    if (assistError) throw new Error(assistError.message)
+
+    const allGameIds = new Set([
+      ...((scoringEvents ?? []) as any[]).map((e: any) => e.game_id),
+      ...((assistEvents ?? []) as any[]).map((e: any) => e.game_id),
+    ])
+    if (allGameIds.size === 0) return []
+
+    // Fetch game details
+    const { data: games, error: gamesError } = await supabase
+      .from('games')
+      .select('id, opponent, game_date, game_type, season_id')
+      .in('id', [...allGameIds])
+    if (gamesError) throw new Error(gamesError.message)
+
+    const gamesMap = new Map((games ?? []).map((g: any) => [g.id, g]))
+
+    const ensureStat = (gameId: number) => {
+      if (!statsMap.has(gameId)) {
+        const g = gamesMap.get(gameId)
+        statsMap.set(gameId, {
+          game_id: gameId,
+          opponent: g?.opponent ?? 'Unknown',
+          game_date: g?.game_date ?? '',
+          game_type: g?.game_type ?? '',
+          season_id: g?.season_id ?? null,
+          goals: 0,
+          assists: 0,
+          turnovers: 0,
+        })
+      }
+      return statsMap.get(gameId)
+    }
+
+    // Aggregate by game
+    const statsMap = new Map<number, any>()
+    ;(scoringEvents as any[] ?? []).forEach((e: any) => {
+      const stat = ensureStat(e.game_id)
+      if (e.event_type === 'Goal') stat.goals++
+      else if (e.event_type === 'Turnover' || e.event_type === 'Throwaway' || e.event_type === 'Drop') stat.turnovers++
+    })
+    ;(assistEvents as any[] ?? []).forEach((e: any) => {
+      ensureStat(e.game_id).assists++
+    })
+
+    return [...statsMap.values()].sort((a, b) => a.game_date.localeCompare(b.game_date)) as any[]
   }, [])
   return useApiCall<any[], { playerId: number }>(fn)
 }
@@ -274,11 +331,15 @@ export function useGetPlayerGameStats() {
 export function useGetPlayerSeasons() {
   const fn = useCallback(async (params: { playerId: number }) => {
     const { data, error } = await supabase
-      .from('players')
-      .select('season_id')
-      .eq('id', params.playerId)
+      .from('season_players')
+      .select('season_id, active, seasons(id, name, year, organizer)')
+      .eq('player_id', params.playerId)
     if (error) throw new Error(error.message)
-    return data as any[]
+    // Flatten: return array of season objects with active flag
+    return (data ?? []).map((row: any) => ({
+      ...(row.seasons as object),
+      active: row.active,
+    })) as any[]
   }, [])
   return useApiCall<any[], { playerId: number }>(fn)
 }
