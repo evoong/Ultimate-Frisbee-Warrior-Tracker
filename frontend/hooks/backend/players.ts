@@ -130,3 +130,92 @@ export function useAddPlayerToGame() {
   }, [])
   return useApiCall(fn)
 }
+
+export function useDeletePlayer() {
+  const fn = useCallback(async (params: { playerId: number }) => {
+    const { data, error } = await supabase
+      .from('players')
+      .delete()
+      .eq('id', params.playerId)
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0]
+  }, [])
+  return useApiCall(fn)
+}
+
+export function useUpdatePlayer() {
+  const fn = useCallback(async (params: { playerId: number; display_name?: string; phone?: string; number?: number }) => {
+    const { playerId, ...body } = params
+    const { data, error } = await supabase
+      .from('players')
+      .update(body)
+      .eq('id', playerId)
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0]
+  }, [])
+  return useApiCall(fn)
+}
+
+export function useUpdatePlayerPosition() {
+  const fn = useCallback(async (params: { playerId: number; position: string | null }) => {
+    const { data, error } = await supabase
+      .from('players')
+      .update({ position: params.position })
+      .eq('id', params.playerId)
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0]
+  }, [])
+  return useApiCall(fn)
+}
+
+export function useUpdatePlayerSeasons() {
+  const fn = useCallback(async (params: { playerId: number; seasonIds: number[] }) => {
+    const { data, error } = await supabase
+      .from('players')
+      .update({ season_id: params.seasonIds[0] })
+      .eq('id', params.playerId)
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0]
+  }, [])
+  return useApiCall(fn)
+}
+
+export function useUploadPlayerPhoto() {
+  const fn = useCallback(async (params: { playerId: number; file: File }) => {
+    const fileName = `player-${params.playerId}-${Date.now()}`
+    const { data, error } = await supabase.storage
+      .from('player-photos')
+      .upload(fileName, params.file)
+    if (error) throw new Error(error.message)
+    return data
+  }, [])
+  return useApiCall(fn)
+}
+
+export function useGetPlayerGameStats() {
+  const fn = useCallback(async (params: { playerId: number }) => {
+    const { data, error } = await supabase
+      .from('game_events')
+      .select('*')
+      .eq('player_id', params.playerId)
+    if (error) throw new Error(error.message)
+    return data as any[]
+  }, [])
+  return useApiCall<any[], { playerId: number }>(fn)
+}
+
+export function useGetPlayerSeasons() {
+  const fn = useCallback(async (params: { playerId: number }) => {
+    const { data, error } = await supabase
+      .from('players')
+      .select('season_id')
+      .eq('id', params.playerId)
+    if (error) throw new Error(error.message)
+    return data as any[]
+  }, [])
+  return useApiCall<any[], { playerId: number }>(fn)
+}
