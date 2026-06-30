@@ -84,33 +84,16 @@ export function useCreatePlayer() {
 }
 
 export function useGetPlayersNotInSeason() {
-  const fn = useCallback(async (params?: { gameId?: number; seasonId?: number }) => {
-    let query = supabase.from('players').select('*')
-
-    // If seasonId provided, filter by that season through season_players table
-    if (params?.seasonId) {
-      // Get player IDs for this season from season_players
-      const { data: seasonPlayers, error: spError } = await supabase
-        .from('season_players')
-        .select('player_id')
-        .eq('season_id', params.seasonId)
-
-      if (spError) throw new Error(spError.message)
-
-      if (seasonPlayers && seasonPlayers.length > 0) {
-        const playerIds = seasonPlayers.map(sp => (sp as any).player_id)
-        query = query.in('id', playerIds)
-      } else {
-        // No players for this season, return all players
-        query = supabase.from('players').select('*')
-      }
-    }
-
-    const { data, error } = await query.order('display_name')
+  const fn = useCallback(async (params?: { gameId?: number }) => {
+    // Load all available players - season relationship is through game_lineups only
+    const { data, error } = await supabase
+      .from('players')
+      .select('*')
+      .order('display_name')
     if (error) throw new Error(error.message)
     return data as any[]
   }, [])
-  return useApiCall<any[], { gameId?: number; seasonId?: number }>(fn)
+  return useApiCall<any[], { gameId?: number }>(fn)
 }
 
 export function useCreatePlayerForGame() {
