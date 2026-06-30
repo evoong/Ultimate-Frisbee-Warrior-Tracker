@@ -14,7 +14,7 @@ import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
 import { Target, Plus, Minus, TrendingUp, Undo2, Edit2, ChevronLeft, Trash2, Calendar, ArrowLeftRight } from 'lucide-react'
 
-type Season = { id: number; name: string; year: number; organizer: string | null }
+type Season = { id: number; name: string; year: number; organizer: string | null; start_date: string | null; end_date: string | null }
 type Game = { id: number; opponent: string; game_date: string; season_id: number | null }
 
 function seasonLabel(s: Season) {
@@ -65,9 +65,20 @@ export default function QuickScore() {
     if (!seasons || seasons.length === 0 || g.length === 0) return
     if (selectedSeasonIds.length > 0) return
 
-    // Default to the latest Jam season (highest id), then next upcoming game in that season
-    const jamSeasons = seasons.filter(s => s.organizer === 'Jam').sort((a, b) => b.id - a.id)
-    const defaultSeason = jamSeasons[0]
+    // Default to the most relevant Jam season based on dates:
+    // 1. Currently active (today within start_date..end_date)
+    // 2. Most recently ended (latest end_date in the past)
+    // 3. Next upcoming (earliest start_date in the future)
+    const today = new Date().toISOString().slice(0, 10)
+    const jamSeasons = seasons.filter(s => s.organizer === 'Jam')
+    const active = jamSeasons.find(s => s.start_date && s.end_date && s.start_date <= today && today <= s.end_date)
+    const recentlyEnded = jamSeasons
+      .filter(s => s.end_date && s.end_date < today)
+      .sort((a, b) => (b.end_date ?? '').localeCompare(a.end_date ?? ''))[0]
+    const upcoming = jamSeasons
+      .filter(s => s.start_date && s.start_date > today)
+      .sort((a, b) => (a.start_date ?? '').localeCompare(b.start_date ?? ''))[0]
+    const defaultSeason = active ?? recentlyEnded ?? upcoming ?? jamSeasons.sort((a, b) => b.id - a.id)[0]
     if (!defaultSeason) {
       const swg = seasonsWithGames as { id: number }[] | undefined
       if (swg && swg.length > 0) setSelectedSeasonIds([swg[0]!.id])
