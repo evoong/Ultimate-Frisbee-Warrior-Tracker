@@ -139,14 +139,15 @@ export default function Stats() {
     const rows = cumulativeRaw as CumulativeRow[] | undefined
     if (!rows || rows.length === 0) return { lineData: [], allPlayersForSelection: [], topPlayers: [] }
 
-    const gameOrder: { game_id: number; opponent: string; game_date: string }[] = []
-    const seenGames = new Set<number>()
-    for (const r of rows) {
-      if (!seenGames.has(r.game_id)) {
-        seenGames.add(r.game_id)
-        gameOrder.push({ game_id: r.game_id, opponent: r.opponent, game_date: r.game_date })
-      }
-    }
+    // Build game order from ALL games in the season (not just games with events),
+    // so the chart shows a flat segment for games where a player had zero contributions.
+    const allGamesForSeason = ((games as Game[] | undefined) ?? [])
+      .filter(g => cumulativeSeasonId === '__all__' || g.season_id === parseInt(cumulativeSeasonId))
+      .slice() // date-desc from hook, so reverse for chronological order
+      .reverse()
+    const gameOrder: { game_id: number; opponent: string; game_date: string }[] = allGamesForSeason.map(g => ({
+      game_id: g.id, opponent: g.opponent, game_date: g.game_date,
+    }))
 
     const perGamePlayer: Record<number, Record<number, { goals: number; assists: number; turnovers: number }>> = {}
     for (const r of rows) {
@@ -200,7 +201,7 @@ export default function Stats() {
     })
 
     return { lineData, allPlayersForSelection, topPlayers: displayPlayers }
-  }, [cumulativeRaw, cumulativeStat, selectedPlayerIds])
+  }, [cumulativeRaw, cumulativeStat, selectedPlayerIds, games, cumulativeSeasonId])
 
   const BarTooltip = ({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string }) => {
     if (!active || !payload?.length) return null

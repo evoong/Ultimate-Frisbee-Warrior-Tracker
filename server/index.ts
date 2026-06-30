@@ -13,8 +13,13 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
 app.use(cors());
 app.use(express.json());
 
-const uploadsDir = path.join(process.cwd(), "uploads");
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+// Vercel serverless filesystem is read-only except /tmp; use /tmp/uploads there
+const uploadsDir = process.env.VERCEL
+  ? path.join("/tmp", "uploads")
+  : path.join(process.cwd(), "uploads");
+try {
+  if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+} catch (_) { /* ignore if read-only */ }
 app.use("/uploads", express.static(uploadsDir));
 
 const storage = multer.diskStorage({
