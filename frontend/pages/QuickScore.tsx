@@ -77,10 +77,15 @@ export default function QuickScore() {
     if (selectedGameId) {
       fetchEvents({ gameId: selectedGameId })
       fetchPlayers({ gameId: selectedGameId })
-      fetchOtherPlayers({ gameId: selectedGameId })
+      const game = filteredGames.find(g => g.id === selectedGameId)
+      if (game?.season_id) {
+        fetchOtherPlayers({ seasonId: game.season_id })
+      } else {
+        fetchOtherPlayers({})
+      }
       setShowGameSelect(false)
     }
-  }, [selectedGameId])
+  }, [selectedGameId, filteredGames])
 
   const filteredGames = (games as Game[] | undefined) ?? []
 
