@@ -1,28 +1,161 @@
-import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
-import { AlertCircle } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Card, CardContent } from '../lib/shadcn/card'
+import { Button } from '../lib/shadcn/button'
+import { Input } from '../lib/shadcn/input'
+import { Send, Bot, User, Loader2 } from 'lucide-react'
+
+type Message = { role: 'user' | 'assistant'; content: string }
+
+function parseInline(text: string) {
+  return text.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g).map((part, j) => {
+    if (part.startsWith('**') && part.endsWith('**'))
+      return <strong key={j}>{part.slice(2, -2)}</strong>
+    if (part.startsWith('*') && part.endsWith('*'))
+      return <em key={j}>{part.slice(1, -1)}</em>
+    return part
+  })
+}
+
+function renderMarkdown(text: string) {
+  return text.split('\n').map((line, i) => {
+    if (line.trim() === '') return <div key={i} className="h-1" />
+    // Bullet: lines starting with "* " or "- " (but not "**")
+    if (/^(\* (?!\*)|- )/.test(line)) {
+      const content = line.replace(/^(\* |- )/, '')
+      return (
+        <div key={i} className="flex gap-1.5">
+          <span className="mt-0.5 shrink-0 text-xs">•</span>
+          <span>{parseInline(content)}</span>
+        </div>
+      )
+    }
+    return <div key={i}>{parseInline(line)}</div>
+  })
+}
+
+function getSessionId() {
+  let id = localStorage.getItem('ufwt_chat_session')
+  if (!id) {
+    id = `s_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
+    localStorage.setItem('ufwt_chat_session', id)
+  }
+  return id
+}
 
 export default function Chat() {
+  const [messages, setMessages] = useState<Message[]>([])
+  const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [historyLoaded, setHistoryLoaded] = useState(false)
+  const bottomRef = useRef<HTMLDivElement>(null)
+  const sessionId = useRef(getSessionId())
+
+  useEffect(() => {
+    fetch(`/api/chat/history?session_id=${sessionId.current}`)
+      .then(r => r.json())
+      .then((data: { role: string; content: string }[]) => {
+        setMessages(data.map(d => ({ role: d.role as 'user' | 'assistant', content: d.content })))
+        setHistoryLoaded(true)
+      })
+      .catch(() => setHistoryLoaded(true))
+  }, [])
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+
+  const sendMessage = async () => {
+    const text = input.trim()
+    if (!text || loading) return
+    setInput('')
+    const newMessages: Message[] = [...messages, { role: 'user', content: text }]
+    setMessages(newMessages)
+    setLoading(true)
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: text,
+          session_id: sessionId.current,
+          history: newMessages.slice(0, -1).map(m => ({ role: m.role, content: m.content })),
+        }),
+      })
+      const data = await res.json()
+      setMessages(prev => [...prev, { role: 'assistant', content: data.reply ?? data.error ?? 'No response' }])
+    } catch {
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Failed to reach the server. Please try again.' }])
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
-    <div className="space-y-4">
-      <Card className="border-amber-200 bg-amber-50">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-amber-900">
-            <AlertCircle className="w-5 h-5" />
-            Chat Feature Coming Soon
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="text-amber-800">
-          <p>The AI chat feature requires a backend service and is not currently available in this deployment.</p>
-          <p className="mt-2 text-sm">The app works fully for:</p>
-          <ul className="list-disc list-inside mt-2 space-y-1 text-sm">
-            <li>QuickScore - Track game events and scores</li>
-            <li>Schedule - View and manage games</li>
-            <li>Roster - Manage players</li>
-            <li>Stats - View player statistics</li>
-            <li>Ranking - Player rankings</li>
-          </ul>
+    <div className="flex flex-col h-[calc(100vh-8rem)]">
+      <h1 className="text-2xl font-bold text-foreground mb-3">Team Assistant</h1>
+
+      {/* Message list */}
+      <Card className="flex-1 overflow-hidden bg-card border-border flex flex-col">
+        <CardContent className="flex-1 overflow-y-auto p-4 space-y-4">
+          {!historyLoaded ? (
+            <div className="flex justify-center items-center h-full text-muted-foreground text-sm">
+              <Loader2 className="w-4 h-4 animate-spin mr-2" />Loading history…
+            </div>
+          ) : messages.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-center gap-3">
+              <Bot className="w-12 h-12 text-primary opacity-60" />
+              <p className="text-muted-foreground text-sm">Ask me anything about the team — stats, scores, players, or upcoming games.</p>
+            </div>
+          ) : (
+            messages.map((msg, i) => (
+              <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
+                  {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4 text-primary" />}
+                </div>
+                <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+                  msg.role === 'user'
+                    ? 'bg-primary text-primary-foreground rounded-tr-sm'
+                    : 'bg-muted text-foreground rounded-tl-sm'
+                }`}>
+                  {msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.content}
+                </div>
+              </div>
+            ))
+          )}
+          {loading && (
+            <div className="flex gap-3">
+              <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0">
+                <Bot className="w-4 h-4 text-primary" />
+              </div>
+              <div className="bg-muted rounded-2xl rounded-tl-sm px-4 py-3 flex items-center gap-1.5">
+                <span className="w-2 h-2 bg-muted-foreground/60 rounded-full animate-bounce [animation-delay:0ms]" />
+                <span className="w-2 h-2 bg-muted-foreground/60 rounded-full animate-bounce [animation-delay:150ms]" />
+                <span className="w-2 h-2 bg-muted-foreground/60 rounded-full animate-bounce [animation-delay:300ms]" />
+              </div>
+            </div>
+          )}
+          <div ref={bottomRef} />
         </CardContent>
       </Card>
+
+      {/* Input */}
+      <div className="flex gap-2 mt-3">
+        <Input
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendMessage()}
+          placeholder="Ask about stats, players, games…"
+          disabled={loading}
+          className="bg-card border-border text-foreground"
+        />
+        <Button
+          onClick={sendMessage}
+          disabled={!input.trim() || loading}
+          className="bg-primary text-primary-foreground hover:bg-primary/90 shrink-0"
+        >
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+        </Button>
+      </div>
     </div>
   )
 }

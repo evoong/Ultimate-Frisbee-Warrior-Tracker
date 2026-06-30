@@ -61,25 +61,28 @@ export default function QuickScore() {
 
   useEffect(() => {
     // Load seasons for filter display only
-    const s = seasonsWithGames as { season_id: number }[] | undefined
+    const s = seasonsWithGames as { id: number }[] | undefined
     if (!s || s.length === 0 || selectedSeasonIds.length > 0) return
-    setSelectedSeasonIds([s[0]!.season_id])
+    setSelectedSeasonIds([s[0]!.id])
   }, [seasonsWithGames])
 
   useEffect(() => {
     if (games && (games as Game[]).length > 0 && selectedGameId === null) {
       const g = games as Game[]
-      if (g.length > 0) setSelectedGameId(g[0]!.id)
+      const filtered = selectedSeasonIds.length > 0
+        ? g.filter(gm => gm.season_id != null && selectedSeasonIds.includes(gm.season_id))
+        : g
+      if (filtered.length > 0) setSelectedGameId(filtered[0]!.id)
     }
-  }, [games])
+  }, [games, selectedSeasonIds])
 
   useEffect(() => {
     if (selectedGameId) {
       fetchEvents({ gameId: selectedGameId })
-      fetchPlayers({ gameId: selectedGameId })
       const allGames = (games as Game[] | undefined) ?? []
       const game = allGames.find(g => g.id === selectedGameId)
       if (game?.season_id) {
+        fetchPlayers({ seasonId: game.season_id })
         fetchOtherPlayers({ seasonId: game.season_id })
       } else {
         fetchOtherPlayers({})
@@ -88,7 +91,10 @@ export default function QuickScore() {
     }
   }, [selectedGameId, games])
 
-  const filteredGames = (games as Game[] | undefined) ?? []
+  const allGames = (games as Game[] | undefined) ?? []
+  const filteredGames = selectedSeasonIds.length > 0
+    ? allGames.filter(g => g.season_id != null && selectedSeasonIds.includes(g.season_id))
+    : allGames
 
   const selectedGame = (games as Game[] | undefined)?.find(g => g.id === selectedGameId)
   const ourGoals = events?.filter((e: { event_type: string }) => e.event_type === 'Goal').length || 0
@@ -350,9 +356,11 @@ export default function QuickScore() {
                   <span className="text-xs font-medium text-muted-foreground text-right">{assisterLabel}</span>
                   <PlayerCombobox
                     players={playerOptions}
+                    otherPlayers={otherPlayerOptions}
                     value={defaultAssisterId || '__none__'}
                     onValueChange={setDefaultAssisterId}
                     onAddPlayer={handleAddAssister}
+                    onAddExistingPlayer={handleAddExistingAssister}
                     onDeletePlayer={handleDeleteSub}
                     placeholder="None"
                     className="w-full h-9 text-sm bg-background border-border"
@@ -464,15 +472,6 @@ export default function QuickScore() {
         </>
       )}
 
-      {!selectedGame && showGameSelect && (
-        <Card className="bg-card text-card-foreground border-border">
-          <CardContent className="py-12 text-center">
-            <Target className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
-            <p className="text-muted-foreground">Select a game to start quick scoring</p>
-          </CardContent>
-        </Card>
-      )}
-
       {/* Edit Event Dialog */}
       <Dialog open={editingEventId !== null} onOpenChange={(open) => !open && setEditingEventId(null)}>
         <DialogContent className="bg-card text-card-foreground">
@@ -494,8 +493,10 @@ export default function QuickScore() {
               <Label>Assister / Related (optional)</Label>
               <PlayerCombobox
                 players={playerOptions}
+                otherPlayers={otherPlayerOptions}
                 value={editAssisterId || '__none__'}
                 onValueChange={setEditAssisterId}
+                onAddExistingPlayer={handleAddExistingAssister}
                 placeholder="Select assister..."
                 className="w-full bg-background border-border"
               />
