@@ -265,11 +265,12 @@ export function useUploadPlayerPhoto() {
 
 export function useGetPlayerGameStats() {
   const fn = useCallback(async (params: { playerId: number }) => {
-    // Use game_attendance as the source of games played (not just games with events)
+    // Use game_attendance as the source of games played — only rows where `in` is true
     const { data: attendance, error: attendanceError } = await supabase
       .from('game_attendance')
       .select('game_id')
       .eq('player_id', params.playerId)
+      .eq('in', true)
     if (attendanceError) throw new Error(attendanceError.message)
 
     const attendedGameIds = ((attendance ?? []) as any[]).map((r: any) => r.game_id as number)

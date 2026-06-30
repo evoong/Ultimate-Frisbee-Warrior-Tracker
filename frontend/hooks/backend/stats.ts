@@ -125,10 +125,11 @@ export function useGetPlayerStats() {
       filtered = events.filter((e: any) => params.gameIds?.includes(e.game_id))
     }
 
-    // games_played = games the player actually attended (game_attendance table)
+    // games_played = games the player actually attended (in = true)
     const { data: attendanceRows } = await supabase
       .from('game_attendance')
       .select('game_id, player_id')
+      .eq('in', true)
     const attendanceMap = new Map<number, Set<number>>() // player_id → Set<game_id>
     ;(attendanceRows ?? []).forEach((r: any) => {
       if (!attendanceMap.has(r.player_id)) attendanceMap.set(r.player_id, new Set())
