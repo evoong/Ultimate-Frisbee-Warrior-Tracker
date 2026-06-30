@@ -67,18 +67,18 @@ export default function QuickScore() {
 
     // Default to the most relevant Jam season based on dates:
     // 1. Currently active (today within start_date..end_date)
-    // 2. Most recently ended (latest end_date in the past)
-    // 3. Next upcoming (earliest start_date in the future)
+    // 2. Next upcoming (earliest future start_date) — prefer next season over a just-ended one
+    // 3. Most recently ended (latest end_date in the past) — fallback when no future season exists
     const today = new Date().toISOString().slice(0, 10)
     const jamSeasons = seasons.filter(s => s.organizer === 'Jam')
-    const active = jamSeasons.find(s => s.start_date && s.end_date && s.start_date <= today && today <= s.end_date)
-    const recentlyEnded = jamSeasons
-      .filter(s => s.end_date && s.end_date < today)
-      .sort((a, b) => (b.end_date ?? '').localeCompare(a.end_date ?? ''))[0]
+    const active = jamSeasons.find(s => s.start_date && s.start_date <= today && (s.end_date == null || today <= s.end_date))
     const upcoming = jamSeasons
       .filter(s => s.start_date && s.start_date > today)
       .sort((a, b) => (a.start_date ?? '').localeCompare(b.start_date ?? ''))[0]
-    const defaultSeason = active ?? recentlyEnded ?? upcoming ?? jamSeasons.sort((a, b) => b.id - a.id)[0]
+    const recentlyEnded = jamSeasons
+      .filter(s => s.end_date && s.end_date < today)
+      .sort((a, b) => (b.end_date ?? '').localeCompare(a.end_date ?? ''))[0]
+    const defaultSeason = active ?? upcoming ?? recentlyEnded ?? jamSeasons.sort((a, b) => b.id - a.id)[0]
     if (!defaultSeason) {
       const swg = seasonsWithGames as { id: number }[] | undefined
       if (swg && swg.length > 0) setSelectedSeasonIds([swg[0]!.id])
