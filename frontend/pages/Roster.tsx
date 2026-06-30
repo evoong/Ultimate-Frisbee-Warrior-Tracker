@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeleteSubPlayer, useDeletePlayer, useGetPlayerGameStats, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons } from '../hooks/backend/stats'
+import { getDefaultJamSeasonId } from '../lib/seasonUtils'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import { Badge } from '../lib/shadcn/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
@@ -82,12 +83,7 @@ export default function Roster() {
     const s = seasonsWithGames as { id: number }[] | undefined
     const allS = allSeasons as Season[] | undefined
     if (!s || s.length === 0 || rosterSeasonIds.length > 0) return
-    const today = new Date().toISOString().slice(0, 10)
-    const jamSeasons = (allS ?? []).filter(s => s.organizer === 'Jam')
-    const active = jamSeasons.find(s => s.start_date && s.start_date <= today && (s.end_date == null || today <= s.end_date))
-    const upcoming = jamSeasons.filter(s => s.start_date && s.start_date > today).sort((a, b) => (a.start_date ?? '').localeCompare(b.start_date ?? ''))[0]
-    const recentlyEnded = jamSeasons.filter(s => s.end_date && s.end_date < today).sort((a, b) => (b.end_date ?? '').localeCompare(a.end_date ?? ''))[0]
-    const defaultId = (active ?? upcoming ?? recentlyEnded)?.id ?? s[0]!.id
+    const defaultId = getDefaultJamSeasonId(allS ?? [], s[0]!.id)
     setRosterSeasonIds([defaultId])
   }, [seasonsWithGames, allSeasons])
 

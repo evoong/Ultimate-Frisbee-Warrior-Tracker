@@ -5,6 +5,7 @@ import { useGetGameEvents } from '../hooks/backend/events'
 import { useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useGetEventTypes } from '../hooks/backend/events'
 import { useCreatePlayerForGame, useDeleteSubPlayer, useGetPlayersNotInSeason, useAddPlayerToGame } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons } from '../hooks/backend/stats'
+import { getDefaultJamSeasonId } from '../lib/seasonUtils'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
@@ -65,29 +66,12 @@ export default function QuickScore() {
     if (!seasons || seasons.length === 0 || g.length === 0) return
     if (selectedSeasonIds.length > 0) return
 
-    // Default to the most relevant Jam season based on dates:
-    // 1. Currently active (today within start_date..end_date)
-    // 2. Next upcoming (earliest future start_date) — prefer next season over a just-ended one
-    // 3. Most recently ended (latest end_date in the past) — fallback when no future season exists
-    const today = new Date().toISOString().slice(0, 10)
-    const jamSeasons = seasons.filter(s => s.organizer === 'Jam')
-    const active = jamSeasons.find(s => s.start_date && s.start_date <= today && (s.end_date == null || today <= s.end_date))
-    const upcoming = jamSeasons
-      .filter(s => s.start_date && s.start_date > today)
-      .sort((a, b) => (a.start_date ?? '').localeCompare(b.start_date ?? ''))[0]
-    const recentlyEnded = jamSeasons
-      .filter(s => s.end_date && s.end_date < today)
-      .sort((a, b) => (b.end_date ?? '').localeCompare(a.end_date ?? ''))[0]
-    const defaultSeason = active ?? upcoming ?? recentlyEnded ?? jamSeasons.sort((a, b) => b.id - a.id)[0]
-    if (!defaultSeason) {
-      const swg = seasonsWithGames as { id: number }[] | undefined
-      if (swg && swg.length > 0) setSelectedSeasonIds([swg[0]!.id])
-      return
-    }
-    setSelectedSeasonIds([defaultSeason.id])
+    const defaultId = getDefaultJamSeasonId(seasons, (seasonsWithGames as { id: number }[] | undefined)?.[0]?.id)
+    if (defaultId == null) return
+    setSelectedSeasonIds([defaultId])
     if (selectedGameId === null) {
       const today = new Date().toISOString().slice(0, 10)
-      const seasonGames = g.filter(gm => gm.season_id === defaultSeason.id)
+      const seasonGames = g.filter(gm => gm.season_id === defaultId)
       const upcoming = seasonGames.slice().reverse().find(gm => gm.game_date >= today)
       const target = upcoming ?? seasonGames[0]
       if (target) setSelectedGameId(target.id)
