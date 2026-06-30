@@ -1,0 +1,78 @@
+"table_schema","table_name","column_position","column_name","data_type","max_length","is_nullable","column_default"
+"public","chat_logs","1","id","integer","32","NO","nextval('chat_logs_id_seq'::regclass)"
+"public","chat_logs","2","session_id","text",,"YES",
+"public","chat_logs","3","user_id","text",,"YES",
+"public","chat_logs","4","role","text",,"NO",
+"public","chat_logs","5","content","text",,"NO",
+"public","chat_logs","6","created_at","timestamp with time zone",,"YES","now()"
+"public","event_types","1","id","integer","32","NO","nextval('event_types_id_seq'::regclass)"
+"public","event_types","2","name","character varying","100","NO",
+"public","event_types","3","category","character varying","50","YES",
+"public","game_attendance","1","id","integer","32","NO","nextval('game_attendance_id_seq'::regclass)"
+"public","game_attendance","2","game_id","integer","32","NO",
+"public","game_attendance","3","player_id","integer","32","NO",
+"public","game_attendance","4","created_at","timestamp without time zone",,"YES","now()"
+"public","game_events","1","id","integer","32","NO","nextval('game_events_id_seq'::regclass)"
+"public","game_events","2","game_id","integer","32","NO",
+"public","game_events","3","player_id","integer","32","YES",
+"public","game_events","4","related_player_id","integer","32","YES",
+"public","game_events","5","event_type","character varying","100","NO",
+"public","game_events","6","point_number","integer","32","YES",
+"public","game_events","7","event_timestamp","timestamp without time zone",,"YES","now()"
+"public","game_events","8","notes","text",,"YES",
+"public","game_lineups","1","id","integer","32","NO","nextval('game_lineups_id_seq'::regclass)"
+"public","game_lineups","2","game_id","integer","32","NO",
+"public","game_lineups","3","player_id","integer","32","NO",
+"public","game_lineups","4","lineup_name","text",,"YES","'Starting'::text"
+"public","game_lineups","5","created_at","timestamp with time zone",,"YES","now()"
+"public","games","1","id","integer","32","NO","nextval('games_id_seq'::regclass)"
+"public","games","2","season_id","integer","32","YES",
+"public","games","3","opponent","character varying","255","NO",
+"public","games","4","game_date","date",,"NO",
+"public","games","5","game_time","time without time zone",,"YES",
+"public","games","6","game_type","character varying","50","YES","'Regular'::character varying"
+"public","games","7","our_score","integer","32","YES","0"
+"public","games","8","their_score","integer","32","YES","0"
+"public","games","9","result","character varying","100","YES",
+"public","games","10","notes","text",,"YES",
+"public","games","11","outcome_override","text",,"YES",
+"public","players","1","id","integer","32","NO","nextval('players_id_seq'::regclass)"
+"public","players","2","first_name","character varying","255","YES",
+"public","players","3","last_name","character varying","255","YES",
+"public","players","4","display_name","character varying","255","NO",
+"public","players","5","gender_match","character varying","50","YES",
+"public","players","6","phone","character varying","50","YES",
+"public","players","7","is_sub","boolean",,"YES","false"
+"public","players","8","position","character varying","100","YES",
+"public","players","9","photo_url","character varying","500","YES",
+"public","players","10","number","integer","32","YES",
+"public","players","11","first_name_edit","text",,"YES",
+"public","players","12","last_name_edit","text",,"YES",
+"public","season_players","1","id","integer","32","NO","nextval('season_players_id_seq'::regclass)"
+"public","season_players","2","season_id","integer","32","NO",
+"public","season_players","3","player_id","integer","32","NO",
+"public","season_players","4","jersey_number","integer","32","YES",
+"public","season_players","5","active","boolean",,"YES","true"
+"public","season_players","6","role","character varying","100","YES",
+"public","seasons","1","id","integer","32","NO","nextval('seasons_id_seq'::regclass)"
+"public","seasons","2","team_id","integer","32","YES",
+"public","seasons","3","name","character varying","100","YES",
+"public","seasons","4","year","integer","32","YES",
+"public","seasons","5","start_date","date",,"YES",
+"public","seasons","6","end_date","date",,"YES",
+"public","seasons","7","location","character varying","255","YES",
+"public","seasons","8","league_name","character varying","255","YES",
+"public","seasons","9","organizer","character varying","100","YES",
+"public","seasons","10","default_game_time","time without time zone",,"YES",
+"public","standings","1","id","integer","32","NO","nextval('standings_id_seq'::regclass)"
+"public","standings","2","season_id","integer","32","YES",
+"public","standings","3","team_name","character varying","255","YES",
+"public","standings","4","games_played","integer","32","YES","0"
+"public","standings","5","wins","integer","32","YES","0"
+"public","standings","6","losses","integer","32","YES","0"
+"public","standings","7","ties","integer","32","YES","0"
+"public","standings","8","default_losses","integer","32","YES","0"
+"public","standings","9","points","integer","32","YES","0"
+"public","standings","10","points_for","integer","32","YES","0"
+"public","standings","11","points_against","integer","32","YES","0"
+"public","standings","12","point_differential","integer","32","YES","0"
