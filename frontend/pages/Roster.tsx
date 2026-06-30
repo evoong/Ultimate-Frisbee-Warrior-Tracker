@@ -79,9 +79,9 @@ export default function Roster() {
   }, [])
 
   useEffect(() => {
-    const s = seasonsWithGames as { season_id: number }[] | undefined
+    const s = seasonsWithGames as { id: number }[] | undefined
     if (!s || s.length === 0 || rosterSeasonIds.length > 0) return
-    setRosterSeasonIds([s[0]!.season_id])
+    setRosterSeasonIds([s[0]!.id])
   }, [seasonsWithGames])
 
   useEffect(() => {

@@ -99,9 +99,9 @@ export default function Schedule() {
   }, [])
 
   useEffect(() => {
-    const s = seasonsWithGames as { season_id: number }[] | undefined
+    const s = seasonsWithGames as { id: number }[] | undefined
     if (!s || s.length === 0 || scheduleSeasonIds.length > 0) return
-    setScheduleSeasonIds([s[0]!.season_id])
+    setScheduleSeasonIds([s[0]!.id])
   }, [seasonsWithGames])
 
   // Reload games when season filter changes
