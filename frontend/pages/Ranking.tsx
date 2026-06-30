@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useGetGames } from '../hooks/backend/games'
 import { useGetPlayerStats, useGetAllSeasons, useGetSeasons } from '../hooks/backend/stats'
+import { getDefaultJamSeasonId } from '../lib/seasonUtils'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
 import { Label } from '../lib/shadcn/label'
@@ -34,12 +35,7 @@ export default function Ranking() {
     const s = seasonsWithGames as { id: number }[] | undefined
     const allS = allSeasons as Season[] | undefined
     if (!s || s.length === 0 || selectedSeasonIds.length > 0) return
-    const today = new Date().toISOString().slice(0, 10)
-    const jamSeasons = (allS ?? []).filter(s => s.organizer === 'Jam')
-    const active = jamSeasons.find(s => s.start_date && s.start_date <= today && (s.end_date == null || today <= s.end_date))
-    const upcoming = jamSeasons.filter(s => s.start_date && s.start_date > today).sort((a, b) => (a.start_date ?? '').localeCompare(b.start_date ?? ''))[0]
-    const recentlyEnded = jamSeasons.filter(s => s.end_date && s.end_date < today).sort((a, b) => (b.end_date ?? '').localeCompare(a.end_date ?? ''))[0]
-    const defaultId = (active ?? upcoming ?? recentlyEnded)?.id ?? s[0]!.id
+    const defaultId = getDefaultJamSeasonId(allS ?? [], s[0]!.id)
     setFilterType('season')
     setSelectedSeasonIds([defaultId])
   }, [seasonsWithGames, allSeasons])
