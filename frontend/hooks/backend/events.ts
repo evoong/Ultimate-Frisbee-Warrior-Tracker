@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { supabase } from '../../lib/supabase'
 
 type HookResult<T, P = void> = {
   data: T | undefined
@@ -35,79 +36,106 @@ function useApiCall<T, P = void>(
 
 export function useGetGameEvents() {
   const fn = useCallback(async (params: { gameId: number }) => {
-    const res = await fetch(`/api/events?gameId=${params.gameId}`)
-    if (!res.ok) throw new Error(await res.text())
-    return res.json() as Promise<any[]>
+    const { data, error } = await supabase
+      .from('game_events')
+      .select('*')
+      .eq('game_id', params.gameId)
+      .order('event_timestamp', { ascending: false })
+    if (error) throw new Error(error.message)
+    return data as any[]
   }, [])
   return useApiCall<any[], { gameId: number }>(fn)
 }
 
 export function useGetEventTypes() {
   const fn = useCallback(async () => {
-    const res = await fetch('/api/event-types')
-    if (!res.ok) throw new Error(await res.text())
-    return res.json() as Promise<any[]>
+    const { data, error } = await supabase
+      .from('event_types')
+      .select('*')
+      .order('name')
+    if (error) throw new Error(error.message)
+    return data as any[]
   }, [])
   return useApiCall<any[]>(fn)
 }
 
 export function useCreateGoalEvent() {
   const fn = useCallback(async (params: { gameId: number; playerId: number | null; relatedPlayerId: number | null; eventType?: string; notes?: string }) => {
-    const res = await fetch('/api/events/goal', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    })
-    if (!res.ok) throw new Error(await res.text())
-    return res.json()
+    const { data, error } = await supabase
+      .from('game_events')
+      .insert({
+        game_id: params.gameId,
+        player_id: params.playerId,
+        related_player_id: params.relatedPlayerId,
+        event_type: params.eventType || 'Goal',
+        event_timestamp: new Date().toISOString(),
+        notes: params.notes,
+      })
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0]
   }, [])
   return useApiCall(fn)
 }
 
 export function useCreateOpponentGoalEvent() {
   const fn = useCallback(async (params: { gameId: number }) => {
-    const res = await fetch('/api/events/opponent-goal', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    })
-    if (!res.ok) throw new Error(await res.text())
-    return res.json()
+    const { data, error } = await supabase
+      .from('game_events')
+      .insert({
+        game_id: params.gameId,
+        event_type: 'Opponent Goal',
+        event_timestamp: new Date().toISOString(),
+      })
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0]
   }, [])
   return useApiCall(fn)
 }
 
 export function useCreateTurnoverEvent() {
   const fn = useCallback(async (params: { gameId: number; playerId: number }) => {
-    const res = await fetch('/api/events/goal', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ gameId: params.gameId, playerId: params.playerId, relatedPlayerId: null, eventType: 'Turnover' }),
-    })
-    if (!res.ok) throw new Error(await res.text())
-    return res.json()
+    const { data, error } = await supabase
+      .from('game_events')
+      .insert({
+        game_id: params.gameId,
+        player_id: params.playerId,
+        event_type: 'Turnover',
+        event_timestamp: new Date().toISOString(),
+      })
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0]
   }, [])
   return useApiCall(fn)
 }
 
 export function useDeleteEvent() {
   const fn = useCallback(async (params: { eventId: number }) => {
-    const res = await fetch(`/api/events/${params.eventId}`, { method: 'DELETE' })
-    if (!res.ok) throw new Error(await res.text())
-    return res.json()
+    const { data, error } = await supabase
+      .from('game_events')
+      .delete()
+      .eq('id', params.eventId)
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0]
   }, [])
   return useApiCall(fn)
 }
 
 export function useUpdateEvent() {
   const fn = useCallback(async (params: { eventId: number; playerId: number | null; relatedPlayerId: number | null }) => {
-    const res = await fetch(`/api/events/${params.eventId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ playerId: params.playerId, relatedPlayerId: params.relatedPlayerId }),
-    })
-    if (!res.ok) throw new Error(await res.text())
-    return res.json()
+    const { data, error } = await supabase
+      .from('game_events')
+      .update({
+        player_id: params.playerId,
+        related_player_id: params.relatedPlayerId,
+      })
+      .eq('id', params.eventId)
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0]
   }, [])
   return useApiCall(fn)
 }

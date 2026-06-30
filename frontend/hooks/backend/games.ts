@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { supabase } from '../../lib/supabase'
 
 type HookResult<T, P = void> = {
   data: T | undefined
@@ -33,26 +34,25 @@ function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P
 
 export function useGetGames() {
   const fn = useCallback(async (params?: { seasonIds?: number[] }) => {
-    const url = new URL('/api/games', window.location.origin)
+    let query = supabase.from('games').select('*').order('game_date', { ascending: false })
     if (params?.seasonIds && params.seasonIds.length > 0) {
-      for (const id of params.seasonIds) url.searchParams.append('seasonIds', String(id))
+      query = query.in('season_id', params.seasonIds)
     }
-    const res = await fetch(url.toString())
-    if (!res.ok) throw new Error(await res.text())
-    return res.json() as Promise<any[]>
+    const { data, error } = await query
+    if (error) throw new Error(error.message)
+    return data as any[]
   }, [])
   return useApiCall<any[], { seasonIds?: number[] }>(fn)
 }
 
 export function useCreateGame() {
   const fn = useCallback(async (params: { opponent: string; game_date: string; game_time: string; game_type: string; season_id?: number | null; notes?: string }) => {
-    const res = await fetch('/api/games', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    })
-    if (!res.ok) throw new Error(await res.text())
-    return res.json()
+    const { data, error } = await supabase
+      .from('games')
+      .insert(params)
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0]
   }, [])
   return useApiCall(fn)
 }
@@ -60,55 +60,73 @@ export function useCreateGame() {
 export function useUpdateGame() {
   const fn = useCallback(async (params: { gameId: number; notes?: string; outcome_override?: string | null; result?: string }) => {
     const { gameId, ...body } = params
-    const res = await fetch(`/api/games/${gameId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    if (!res.ok) throw new Error(await res.text())
-    return res.json()
+    const { data, error } = await supabase
+      .from('games')
+      .update(body)
+      .eq('id', gameId)
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0]
   }, [])
   return useApiCall(fn)
 }
 
 export function useDeleteGame() {
   const fn = useCallback(async (params: { gameId: number }) => {
-    const res = await fetch(`/api/games/${params.gameId}`, { method: 'DELETE' })
-    if (!res.ok) throw new Error(await res.text())
-    return res.json()
+    const { data, error } = await supabase
+      .from('games')
+      .delete()
+      .eq('id', params.gameId)
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0]
   }, [])
   return useApiCall(fn)
 }
 
 export function useGetLineups() {
   const fn = useCallback(async (params: { gameId: number }) => {
-    const res = await fetch(`/api/games/${params.gameId}/lineups`)
-    if (!res.ok) throw new Error(await res.text())
-    return res.json() as Promise<any[]>
+    const { data, error } = await supabase
+      .from('game_lineups')
+      .select('*')
+      .eq('game_id', params.gameId)
+    if (error) throw new Error(error.message)
+    return data as any[]
   }, [])
   return useApiCall<any[], { gameId: number }>(fn)
 }
 
 export function useAddToLineup() {
   const fn = useCallback(async (params: { gameId: number; player_id: number; lineup_name?: string }) => {
-    const res = await fetch(`/api/games/${params.gameId}/lineups`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ player_id: params.player_id, lineup_name: params.lineup_name ?? 'Starting' }),
-    })
-    if (!res.ok) throw new Error(await res.text())
-    return res.json()
+    const { data, error } = await supabase
+      .from('game_lineups')
+      .insert({
+        game_id: params.gameId,
+        player_id: params.player_id,
+        lineup_name: params.lineup_name ?? 'Starting',
+      })
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0]
   }, [])
   return useApiCall(fn)
 }
 
 export function useRemoveFromLineup() {
   const fn = useCallback(async (params: { gameId: number; playerId: number; lineup_name?: string }) => {
-    const url = new URL(`/api/games/${params.gameId}/lineups/${params.playerId}`, window.location.origin)
-    if (params.lineup_name) url.searchParams.set('lineup_name', params.lineup_name)
-    const res = await fetch(url.toString(), { method: 'DELETE' })
-    if (!res.ok) throw new Error(await res.text())
-    return res.json()
+    let query = supabase
+      .from('game_lineups')
+      .delete()
+      .eq('game_id', params.gameId)
+      .eq('player_id', params.playerId)
+
+    if (params.lineup_name) {
+      query = query.eq('lineup_name', params.lineup_name)
+    }
+
+    const { data, error } = await query.select()
+    if (error) throw new Error(error.message)
+    return data?.[0]
   }, [])
   return useApiCall(fn)
 }
