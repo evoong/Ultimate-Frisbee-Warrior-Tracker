@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Express API Server",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--dns-result-order=ipv4first", "node_modules/.bin/tsx", "server/index.ts"],
+      "port": 3001,
+      "autoPort": true
+    },
+    {
+      "name": "Vite Frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "frontend"],
+      "port": 5000,
+      "autoPort": true
+    }
+  ]
+}
