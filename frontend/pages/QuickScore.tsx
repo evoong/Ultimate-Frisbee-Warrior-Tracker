@@ -5,6 +5,7 @@ import { useGetGameEvents } from '../hooks/backend/events'
 import { useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useGetEventTypes } from '../hooks/backend/events'
 import { useCreatePlayerForGame, useDeleteSubPlayer, useGetPlayersNotInSeason, useAddPlayerToGame } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons } from '../hooks/backend/stats'
+import { useGetGameAttendance, useSetAttendance } from '../hooks/backend/attendance'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
@@ -13,7 +14,7 @@ import { Label } from '../lib/shadcn/label'
 import PlayerCombobox from '../components/PlayerCombobox'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
-import { Target, Plus, Minus, TrendingUp, Undo2, Edit2, ChevronLeft, Trash2, Calendar, ArrowLeftRight } from 'lucide-react'
+import { Target, Plus, Minus, TrendingUp, Undo2, Edit2, ChevronLeft, Trash2, Calendar, ArrowLeftRight, Users, ChevronDown, ChevronUp } from 'lucide-react'
 
 type Season = { id: number; name: string; year: number; organizer: string | null; start_date: string | null; end_date: string | null }
 type Game = { id: number; opponent: string; game_date: string; season_id: number | null }
@@ -38,6 +39,8 @@ export default function QuickScore() {
   const { trigger: deleteSubPlayer } = useDeleteSubPlayer()
   const { data: otherPlayers, trigger: fetchOtherPlayers } = useGetPlayersNotInSeason()
   const { trigger: addPlayerToGame } = useAddPlayerToGame()
+  const { data: attendingIds, trigger: fetchAttendance } = useGetGameAttendance()
+  const { trigger: setAttendance } = useSetAttendance()
 
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null)
   const [showGameSelect, setShowGameSelect] = useState(false)
@@ -48,6 +51,7 @@ export default function QuickScore() {
   const [editScorerId, setEditScorerId] = useState<string>('')
   const [editAssisterId, setEditAssisterId] = useState<string>('')
   const [selectedSeasonIds, setSelectedSeasonIds] = useState<number[]>([])
+  const [showAttendance, setShowAttendance] = useState(false)
 
   useEffect(() => {
     fetchEventTypes()
@@ -102,6 +106,7 @@ export default function QuickScore() {
         fetchOtherPlayers({})
       }
       setShowGameSelect(false)
+      fetchAttendance({ gameId: selectedGameId })
     }
   }, [selectedGameId, games])
 
@@ -316,6 +321,50 @@ export default function QuickScore() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Attendance */}
+          {players && (players as any[]).length > 0 && (
+            <Card className="bg-card border-border">
+              <button
+                className="w-full flex items-center justify-between px-5 py-3"
+                onClick={() => setShowAttendance(v => !v)}
+              >
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Users className="w-4 h-4 text-muted-foreground" />
+                  <span>Attendance</span>
+                  <span className="text-xs text-muted-foreground font-normal">
+                    {attendingIds ? `${(attendingIds as number[]).length} / ${(players as any[]).length}` : '…'}
+                  </span>
+                </div>
+                {showAttendance ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+              </button>
+              {showAttendance && (
+                <CardContent className="pt-0 pb-3 px-5">
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                    {(players as { id: number; display_name: string; is_sub: boolean | null }[]).map(p => {
+                      const attending = (attendingIds as number[] | undefined)?.includes(p.id) ?? false
+                      return (
+                        <label key={p.id} className="flex items-center gap-2 py-1 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={attending}
+                            onChange={async e => {
+                              await setAttendance({ gameId: selectedGameId!, playerId: p.id, attending: e.target.checked })
+                              fetchAttendance({ gameId: selectedGameId! })
+                            }}
+                            className="accent-primary w-4 h-4 rounded"
+                          />
+                          <span className={`text-sm ${attending ? 'text-foreground' : 'text-muted-foreground line-through'}`}>
+                            {p.display_name}{p.is_sub ? ' ·' : ''}
+                          </span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </CardContent>
+              )}
+            </Card>
+          )}
 
           {/* Controls */}
           <Card className="bg-card border-border">

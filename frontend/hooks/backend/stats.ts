@@ -125,32 +125,22 @@ export function useGetPlayerStats() {
       filtered = events.filter((e: any) => params.gameIds?.includes(e.game_id))
     }
 
-    // When filtering by season: games_played = all games in that season where the player
-    // is active in season_players (Replit logic — not just games with events)
-    let seasonGamesPlayedMap: Map<number, number> | null = null
-    if (filteredSeasonIds) {
-      const { data: seasonGames } = await supabase
-        .from('games')
-        .select('id, season_id')
-        .in('season_id', filteredSeasonIds)
-      const { data: activeRoster } = await supabase
-        .from('season_players')
-        .select('player_id, season_id')
-        .in('season_id', filteredSeasonIds)
-        .eq('active', true)
-      if (seasonGames && activeRoster) {
-        const gamesBySeason = new Map<number, number[]>()
-        seasonGames.forEach((g: any) => {
-          if (!gamesBySeason.has(g.season_id)) gamesBySeason.set(g.season_id, [])
-          gamesBySeason.get(g.season_id)!.push(g.id)
-        })
-        seasonGamesPlayedMap = new Map()
-        activeRoster.forEach((sp: any) => {
-          const count = gamesBySeason.get(sp.season_id)?.length ?? 0
-          seasonGamesPlayedMap!.set(sp.player_id, (seasonGamesPlayedMap!.get(sp.player_id) ?? 0) + count)
-        })
-      }
-    }
+    // games_played = games the player actually attended (game_attendance table)
+    const { data: attendanceRows } = await supabase
+      .from('game_attendance')
+      .select('game_id, player_id')
+    const attendanceMap = new Map<number, Set<number>>() // player_id → Set<game_id>
+    ;(attendanceRows ?? []).forEach((r: any) => {
+      if (!attendanceMap.has(r.player_id)) attendanceMap.set(r.player_id, new Set())
+      attendanceMap.get(r.player_id)!.add(r.game_id)
+    })
+
+    // When season/game filter is active, restrict attendance to those games
+    const filteredGameIds = filteredSeasonIds
+      ? new Set(games?.filter((g: any) => filteredSeasonIds.includes(g.season_id)).map((g: any) => g.id) ?? [])
+      : params?.gameIds?.length
+        ? new Set(params.gameIds)
+        : null
 
     // Aggregate stats by player
     const statsMap = new Map<number, any>()
@@ -199,13 +189,13 @@ export function useGetPlayerStats() {
     })
 
     // Convert to array and calculate additional fields
-    const result = Array.from(statsMap.values()).map((s: any) => ({
-      ...s,
-      games_played: seasonGamesPlayedMap
-        ? (seasonGamesPlayedMap.get(s.player_id) ?? s.games_played.size)
-        : s.games_played.size,
-      ga_rank: 0,
-    }))
+    const result = Array.from(statsMap.values()).map((s: any) => {
+      const attended = attendanceMap.get(s.player_id) ?? new Set<number>()
+      const gamesPlayed = filteredGameIds
+        ? [...attended].filter(gid => filteredGameIds.has(gid)).length
+        : attended.size
+      return { ...s, games_played: gamesPlayed, ga_rank: 0 }
+    })
 
     // Sort by goals + assists descending
     result.sort((a: any, b: any) => (b.goals + b.assists) - (a.goals + a.assists))
