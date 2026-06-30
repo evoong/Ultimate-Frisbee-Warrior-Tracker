@@ -34,8 +34,8 @@ export default function Ranking() {
   useEffect(() => {
     const s = seasonsWithGames as { id: number }[] | undefined
     const allS = allSeasons as Season[] | undefined
-    if (!s || s.length === 0 || selectedSeasonIds.length > 0) return
-    const defaultId = getDefaultJamSeasonId(allS ?? [], s[0]!.id)
+    if (!s || s.length === 0 || !allS || allS.length === 0 || selectedSeasonIds.length > 0) return
+    const defaultId = getDefaultJamSeasonId(allS, s[0]!.id)
     setFilterType('season')
     setSelectedSeasonIds([defaultId])
   }, [seasonsWithGames, allSeasons])

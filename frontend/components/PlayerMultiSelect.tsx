@@ -64,9 +64,12 @@ export default function PlayerMultiSelect({ players, selectedIds, onChange, plac
         <div className="absolute z-50 mt-1 w-full bg-card border border-border rounded-md shadow-lg overflow-hidden">
           <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-muted/30">
             <span className="text-xs text-muted-foreground">{selectedIds.length > 0 ? `${selectedIds.length} selected` : 'Select players'}</span>
-            {selectedIds.length > 0 && (
-              <button onClick={clearAll} className="text-xs text-muted-foreground hover:text-foreground">Clear all</button>
-            )}
+            <div className="flex items-center gap-3">
+              <button onClick={() => onChange(players.map(p => p.id))} className="text-xs text-muted-foreground hover:text-foreground">Select all</button>
+              {selectedIds.length > 0 && (
+                <button onClick={clearAll} className="text-xs text-muted-foreground hover:text-foreground">Clear all</button>
+              )}
+            </div>
           </div>
           <div className="max-h-52 overflow-y-auto">
             {players.length === 0 ? (
