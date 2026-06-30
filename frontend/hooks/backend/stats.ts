@@ -64,14 +64,89 @@ export function useCreateSeason() {
 
 export function useGetPlayerStats() {
   const fn = useCallback(async (params?: { seasonIds?: number[]; gameIds?: number[] }) => {
-    return [] as any[]
+    const { data: events, error } = await supabase
+      .from('game_events')
+      .select('player_id, event_type, game_id, games(season_id), players(display_name)')
+
+    if (error) throw new Error(error.message)
+    if (!events) return []
+
+    // Filter by seasons or games if specified
+    let filtered = events
+    if (params?.seasonIds && params.seasonIds.length > 0) {
+      filtered = events.filter((e: any) => params.seasonIds?.includes(e.games?.season_id))
+    }
+    if (params?.gameIds && params.gameIds.length > 0) {
+      filtered = events.filter((e: any) => params.gameIds?.includes(e.game_id))
+    }
+
+    // Aggregate stats by player
+    const statsMap = new Map<number, any>()
+    filtered.forEach((event: any) => {
+      const playerId = event.player_id
+      const playerName = event.players?.display_name
+      if (!playerId || !playerName) return
+
+      if (!statsMap.has(playerId)) {
+        statsMap.set(playerId, {
+          player_id: playerId,
+          player_name: playerName,
+          goals: 0,
+          assists: 0,
+          turnovers: 0,
+          games_played: new Set<number>(),
+        })
+      }
+
+      const stats = statsMap.get(playerId)!
+      stats.games_played.add(event.game_id)
+
+      if (event.event_type === 'Goal') stats.goals++
+      else if (event.event_type === 'Turnover') stats.turnovers++
+    })
+
+    // Convert to array and calculate additional fields
+    const result = Array.from(statsMap.values()).map((s: any) => ({
+      ...s,
+      games_played: s.games_played.size,
+      ga_rank: 0,
+    }))
+
+    // Sort by goals + assists descending
+    result.sort((a: any, b: any) => (b.goals + b.assists) - (a.goals + a.assists))
+
+    // Add ranking
+    result.forEach((s: any, i: number) => { s.ga_rank = i + 1 })
+
+    return result
   }, [])
   return useApiCall<any[], { seasonIds?: number[]; gameIds?: number[] }>(fn)
 }
 
 export function useGetCumulativeStats() {
   const fn = useCallback(async (params?: { seasonId?: number }) => {
-    return [] as any[]
+    const { data: events, error } = await supabase
+      .from('game_events')
+      .select('*, games(id, opponent, game_date, season_id), players(id, display_name)')
+
+    if (error) throw new Error(error.message)
+    if (!events) return []
+
+    let filtered = events
+    if (params?.seasonId != null) {
+      filtered = events.filter((e: any) => e.games?.season_id === params.seasonId)
+    }
+
+    return filtered.map((e: any) => ({
+      game_id: e.games?.id,
+      opponent: e.games?.opponent,
+      game_date: e.games?.game_date,
+      player_id: e.player_id,
+      player_name: e.players?.display_name,
+      goals: e.event_type === 'Goal' ? 1 : 0,
+      assists: e.event_type === 'Assist' ? 1 : 0,
+      turnovers: e.event_type === 'Turnover' ? 1 : 0,
+    }))
   }, [])
   return useApiCall<any[], { seasonId?: number }>(fn)
 }
