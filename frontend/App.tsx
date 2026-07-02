@@ -60,7 +60,10 @@ export default function App() {
     return <ResetPassword />
   }
 
-  if (!user || !allowed) {
+  // Anyone signed in may enter (read-only). The `allowed` flag now means
+  // "team member — can write"; write controls are gated on it, and the DB's
+  // RLS is the real enforcement (002_public_read_team_write.sql).
+  if (!user) {
     return <Login />
   }
 
@@ -78,7 +81,7 @@ export default function App() {
       {/* Header */}
       <header className="bg-card border-b border-border sticky top-0 z-10">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
-          <h1 className="text-lg font-bold text-primary">⚡ Warrior Tracker</h1>
+          <h1 className="text-lg font-bold text-primary">Warrior Tracker</h1>
           <div className="flex items-center gap-1">
             <button
               onClick={toggleTheme}
@@ -98,6 +101,15 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {/* Read-only notice for signed-in users who aren't on the team allowlist. */}
+      {!allowed && (
+        <div className="bg-accent border-b border-border">
+          <div className="max-w-2xl mx-auto px-4 py-2 text-xs text-muted-foreground text-center">
+            You have read-only access. Ask a team admin to add you for editing.
+          </div>
+        </div>
+      )}
 
       {/* Content */}
       <main className="max-w-2xl mx-auto px-4 py-6 pb-24">

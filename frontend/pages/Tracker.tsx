@@ -9,8 +9,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
 import { Label } from '../lib/shadcn/label'
 import { Target, TrendingUp, AlertCircle } from 'lucide-react'
+import { useAuth } from '../contexts/AuthContext'
 
 export default function Tracker() {
+  const { allowed } = useAuth()
   const { data: games, trigger: fetchGames } = useGetGames()
   const { data: players, trigger: fetchPlayers } = useGetSeasonRoster()
   const { data: events, trigger: fetchEvents } = useGetGameEvents()
@@ -115,6 +117,7 @@ export default function Tracker() {
           </Card>
 
           {/* Action Buttons */}
+          {allowed && (
           <div className="grid grid-cols-1 gap-3">
             <Button
               onClick={() => setDialogType('goal')}
@@ -138,6 +141,7 @@ export default function Tracker() {
               Turnover
             </Button>
           </div>
+          )}
 
           {/* Recent Events */}
           <Card className="bg-card text-card-foreground border-border">

@@ -8,6 +8,11 @@ import {
 } from './cookies'
 import { isExpired } from './jwt'
 
+// Server-side minimum password length. Mirrors the client's PASSWORD_MIN_LENGTH
+// so we enforce the same rule regardless of Supabase's dashboard setting
+// (whose default is only 6). Applied on every path that sets a password.
+const PASSWORD_MIN_LENGTH = 8
+
 export interface GatewayConfig {
   supabaseUrl: string
   publishableKey: string
@@ -162,6 +167,9 @@ export async function handleAuthRequest(
       if (typeof email !== 'string' || typeof password !== 'string') {
         return json({ error: 'email and password are required' }, 400)
       }
+      if (password.length < PASSWORD_MIN_LENGTH) {
+        return json({ error: `password must be at least ${PASSWORD_MIN_LENGTH} characters` }, 400)
+      }
       const { status, data } = await supabaseAuth(config, '/signup', {
         body: { email, password },
       })
@@ -283,8 +291,8 @@ export async function handleAuthRequest(
       const { accessToken, setCookies } = await resolveAccessToken(config, request, url)
       if (!accessToken) return json({ error: 'not authenticated' }, 401)
       const { password } = await readJsonBody(request)
-      if (typeof password !== 'string' || password.length < 8) {
-        return json({ error: 'password must be at least 8 characters' }, 400)
+      if (typeof password !== 'string' || password.length < PASSWORD_MIN_LENGTH) {
+        return json({ error: `password must be at least ${PASSWORD_MIN_LENGTH} characters` }, 400)
       }
       const { status, data } = await supabaseAuth(config, '/user', {
         method: 'PUT',

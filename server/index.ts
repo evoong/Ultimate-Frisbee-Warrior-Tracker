@@ -163,7 +163,7 @@ async function getTeamContext() {
   // Build per-player section
   const playerSections = (players.data ?? []).map((p: any) => {
     const at = allTime.get(p.id) ?? { goals: 0, assists: 0, turnovers: 0 };
-    const header = `${p.display_name}${p.position ? ` (${p.position})` : ""}${p.is_sub ? " [sub]" : ""} — All-time: ${at.goals}G ${at.assists}A ${at.turnovers}TO`;
+    const header = `${p.display_name}${p.position ? ` (${p.position})` : ""}${p.is_sub ? " [sub]" : ""}. All-time: ${at.goals}G ${at.assists}A ${at.turnovers}TO`;
 
     // Seasons this player is in
     const playerSeasonIds = (seasonPlayers.data ?? [])

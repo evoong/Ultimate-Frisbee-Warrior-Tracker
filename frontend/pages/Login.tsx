@@ -1,10 +1,10 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { Button } from '../lib/shadcn/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Input } from '../lib/shadcn/input'
 import { Label } from '../lib/shadcn/label'
-import { Loader2, LogOut } from 'lucide-react'
+import { Eye, EyeOff, Loader2 } from 'lucide-react'
 
 const AUTH_ERROR_MESSAGES: Record<string, string> = {
   login_expired: 'The sign-in attempt took too long. Please try again.',
@@ -15,14 +15,27 @@ const AUTH_ERROR_MESSAGES: Record<string, string> = {
 
 type Mode = 'login' | 'signup' | 'forgot'
 
+// Single source of truth for the minimum password length. Used by the input's
+// `minLength`, the inline hint, and the client-side guard so every message agrees.
+const PASSWORD_MIN_LENGTH = 8
+
 export default function Login() {
-  const { user, allowed, login, signup, loginWithGoogle, logout, forgotPassword } = useAuth()
+  const { login, signup, loginWithGoogle, forgotPassword } = useAuth()
   const [mode, setMode] = useState<Mode>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [showFormHint, setShowFormHint] = useState(true)
+  const [showPassword, setShowPassword] = useState(false)
+
+  // The generic "fill out this form" hint auto-dismisses after 5 seconds.
+  useEffect(() => {
+    if (!showFormHint) return
+    const timer = setTimeout(() => setShowFormHint(false), 5000)
+    return () => clearTimeout(timer)
+  }, [showFormHint])
 
   const urlError = useMemo(() => {
     const code = new URLSearchParams(window.location.search).get('auth_error')
@@ -30,12 +43,16 @@ export default function Login() {
     return AUTH_ERROR_MESSAGES[code] ?? 'Sign-in failed. Please try again.'
   }, [])
 
-  const notAllowed = user !== null && !allowed
-
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setError(null)
     setNotice(null)
+    // Enforce our password rule before hitting the server, so users never see
+    // the backend's own (different) minimum-length message.
+    if (mode !== 'forgot' && password.length < PASSWORD_MIN_LENGTH) {
+      setError(`Password must be at least ${PASSWORD_MIN_LENGTH} characters.`)
+      return
+    }
     setBusy(true)
     try {
       if (mode === 'login') {
@@ -43,7 +60,7 @@ export default function Login() {
       } else if (mode === 'signup') {
         const { confirmationRequired } = await signup(email, password)
         if (confirmationRequired) {
-          setNotice('Almost there — check your email to confirm your account.')
+          setNotice('Almost there. Check your email to confirm your account.')
         }
       } else {
         await forgotPassword(email)
@@ -60,7 +77,7 @@ export default function Login() {
     <div className="min-h-screen bg-background text-foreground flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-6">
-          <h1 className="text-2xl font-bold text-primary">⚡ Warrior Tracker</h1>
+          <h1 className="text-2xl font-bold text-primary">Warrior Tracker</h1>
           <p className="text-sm text-muted-foreground mt-1">Team access only</p>
         </div>
 
@@ -78,26 +95,17 @@ export default function Login() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {notAllowed ? (
-              <div className="space-y-4">
-                <p className="text-sm rounded-md border border-border bg-accent p-3">
-                  You are signed in as <strong>{user.email}</strong>, but this account is not on
-                  the team list yet. Ask the team admin to add your email.
-                </p>
-                <Button variant="outline" className="w-full" onClick={() => logout()}>
-                  <LogOut className="w-4 h-4 mr-2" />
-                  Sign out
-                </Button>
-              </div>
-            ) : (
-              <>
+            <>
                 {urlError && !error && !notice && (
                   <p className="text-sm text-destructive">{urlError}</p>
                 )}
                 {error && <p className="text-sm text-destructive">{error}</p>}
                 {notice && <p className="text-sm text-primary">{notice}</p>}
+                {showFormHint && !error && !notice && (
+                  <p className="text-sm text-muted-foreground">Please fill out this form.</p>
+                )}
 
-                <form onSubmit={handleSubmit} className="space-y-4">
+                <form onSubmit={handleSubmit} className="space-y-4" noValidate>
                   <div className="space-y-2">
                     <Label htmlFor="email">Email</Label>
                     <Input
@@ -112,18 +120,35 @@ export default function Login() {
                   {mode !== 'forgot' && (
                     <div className="space-y-2">
                       <Label htmlFor="password">Password</Label>
-                      <Input
-                        id="password"
-                        type="password"
-                        autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-                        required
-                        minLength={8}
-                        value={password}
-                        onChange={e => setPassword(e.target.value)}
-                      />
+                      <div className="relative">
+                        <Input
+                          id="password"
+                          type={showPassword ? 'text' : 'password'}
+                          autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+                          required
+                          minLength={PASSWORD_MIN_LENGTH}
+                          value={password}
+                          onChange={e => setPassword(e.target.value)}
+                          className="pr-10"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(v => !v)}
+                          className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground"
+                          aria-label={showPassword ? 'Hide password' : 'Show password'}
+                          aria-pressed={showPassword}
+                          tabIndex={-1}
+                        >
+                          {showPassword ? (
+                            <EyeOff className="w-4 h-4" />
+                          ) : (
+                            <Eye className="w-4 h-4" />
+                          )}
+                        </button>
+                      </div>
                     </div>
                   )}
-                  <Button type="submit" className="w-full" disabled={busy}>
+                  <Button type="submit" className="w-full !mt-6" disabled={busy}>
                     {busy && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                     {mode === 'login' && 'Sign in'}
                     {mode === 'signup' && 'Sign up'}
@@ -192,8 +217,7 @@ export default function Login() {
                     </button>
                   )}
                 </div>
-              </>
-            )}
+            </>
           </CardContent>
         </Card>
       </div>
