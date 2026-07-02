@@ -7,6 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Label } from '../lib/shadcn/label'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import PlayerMultiSelect from '../components/PlayerMultiSelect'
+import { Skeleton } from '../lib/shadcn/skeleton'
+import FadeIn from '../components/FadeIn'
 import { BarChart3, TrendingUp, LineChart as LineChartIcon } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -286,7 +288,7 @@ export default function Stats() {
                     <label key={game.id} className="flex items-center gap-3 cursor-pointer hover:bg-accent rounded px-2 py-1.5 transition-colors">
                       <input type="checkbox" checked={selectedGameIds.includes(game.id)} onChange={() => handleGameToggle(game.id)} className="w-4 h-4 rounded border-border" />
                       <span className="text-sm text-foreground">
-                        vs {game.opponent} — {new Date(game.game_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                        vs {game.opponent}, {new Date(game.game_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                         {s && <span className="text-xs text-muted-foreground ml-1">· {seasonLabel(s)}</span>}
                       </span>
                     </label>
@@ -301,18 +303,22 @@ export default function Stats() {
       {/* Avg per game banner */}
       {avgGoals && avgAssists && (
         <div className="grid grid-cols-2 gap-3">
-          <Card className="bg-green-500/5 border-green-500/20">
-            <CardContent className="pt-3 pb-3 text-center">
-              <div className="text-xl font-bold text-green-600 dark:text-green-400">{avgGoals}</div>
-              <div className="text-xs text-muted-foreground">Avg goals/game</div>
-            </CardContent>
-          </Card>
-          <Card className="bg-blue-500/5 border-blue-500/20">
-            <CardContent className="pt-3 pb-3 text-center">
-              <div className="text-xl font-bold text-blue-600 dark:text-blue-400">{avgAssists}</div>
-              <div className="text-xs text-muted-foreground">Avg assists/game</div>
-            </CardContent>
-          </Card>
+          <FadeIn delay={0}>
+            <Card className="bg-green-500/5 border-green-500/20">
+              <CardContent className="pt-3 pb-3 text-center">
+                <div className="text-xl font-bold text-green-600 dark:text-green-400">{avgGoals}</div>
+                <div className="text-xs text-muted-foreground">Avg goals/game</div>
+              </CardContent>
+            </Card>
+          </FadeIn>
+          <FadeIn delay={40}>
+            <Card className="bg-blue-500/5 border-blue-500/20">
+              <CardContent className="pt-3 pb-3 text-center">
+                <div className="text-xl font-bold text-blue-600 dark:text-blue-400">{avgAssists}</div>
+                <div className="text-xs text-muted-foreground">Avg assists/game</div>
+              </CardContent>
+            </Card>
+          </FadeIn>
         </div>
       )}
 
@@ -334,11 +340,20 @@ export default function Stats() {
         </CardHeader>
         <CardContent className="pt-2">
           {loading ? (
-            <div className="flex items-center justify-center h-48 text-muted-foreground text-sm">Loading...</div>
+            // Skeleton shaped like the horizontal bar chart: a name label plus a
+            // bar of varying width for each of several rows.
+            <div className="space-y-4 py-2">
+              {[0.9, 0.75, 0.6, 0.5, 0.4, 0.3].map((w, i) => (
+                <div key={i} className="flex items-center gap-3">
+                  <Skeleton className="h-3 w-12 shrink-0" />
+                  <Skeleton className="h-3.5" style={{ width: `${w * 100}%` }} />
+                </div>
+              ))}
+            </div>
           ) : error ? (
             <div className="flex items-center justify-center h-48 text-destructive text-sm">Error: {error}</div>
           ) : chartData.length > 0 ? (
-            <div className="w-full" style={{ height: Math.max(200, chartData.length * 36) }}>
+            <FadeIn className="w-full" style={{ height: Math.max(200, chartData.length * 36) }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartData} layout="vertical" margin={{ top: 0, right: 16, left: 0, bottom: 0 }} barCategoryGap="20%">
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
@@ -351,7 +366,7 @@ export default function Stats() {
                   {chartTab === 'combined' && <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />}
                 </BarChart>
               </ResponsiveContainer>
-            </div>
+            </FadeIn>
           ) : (
             <div className="flex flex-col items-center justify-center h-48 text-muted-foreground">
               <TrendingUp className="w-12 h-12 mb-3 opacity-40" />
@@ -409,9 +424,21 @@ export default function Stats() {
         </CardHeader>
         <CardContent className="pt-2">
           {cumulativeLoading ? (
-            <div className="flex items-center justify-center h-56 text-muted-foreground text-sm">Loading...</div>
+            // Skeleton shaped like the line chart: a large plot block plus a row
+            // of legend chips underneath.
+            <div className="space-y-3">
+              <Skeleton className="w-full" style={{ height: 220 }} />
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                {[0, 1, 2, 3, 4].map(i => (
+                  <div key={i} className="flex items-center gap-1.5">
+                    <Skeleton className="w-2.5 h-2.5 rounded-full shrink-0" />
+                    <Skeleton className="h-3 w-16" />
+                  </div>
+                ))}
+              </div>
+            </div>
           ) : lineData.length > 0 ? (
-            <>
+            <FadeIn>
               <div style={{ height: 220 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={lineData} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
@@ -445,7 +472,7 @@ export default function Stats() {
                   )
                 })}
               </div>
-            </>
+            </FadeIn>
           ) : (
             <div className="flex flex-col items-center justify-center h-56 text-muted-foreground">
               <LineChartIcon className="w-12 h-12 mb-3 opacity-40" />
@@ -456,7 +483,37 @@ export default function Stats() {
         </CardContent>
       </Card>
 
-      {/* Summary table */}
+      {/* Summary table: skeleton rows while loading, shaped like the real rows */}
+      {loading && (
+        <Card className="bg-card text-card-foreground border-border">
+          <CardHeader><CardTitle className="text-base">Summary Table</CardTitle></CardHeader>
+          <CardContent>
+            <div className="space-y-0">
+              <div className="flex items-center gap-3 px-2 pb-2 border-b border-border">
+                <Skeleton className="h-3 flex-1" />
+                <Skeleton className="h-3 w-8" />
+                <Skeleton className="h-3 w-8" />
+                <Skeleton className="h-3 w-8" />
+                <Skeleton className="h-3 w-10" />
+                <Skeleton className="h-3 w-10" />
+                <Skeleton className="h-3 w-10" />
+              </div>
+              {[0, 1, 2, 3, 4, 5].map(i => (
+                <div key={i} className="flex items-center gap-3 px-2 py-2.5 border-b border-border last:border-0">
+                  <Skeleton className="h-4 flex-1" />
+                  <Skeleton className="h-4 w-8" />
+                  <Skeleton className="h-4 w-8" />
+                  <Skeleton className="h-4 w-8" />
+                  <Skeleton className="h-3 w-10" />
+                  <Skeleton className="h-3 w-10" />
+                  <Skeleton className="h-3 w-10" />
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {!loading && chartData.length > 0 && (
         <Card className="bg-card text-card-foreground border-border">
           <CardHeader><CardTitle className="text-base">Summary Table</CardTitle></CardHeader>
@@ -471,12 +528,12 @@ export default function Stats() {
                 <div className="w-10 text-center text-muted-foreground">G/gm</div>
                 <div className="w-10 text-center text-muted-foreground">A/gm</div>
               </div>
-              {(stats as PlayerStat[]).map(p => {
+              {(stats as PlayerStat[]).map((p, index) => {
                 const gp = parseInt(p.games_played)
-                const avgG = gp > 0 ? (parseInt(p.goals) / gp).toFixed(1) : '—'
-                const avgA = gp > 0 ? (parseInt(p.assists) / gp).toFixed(1) : '—'
+                const avgG = gp > 0 ? (parseInt(p.goals) / gp).toFixed(1) : '-'
+                const avgA = gp > 0 ? (parseInt(p.assists) / gp).toFixed(1) : '-'
                 return (
-                  <div key={p.player_id} className="flex items-center gap-3 px-2 py-2.5 border-b border-border last:border-0">
+                  <FadeIn key={p.player_id} delay={index * 40} className="flex items-center gap-3 px-2 py-2.5 border-b border-border last:border-0">
                     <div className="flex-1 text-sm font-medium text-foreground truncate">{p.player_name}</div>
                     <div className="w-8 text-center font-bold text-sm text-green-600 dark:text-green-400">{p.goals}</div>
                     <div className="w-8 text-center font-bold text-sm text-blue-600 dark:text-blue-400">{p.assists}</div>
@@ -484,7 +541,7 @@ export default function Stats() {
                     <div className="w-10 text-center text-xs text-muted-foreground">{p.games_played}</div>
                     <div className="w-10 text-center text-xs text-green-600 dark:text-green-400">{avgG}</div>
                     <div className="w-10 text-center text-xs text-blue-600 dark:text-blue-400">{avgA}</div>
-                  </div>
+                  </FadeIn>
                 )
               })}
             </div>

@@ -6,6 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
 import { Label } from '../lib/shadcn/label'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
+import { Skeleton } from '../lib/shadcn/skeleton'
+import FadeIn from '../components/FadeIn'
 import { Award, Target } from 'lucide-react'
 
 type Season = { id: number; name: string; year: number; organizer: string | null; start_date: string | null; end_date: string | null }
@@ -117,7 +119,7 @@ export default function Ranking() {
                     <label key={game.id} className="flex items-center gap-3 cursor-pointer hover:bg-accent rounded px-2 py-1.5 transition-colors">
                       <input type="checkbox" checked={selectedGameIds.includes(game.id)} onChange={() => handleGameToggle(game.id)} className="w-4 h-4 rounded border-border" />
                       <span className="text-sm text-foreground">
-                        vs {game.opponent} — {new Date(game.game_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                        vs {game.opponent}, {new Date(game.game_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                         {s && <span className="text-xs text-muted-foreground ml-1">· {seasonLabel(s)}</span>}
                       </span>
                     </label>
@@ -131,7 +133,7 @@ export default function Ranking() {
 
       {/* Top cards */}
       {topScorer && topAssister && (
-        <div className="grid grid-cols-2 gap-3">
+        <FadeIn className="grid grid-cols-2 gap-3">
           <Card className="bg-card border-border">
             <CardContent className="pt-4">
               <div className="flex items-center gap-2 text-yellow-500 mb-1">
@@ -154,7 +156,7 @@ export default function Ranking() {
               <p className="text-xs text-muted-foreground">assists</p>
             </CardContent>
           </Card>
-        </div>
+        </FadeIn>
       )}
 
       {/* Rankings Table */}
@@ -163,7 +165,33 @@ export default function Ranking() {
           <CardTitle className="text-base">Player Rankings</CardTitle>
         </CardHeader>
         <CardContent>
-          {loading && <p className="text-sm text-muted-foreground">Loading...</p>}
+          {loading && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left py-2 pr-3 font-semibold text-muted-foreground">#</th>
+                    <th className="text-left py-2 pr-3 font-semibold text-muted-foreground">Player</th>
+                    <th className="text-right py-2 pr-3 font-semibold text-muted-foreground">Goals</th>
+                    <th className="text-right py-2 pr-3 font-semibold text-muted-foreground">Assists</th>
+                    <th className="text-right py-2 font-semibold text-muted-foreground">G+A</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Placeholder rows shaped like the real ranking rows */}
+                  {Array.from({ length: 8 }).map((_, idx) => (
+                    <tr key={idx} className="border-b border-border/50">
+                      <td className="py-2 pr-3"><Skeleton className="h-4 w-4" /></td>
+                      <td className="py-2 pr-3"><Skeleton className="h-4 w-32" /></td>
+                      <td className="py-2 pr-3"><Skeleton className="h-4 w-6 ml-auto" /></td>
+                      <td className="py-2 pr-3"><Skeleton className="h-4 w-6 ml-auto" /></td>
+                      <td className="py-2"><Skeleton className="h-4 w-8 ml-auto" /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           {error && <p className="text-sm text-destructive">{error}</p>}
           {!loading && !error && (!stats || stats.length === 0) && (
             <p className="text-sm text-muted-foreground text-center py-4">
@@ -184,15 +212,20 @@ export default function Ranking() {
                 </thead>
                 <tbody>
                   {stats.map((row, idx) => (
-                    <tr key={row.player_id} className={`border-b border-border/50 ${idx < 3 ? 'font-medium' : ''}`}>
+                    <FadeIn
+                      as="tr"
+                      key={row.player_id}
+                      delay={idx * 40}
+                      className={`border-b border-border/50 ${idx < 3 ? 'font-medium' : ''}`}
+                    >
                       <td className="py-2 pr-3 text-muted-foreground">
-                        {idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `${idx + 1}`}
+                        {idx + 1}
                       </td>
                       <td className="py-2 pr-3 text-foreground">{row.player_name}</td>
                       <td className="py-2 pr-3 text-right text-foreground">{row.goals}</td>
                       <td className="py-2 pr-3 text-right text-foreground">{row.assists}</td>
                       <td className="py-2 text-right font-bold text-primary">{parseInt(row.goals) + parseInt(row.assists)}</td>
-                    </tr>
+                    </FadeIn>
                   ))}
                 </tbody>
               </table>

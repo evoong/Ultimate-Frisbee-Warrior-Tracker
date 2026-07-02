@@ -3,6 +3,8 @@ import { Card, CardContent } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
 import { Input } from '../lib/shadcn/input'
 import { Send, Bot, User, Loader2 } from 'lucide-react'
+import FadeIn from '../components/FadeIn'
+import { useAuth } from '../contexts/AuthContext'
 
 type Message = { role: 'user' | 'assistant'; content: string }
 
@@ -49,6 +51,7 @@ export default function Chat() {
   const [historyLoaded, setHistoryLoaded] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const sessionId = useRef(getSessionId())
+  const { allowed } = useAuth()
 
   useEffect(() => {
     fetch(`/api/chat/history?session_id=${sessionId.current}`)
@@ -102,13 +105,14 @@ export default function Chat() {
               <Loader2 className="w-4 h-4 animate-spin mr-2" />Loading history…
             </div>
           ) : messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center gap-3">
+            <FadeIn className="flex flex-col items-center justify-center h-full text-center gap-3">
               <Bot className="w-12 h-12 text-primary opacity-60" />
-              <p className="text-muted-foreground text-sm">Ask me anything about the team — stats, scores, players, or upcoming games.</p>
-            </div>
+              <p className="text-muted-foreground text-sm">Ask me anything about the team: stats, scores, players, or upcoming games.</p>
+            </FadeIn>
           ) : (
             messages.map((msg, i) => (
-              <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
+              // Per-message key so each new message eases in as it is appended.
+              <FadeIn key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
                   {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4 text-primary" />}
                 </div>
@@ -119,7 +123,7 @@ export default function Chat() {
                 }`}>
                   {msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.content}
                 </div>
-              </div>
+              </FadeIn>
             ))
           )}
           {loading && (
@@ -138,24 +142,31 @@ export default function Chat() {
         </CardContent>
       </Card>
 
-      {/* Input */}
-      <div className="flex gap-2 mt-3">
-        <Input
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendMessage()}
-          placeholder="Ask about stats, players, games…"
-          disabled={loading}
-          className="bg-card border-border text-foreground"
-        />
-        <Button
-          onClick={sendMessage}
-          disabled={!input.trim() || loading}
-          className="bg-primary text-primary-foreground hover:bg-primary/90 shrink-0"
-        >
-          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-        </Button>
-      </div>
+      {/* Input — the assistant is a team-only feature (writes chat history via
+          the service-role endpoint), so read-only users get a notice instead. */}
+      {allowed ? (
+        <div className="flex gap-2 mt-3">
+          <Input
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendMessage()}
+            placeholder="Ask about stats, players, games…"
+            disabled={loading}
+            className="bg-card border-border text-foreground"
+          />
+          <Button
+            onClick={sendMessage}
+            disabled={!input.trim() || loading}
+            className="bg-primary text-primary-foreground hover:bg-primary/90 shrink-0"
+          >
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+          </Button>
+        </div>
+      ) : (
+        <p className="mt-3 text-center text-xs text-muted-foreground">
+          The team assistant is available to team members only.
+        </p>
+      )}
     </div>
   )
 }

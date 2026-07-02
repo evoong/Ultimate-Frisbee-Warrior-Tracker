@@ -14,6 +14,9 @@ import { Label } from '../lib/shadcn/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
 import { Badge } from '../lib/shadcn/badge'
 import PlayerCombobox from '../components/PlayerCombobox'
+import { Skeleton } from '../lib/shadcn/skeleton'
+import FadeIn from '../components/FadeIn'
+import { useAuth } from '../contexts/AuthContext'
 import { Calendar, Plus, Trophy, ChevronLeft, ChevronRight, Target, TrendingUp, PlusCircle, Trash2, Edit2, Save, X, Users, LayoutList, CalendarDays, StickyNote, ClipboardCheck } from 'lucide-react'
 
 type Game = {
@@ -33,6 +36,7 @@ function seasonLabel(s: { name: string; year: number; organizer: string | null }
 const OUTCOME_OPTIONS = ['Win', 'Loss', 'Tie', 'Default Win', 'Default Loss', 'Forfeit']
 
 export default function Schedule() {
+  const { allowed } = useAuth()
   const { data: games, loading, error, trigger: fetchGames } = useGetGames()
   const { data: events, loading: eventsLoading, trigger: fetchEvents } = useGetGameEvents()
   const { data: players, trigger: fetchPlayers } = useGetPlayers()
@@ -312,13 +316,15 @@ export default function Schedule() {
             <ChevronLeft className="w-5 h-5" />
             <span className="text-sm font-medium">Back to Schedule</span>
           </button>
-          <button
-            onClick={() => setDeleteConfirmId(selectedGame.id)}
-            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-destructive transition-colors"
-          >
-            <Trash2 className="w-4 h-4" />
-            Delete
-          </button>
+          {allowed && (
+            <button
+              onClick={() => setDeleteConfirmId(selectedGame.id)}
+              className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-destructive transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete
+            </button>
+          )}
         </div>
 
         {/* Game header */}
@@ -372,9 +378,11 @@ export default function Schedule() {
                       {selectedGame.outcome_override && <span className="text-xs font-normal ml-1 opacity-70">(override)</span>}
                     </span>
                   )}
-                  <button onClick={() => { setEditingOutcome(true); setOutcomeValue(selectedGame.outcome_override ?? '') }} className="text-muted-foreground hover:text-foreground">
-                    <Edit2 className="w-3.5 h-3.5" />
-                  </button>
+                  {allowed && (
+                    <button onClick={() => { setEditingOutcome(true); setOutcomeValue(selectedGame.outcome_override ?? '') }} className="text-muted-foreground hover:text-foreground">
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -478,14 +486,16 @@ export default function Schedule() {
                               </div>
                               <div className="text-xs text-muted-foreground">{formatTimestamp(event.event_timestamp)}</div>
                             </div>
-                            <div className="flex items-center gap-1 shrink-0">
-                              <button onClick={() => handleEditEvent(event)} className="p-1.5 rounded hover:bg-accent transition-colors">
-                                <Edit2 className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground" />
-                              </button>
-                              <button onClick={() => handleDeleteEvent(event.id)} className="p-1.5 rounded hover:bg-destructive/10 transition-colors">
-                                <Trash2 className="w-3.5 h-3.5 text-muted-foreground hover:text-destructive" />
-                              </button>
-                            </div>
+                            {allowed && (
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button onClick={() => handleEditEvent(event)} className="p-1.5 rounded hover:bg-accent transition-colors">
+                                  <Edit2 className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground" />
+                                </button>
+                                <button onClick={() => handleDeleteEvent(event.id)} className="p-1.5 rounded hover:bg-destructive/10 transition-colors">
+                                  <Trash2 className="w-3.5 h-3.5 text-muted-foreground hover:text-destructive" />
+                                </button>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -510,28 +520,30 @@ export default function Schedule() {
             </CardHeader>
             <CardContent className="space-y-4">
               {/* Add to lineup */}
-              <div className="space-y-2 bg-background rounded-lg p-3">
-                <Label className="text-xs text-muted-foreground">Add Player</Label>
-                <Select value={lineupName} onValueChange={setLineupName}>
-                  <SelectTrigger className="h-8 text-sm bg-card border-border text-foreground"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {['Lineup 1', 'Lineup 2'].map(n => <SelectItem key={n} value={n}>{n}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <div className="flex gap-2">
-                  <div className="flex-1">
-                    <Select value={lineupPlayerSelect} onValueChange={setLineupPlayerSelect}>
-                      <SelectTrigger className="h-8 text-sm bg-card border-border text-foreground"><SelectValue placeholder="Select player..." /></SelectTrigger>
-                      <SelectContent>
-                        {(players as Player[] | undefined)?.map(p => <SelectItem key={p.id} value={String(p.id)}>{p.display_name}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
+              {allowed && (
+                <div className="space-y-2 bg-background rounded-lg p-3">
+                  <Label className="text-xs text-muted-foreground">Add Player</Label>
+                  <Select value={lineupName} onValueChange={setLineupName}>
+                    <SelectTrigger className="h-8 text-sm bg-card border-border text-foreground"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {['Lineup 1', 'Lineup 2'].map(n => <SelectItem key={n} value={n}>{n}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <Select value={lineupPlayerSelect} onValueChange={setLineupPlayerSelect}>
+                        <SelectTrigger className="h-8 text-sm bg-card border-border text-foreground"><SelectValue placeholder="Select player..." /></SelectTrigger>
+                        <SelectContent>
+                          {(players as Player[] | undefined)?.map(p => <SelectItem key={p.id} value={String(p.id)}>{p.display_name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Button size="sm" onClick={handleAddToLineup} disabled={!lineupPlayerSelect} className="h-8 bg-primary text-primary-foreground hover:bg-primary/90">
+                      <Plus className="w-3.5 h-3.5" />
+                    </Button>
                   </div>
-                  <Button size="sm" onClick={handleAddToLineup} disabled={!lineupPlayerSelect} className="h-8 bg-primary text-primary-foreground hover:bg-primary/90">
-                    <Plus className="w-3.5 h-3.5" />
-                  </Button>
                 </div>
-              </div>
+              )}
 
               {/* Lineup groups */}
               {Object.keys(lineupByGroup).length === 0 ? (
@@ -553,9 +565,11 @@ export default function Schedule() {
                             <span className="text-sm font-medium text-foreground">{e.display_name}</span>
                             {e.position && <span className="text-xs text-muted-foreground ml-2">{e.position}</span>}
                           </div>
-                          <button onClick={() => handleRemoveFromLineup(e.player_id)} className="p-1 rounded hover:bg-destructive/10">
-                            <X className="w-3.5 h-3.5 text-muted-foreground hover:text-destructive" />
-                          </button>
+                          {allowed && (
+                            <button onClick={() => handleRemoveFromLineup(e.player_id)} className="p-1 rounded hover:bg-destructive/10">
+                              <X className="w-3.5 h-3.5 text-muted-foreground hover:text-destructive" />
+                            </button>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -595,17 +609,19 @@ export default function Schedule() {
                   <p className="text-sm text-muted-foreground text-center py-4">No roster data for this game.</p>
                 ) : (
                   <>
-                    <div className="flex justify-end">
-                      <button
-                        className="text-xs text-muted-foreground hover:text-foreground underline"
-                        onClick={async () => {
-                          await setAllAttendance({ gameId: selectedGame!.id, attending: false, playerIds: nonSubRows.map(r => r.player_id) })
-                          fetchAttendance({ gameId: selectedGame!.id })
-                        }}
-                      >
-                        Unselect all
-                      </button>
-                    </div>
+                    {allowed && (
+                      <div className="flex justify-end">
+                        <button
+                          className="text-xs text-muted-foreground hover:text-foreground underline"
+                          onClick={async () => {
+                            await setAllAttendance({ gameId: selectedGame!.id, attending: false, playerIds: nonSubRows.map(r => r.player_id) })
+                            fetchAttendance({ gameId: selectedGame!.id })
+                          }}
+                        >
+                          Unselect all
+                        </button>
+                      </div>
+                    )}
                     <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                       {nonSubRows.map(row => {
                         const player = allPlayers?.find(p => p.id === row.player_id)
@@ -614,11 +630,12 @@ export default function Schedule() {
                             <input
                               type="checkbox"
                               checked={row.in}
+                              disabled={!allowed}
                               onChange={async e => {
                                 await setAttendance({ gameId: selectedGame!.id, playerId: row.player_id, attending: e.target.checked })
                                 fetchAttendance({ gameId: selectedGame!.id })
                               }}
-                              className="accent-primary w-4 h-4 rounded cursor-pointer"
+                              className="accent-primary w-4 h-4 rounded cursor-pointer disabled:cursor-default"
                             />
                             <span className={`text-sm ${row.in ? 'text-foreground' : 'text-muted-foreground line-through'}`}>
                               {player?.display_name ?? `Player ${row.player_id}`}
@@ -640,7 +657,7 @@ export default function Schedule() {
             <CardHeader>
               <CardTitle className="text-base flex items-center justify-between">
                 <span className="flex items-center gap-2"><StickyNote className="w-4 h-4" />Game Notes</span>
-                {!editingNotes && (
+                {allowed && !editingNotes && (
                   <button onClick={() => { setEditingNotes(true); setNotesValue(selectedGame.notes ?? '') }} className="text-muted-foreground hover:text-foreground">
                     <Edit2 className="w-4 h-4" />
                   </button>
@@ -668,11 +685,16 @@ export default function Schedule() {
                 <div>
                   {selectedGame.notes ? (
                     <p className="text-sm text-foreground whitespace-pre-wrap">{selectedGame.notes}</p>
-                  ) : (
+                  ) : allowed ? (
                     <button onClick={() => setEditingNotes(true)} className="w-full text-center py-8 text-muted-foreground text-sm hover:text-foreground transition-colors">
                       <StickyNote className="w-10 h-10 mx-auto mb-2 opacity-40" />
-                      No notes yet — tap to add
+                      No notes yet, tap to add
                     </button>
+                  ) : (
+                    <div className="w-full text-center py-8 text-muted-foreground text-sm">
+                      <StickyNote className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                      No notes yet
+                    </div>
                   )}
                 </div>
               )}
@@ -696,10 +718,14 @@ export default function Schedule() {
   }
 
   // ── Schedule List / Calendar ──────────────────────────────────────────────────
-  if (loading) return <div className="flex items-center justify-center h-64"><div className="text-muted-foreground">Loading games...</div></div>
   if (error) return <div className="flex items-center justify-center h-64"><div className="text-destructive">Error: {error}</div></div>
 
-  const filteredGames = (games as Game[] | undefined) ?? []
+  // Primary data for this view. While undefined the games have not loaded yet, so
+  // we render skeleton cards shaped like real game cards to avoid a blank flash
+  // and layout jump. `loading` is still referenced elsewhere; this is presentational.
+  const gamesData = games as Game[] | undefined
+  const gamesLoading = gamesData === undefined
+  const filteredGames = gamesData ?? []
 
   return (
     <div className="space-y-4">
@@ -715,6 +741,7 @@ export default function Schedule() {
               <CalendarDays className="w-4 h-4" />
             </button>
           </div>
+          {allowed && (
           <Dialog open={isDialogOpen} onOpenChange={open => { setIsDialogOpen(open); if (!open) setShowNewSeason(false) }}>
             <button onClick={() => setIsDialogOpen(true)} className="flex items-center gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-2 text-sm font-medium transition-colors">
               <Plus className="w-4 h-4" />Add Game
@@ -846,6 +873,7 @@ export default function Schedule() {
               </form>
             </DialogContent>
           </Dialog>
+          )}
         </div>
       </div>
 
@@ -910,17 +938,40 @@ export default function Schedule() {
       ) : (
         /* List View */
         <div className="space-y-3">
-          {filteredGames.length === 0 ? (
+          {gamesLoading ? (
+            /* Skeleton placeholders shaped like the real game cards below, so the
+               list keeps its footprint while data loads instead of popping in. */
+            Array.from({ length: 5 }).map((_, i) => (
+              <Card key={`skeleton-${i}`} className="bg-card text-card-foreground border-border">
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1 space-y-2">
+                      <Skeleton className="h-6 w-40" />
+                      <Skeleton className="h-4 w-32" />
+                    </div>
+                    <Skeleton className="h-6 w-16 rounded" />
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between">
+                    <Skeleton className="h-8 w-24" />
+                    <Skeleton className="h-4 w-12" />
+                  </div>
+                </CardContent>
+              </Card>
+            ))
+          ) : filteredGames.length === 0 ? (
             <Card className="bg-card text-card-foreground border-border">
               <CardContent className="py-12 text-center">
                 <Calendar className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
                 <p className="text-muted-foreground">No games found</p>
               </CardContent>
             </Card>
-          ) : filteredGames.map((game) => {
+          ) : filteredGames.map((game, index) => {
             const displayResult = game.outcome_override ?? game.result
             return (
-              <Card key={game.id} onClick={() => handleSelectGame(game)}
+              <FadeIn key={game.id} delay={index * 40}>
+              <Card onClick={() => handleSelectGame(game)}
                 className="bg-card text-card-foreground border-border cursor-pointer hover:bg-accent/50 active:scale-[0.99] transition-all"
               >
                 <CardHeader className="pb-3">
@@ -960,6 +1011,7 @@ export default function Schedule() {
                   </div>
                 </CardContent>
               </Card>
+              </FadeIn>
             )
           })}
         </div>

@@ -7,6 +7,7 @@ import { useCreatePlayerForGame, useDeleteSubPlayer, useGetPlayersNotInSeason, u
 import { useGetAllSeasons, useGetSeasons } from '../hooks/backend/stats'
 import { useGetGameAttendance, useSetAttendance, useSetAllAttendance } from '../hooks/backend/attendance'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
+import { useAuth } from '../contexts/AuthContext'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
@@ -14,6 +15,8 @@ import { Label } from '../lib/shadcn/label'
 import PlayerCombobox from '../components/PlayerCombobox'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
+import { Skeleton } from '../lib/shadcn/skeleton'
+import FadeIn from '../components/FadeIn'
 import { Target, Plus, Minus, TrendingUp, Undo2, Edit2, ChevronLeft, Trash2, Calendar, ArrowLeftRight, Users, ChevronDown, ChevronUp } from 'lucide-react'
 
 type Season = { id: number; name: string; year: number; organizer: string | null; start_date: string | null; end_date: string | null }
@@ -25,6 +28,7 @@ function seasonLabel(s: Season) {
 }
 
 export default function QuickScore() {
+  const { allowed } = useAuth()
   const { data: games, trigger: fetchGames } = useGetGames()
   const { data: allSeasons, trigger: fetchAllSeasons } = useGetAllSeasons()
   const { data: seasonsWithGames, trigger: fetchSeasonsWithGames } = useGetSeasons()
@@ -182,7 +186,7 @@ export default function QuickScore() {
   const assisterLabel = isGoalEvent ? 'Assister' : 'Related'
 
   const playerOptions = [
-    { id: '__opponent__', label: '— Opponent —' },
+    { id: '__opponent__', label: 'Opponent' },
     ...((players as { id: number; display_name: string; is_sub: boolean | null }[] | undefined) ?? []).map(p => ({ id: p.id.toString(), label: p.display_name, isSub: !!p.is_sub }))
   ]
 
@@ -246,6 +250,54 @@ export default function QuickScore() {
 
   return (
     <div className="space-y-4">
+      {games === undefined ? (
+        // Primary data (games) has not resolved yet. Render placeholders shaped
+        // like the eventual scoreboard and event list so the page does not flash
+        // blank or jump when the first fetch lands.
+        <>
+          <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
+            <CardContent className="py-4 px-5">
+              <div className="grid grid-cols-[1fr_auto_1fr] items-center">
+                <div className="min-w-0 space-y-2">
+                  <Skeleton className="h-5 w-32" />
+                  <Skeleton className="h-3 w-24" />
+                  <Skeleton className="h-3 w-20" />
+                </div>
+                <div className="flex items-center gap-3 px-4">
+                  <Skeleton className="h-16 w-14" />
+                  <div className="text-3xl font-light text-muted-foreground">-</div>
+                  <Skeleton className="h-16 w-14" />
+                </div>
+                <div />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card text-card-foreground border-border">
+            <CardHeader>
+              <CardTitle className="text-base flex items-center justify-between">
+                <Skeleton className="h-5 w-28" />
+                <Skeleton className="h-4 w-16" />
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="flex items-center gap-3 py-2 border-b border-border last:border-0">
+                    <Skeleton className="w-10 h-10 rounded-full flex-shrink-0" />
+                    <div className="flex-1 min-w-0 space-y-1.5">
+                      <Skeleton className="h-4 w-32" />
+                      <Skeleton className="h-3 w-16" />
+                    </div>
+                    <Skeleton className="h-6 w-6 flex-shrink-0" />
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      ) : (
+      <>
       {selectedGame && !showGameSelect && (
         <button
           onClick={handleBackToGameSelect}
@@ -295,6 +347,7 @@ export default function QuickScore() {
       ) : (
         <>
           {/* Live Scoreboard */}
+          <FadeIn>
           <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
             <CardContent className="py-4 px-5">
               <div className="grid grid-cols-[1fr_auto_1fr] items-center">
@@ -325,6 +378,7 @@ export default function QuickScore() {
               </div>
             </CardContent>
           </Card>
+          </FadeIn>
 
           {/* Attendance */}
           {players && (players as any[]).length > 0 && (
@@ -344,32 +398,35 @@ export default function QuickScore() {
               </button>
               {showAttendance && (
                 <CardContent className="pt-0 pb-3 px-5 space-y-2">
-                  <div className="flex justify-end">
-                    <button
-                      className="text-xs text-muted-foreground hover:text-foreground underline"
-                      onClick={async () => {
-                        const allIds = (players as { id: number }[]).map(p => p.id)
-                        await setAllAttendance({ gameId: selectedGameId!, attending: false, playerIds: allIds })
-                        fetchAttendance({ gameId: selectedGameId! })
-                      }}
-                    >
-                      Unselect all
-                    </button>
-                  </div>
+                  {allowed && (
+                    <div className="flex justify-end">
+                      <button
+                        className="text-xs text-muted-foreground hover:text-foreground underline"
+                        onClick={async () => {
+                          const allIds = (players as { id: number }[]).map(p => p.id)
+                          await setAllAttendance({ gameId: selectedGameId!, attending: false, playerIds: allIds })
+                          fetchAttendance({ gameId: selectedGameId! })
+                        }}
+                      >
+                        Unselect all
+                      </button>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                     {(players as { id: number; display_name: string; is_sub: boolean | null }[]).map(p => {
                       const row = (attendingIds as { player_id: number; in: boolean }[] | undefined)?.find(r => r.player_id === p.id)
                       const attending = row?.in ?? true
                       return (
-                        <label key={p.id} className="flex items-center gap-2 py-1 cursor-pointer select-none">
+                        <label key={p.id} className={`flex items-center gap-2 py-1 select-none ${allowed ? 'cursor-pointer' : 'cursor-default'}`}>
                           <input
                             type="checkbox"
                             checked={attending}
+                            disabled={!allowed}
                             onChange={async e => {
                               await setAttendance({ gameId: selectedGameId!, playerId: p.id, attending: e.target.checked })
                               fetchAttendance({ gameId: selectedGameId! })
                             }}
-                            className="accent-primary w-4 h-4 rounded"
+                            className="accent-primary w-4 h-4 rounded disabled:opacity-60"
                           />
                           <span className={`text-sm ${attending ? 'text-foreground' : 'text-muted-foreground line-through'}`}>
                             {p.display_name}{p.is_sub ? ' ·' : ''}
@@ -384,6 +441,7 @@ export default function QuickScore() {
           )}
 
           {/* Controls */}
+          {allowed && (
           <Card className="bg-card border-border">
             <CardContent className="pt-4 pb-4 space-y-3">
               <div className="space-y-2">
@@ -488,6 +546,7 @@ export default function QuickScore() {
               </Button>
             </CardContent>
           </Card>
+          )}
 
           {/* Recent Events */}
           <Card className="bg-card text-card-foreground border-border">
@@ -500,13 +559,13 @@ export default function QuickScore() {
             <CardContent>
               <div className="space-y-2 max-h-48 overflow-y-auto">
                 {events && events.length > 0 ? (
-                  events.slice(0, 8).map((event: { id: number; event_type: string; event_timestamp: string; player_id: number | null; related_player_id: number | null }) => {
+                  events.slice(0, 8).map((event: { id: number; event_type: string; event_timestamp: string; player_id: number | null; related_player_id: number | null }, index: number) => {
                     const player = players?.find((p: { id: number }) => p.id === event.player_id)
                     const assister = players?.find((p: { id: number }) => p.id === event.related_player_id)
                     const isGoal = event.event_type === 'Goal'
                     const isOpponentGoal = event.event_type === 'Opponent Goal'
                     return (
-                      <div key={event.id} className="flex items-center gap-3 py-2 border-b border-border last:border-0">
+                      <FadeIn key={event.id} delay={index * 40} className="flex items-center gap-3 py-2 border-b border-border last:border-0">
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
                           isGoal ? 'bg-green-100 dark:bg-green-950'
                           : isOpponentGoal ? 'bg-red-100 dark:bg-red-950'
@@ -528,19 +587,21 @@ export default function QuickScore() {
                           </div>
                         </div>
                         <div className="flex items-center gap-1">
-                          {(isGoal || !isOpponentGoal) && (
+                          {allowed && (isGoal || !isOpponentGoal) && (
                             <button onClick={() => handleEditEvent(event)} className="p-1.5 rounded hover:bg-accent transition-colors" aria-label="Edit event">
                               <Edit2 className="w-4 h-4 text-muted-foreground hover:text-foreground" />
                             </button>
                           )}
-                          <button onClick={() => handleDeleteEvent(event.id)} className="p-1.5 rounded hover:bg-destructive/10 transition-colors" aria-label="Delete event">
-                            <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive" />
-                          </button>
+                          {allowed && (
+                            <button onClick={() => handleDeleteEvent(event.id)} className="p-1.5 rounded hover:bg-destructive/10 transition-colors" aria-label="Delete event">
+                              <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive" />
+                            </button>
+                          )}
                           <div className={`text-lg font-bold tabular-nums ml-1 ${isGoal ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                             {isGoal || isOpponentGoal ? '+1' : ''}
                           </div>
                         </div>
-                      </div>
+                      </FadeIn>
                     )
                   })
                 ) : (
@@ -550,6 +611,8 @@ export default function QuickScore() {
             </CardContent>
           </Card>
         </>
+      )}
+      </>
       )}
 
       {/* Edit Event Dialog */}

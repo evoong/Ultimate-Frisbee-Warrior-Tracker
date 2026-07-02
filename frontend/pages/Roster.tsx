@@ -3,6 +3,7 @@ import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeleteSubPl
 import { useGetAllSeasons, useGetSeasons } from '../hooks/backend/stats'
 import { useSetAttendance } from '../hooks/backend/attendance'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
+import { useAuth } from '../contexts/AuthContext'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import { Badge } from '../lib/shadcn/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
@@ -11,6 +12,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Input } from '../lib/shadcn/input'
 import { Label } from '../lib/shadcn/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
+import { Skeleton } from '../lib/shadcn/skeleton'
+import FadeIn from '../components/FadeIn'
 import { User, Phone, Search, ChevronLeft, ChevronRight, Users, TrendingUp, Trophy, Trash2, Camera, Edit2, Save, X, Plus, Hash } from 'lucide-react'
 
 type Player = {
@@ -39,7 +42,27 @@ function PlayerAvatar({ photoUrl, name, size = 'md' }: { photoUrl: string | null
   )
 }
 
+// Placeholder card shaped like a real roster player card, shown while the
+// first players fetch is in flight so the layout does not jump when data lands.
+function RosterCardSkeleton() {
+  return (
+    <Card className="bg-card text-card-foreground border-border">
+      <CardContent className="p-4">
+        <div className="flex items-center gap-4">
+          <Skeleton className="w-12 h-12 rounded-full shrink-0" />
+          <div className="flex-1 min-w-0 space-y-2">
+            <Skeleton className="h-5 w-40" />
+            <Skeleton className="h-4 w-24" />
+          </div>
+          <Skeleton className="w-5 h-5 rounded shrink-0" />
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 export default function Roster() {
+  const { allowed } = useAuth()
   const { data: rawPlayers, loading, error, trigger: fetchPlayers } = useGetPlayers()
   const { data: gameStats, loading: statsLoading, trigger: fetchGameStats } = useGetPlayerGameStats()
   const { data: allSeasons, trigger: fetchAllSeasons } = useGetAllSeasons()
@@ -210,8 +233,8 @@ export default function Roster() {
     { goals: 0, assists: 0, turnovers: 0, games: 0 }
   )
 
-  const avgGoals = summary.games > 0 ? (summary.goals / summary.games).toFixed(1) : '—'
-  const avgAssists = summary.games > 0 ? (summary.assists / summary.games).toFixed(1) : '—'
+  const avgGoals = summary.games > 0 ? (summary.goals / summary.games).toFixed(1) : '-'
+  const avgAssists = summary.games > 0 ? (summary.assists / summary.games).toFixed(1) : '-'
 
   const formatDate = (dateStr: string) => new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 
@@ -225,27 +248,31 @@ export default function Roster() {
             <ChevronLeft className="w-5 h-5" />
             <span className="text-sm font-medium">Back to Roster</span>
           </button>
-          <div className="flex items-center gap-2">
-            {!editing && (
-              <button onClick={handleStartEdit} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
-                <Edit2 className="w-4 h-4" />Edit
+          {allowed && (
+            <div className="flex items-center gap-2">
+              {!editing && (
+                <button onClick={handleStartEdit} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+                  <Edit2 className="w-4 h-4" />Edit
+                </button>
+              )}
+              <button onClick={() => setDeleteConfirm(true)} className="flex items-center gap-1.5 text-sm text-destructive hover:text-destructive/80 transition-colors">
+                <Trash2 className="w-4 h-4" />Delete
               </button>
-            )}
-            <button onClick={() => setDeleteConfirm(true)} className="flex items-center gap-1.5 text-sm text-destructive hover:text-destructive/80 transition-colors">
-              <Trash2 className="w-4 h-4" />Delete
-            </button>
-          </div>
+            </div>
+          )}
         </div>
 
         {/* Player Header */}
         <div className="flex items-center gap-4">
           <div className="relative group">
             <PlayerAvatar photoUrl={selectedPlayer.photo_url} name={selectedPlayer.display_name} size="lg" />
-            <button onClick={handlePhotoClick} disabled={uploadingPhoto}
-              className="absolute inset-0 rounded-full flex items-center justify-center bg-black/0 group-hover:bg-black/40 transition-colors cursor-pointer"
-            >
-              <Camera className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow" />
-            </button>
+            {allowed && (
+              <button onClick={handlePhotoClick} disabled={uploadingPhoto}
+                className="absolute inset-0 rounded-full flex items-center justify-center bg-black/0 group-hover:bg-black/40 transition-colors cursor-pointer"
+              >
+                <Camera className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow" />
+              </button>
+            )}
             {uploadingPhoto && (
               <div className="absolute inset-0 rounded-full flex items-center justify-center bg-black/50">
                 <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -272,7 +299,7 @@ export default function Roster() {
           </div>
         </div>
 
-        <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
+        {allowed && <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />}
         {uploadError && <p className="text-sm text-destructive">{uploadError}</p>}
 
         {/* Edit fields */}
@@ -286,7 +313,7 @@ export default function Roster() {
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Jersey #</Label>
-                  <Input type="number" value={editFields.number} onChange={e => setEditFields(f => ({ ...f, number: e.target.value }))} placeholder="—" className="h-8 text-sm bg-background border-border" />
+                  <Input type="number" value={editFields.number} onChange={e => setEditFields(f => ({ ...f, number: e.target.value }))} placeholder="-" className="h-8 text-sm bg-background border-border" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -295,7 +322,7 @@ export default function Roster() {
                   <Select value={editFields.gender_match || '__none__'} onValueChange={v => setEditFields(f => ({ ...f, gender_match: v === '__none__' ? '' : v }))}>
                     <SelectTrigger className="h-8 text-sm bg-background border-border text-foreground"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__none__">— Not set —</SelectItem>
+                      <SelectItem value="__none__">Not set</SelectItem>
                       {GENDERS.map(g => <SelectItem key={g} value={g}>{g}</SelectItem>)}
                     </SelectContent>
                   </Select>
@@ -305,7 +332,7 @@ export default function Roster() {
                   <Select value={editFields.position || '__none__'} onValueChange={v => setEditFields(f => ({ ...f, position: v === '__none__' ? '' : v }))}>
                     <SelectTrigger className="h-8 text-sm bg-background border-border text-foreground"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__none__">— Not set —</SelectItem>
+                      <SelectItem value="__none__">Not set</SelectItem>
                       {POSITIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
                     </SelectContent>
                   </Select>
@@ -330,14 +357,14 @@ export default function Roster() {
           <CardHeader>
             <CardTitle className="text-base flex items-center justify-between">
               <span>Seasons</span>
-              {!editingSeasons ? (
+              {allowed && (!editingSeasons ? (
                 <button onClick={handleStartEditSeasons} className="text-xs text-primary hover:underline">Edit</button>
               ) : (
                 <div className="flex items-center gap-2">
                   <button onClick={handleSaveSeasons} className="text-xs text-green-600 hover:text-green-700 font-medium">Save</button>
                   <button onClick={() => setEditingSeasons(false)} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>
                 </div>
-              )}
+              ))}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -461,16 +488,17 @@ export default function Roster() {
                       <input
                         type="checkbox"
                         checked={stat.in}
+                        disabled={!allowed}
                         onChange={async e => {
                           await setAttendance({ gameId: stat.game_id, playerId: selectedPlayer.id, attending: e.target.checked })
                           fetchGameStats({ playerId: selectedPlayer.id })
                         }}
-                        className="accent-primary w-4 h-4 cursor-pointer"
+                        className={`accent-primary w-4 h-4 ${allowed ? 'cursor-pointer' : 'cursor-default'}`}
                       />
                     </div>
-                    <div className="w-8 text-center font-bold text-green-600 dark:text-green-400">{stat.in ? stat.goals : '—'}</div>
-                    <div className="w-8 text-center font-bold text-blue-600 dark:text-blue-400">{stat.in ? stat.assists : '—'}</div>
-                    <div className="w-8 text-center font-bold text-orange-600 dark:text-orange-400">{stat.in ? stat.turnovers : '—'}</div>
+                    <div className="w-8 text-center font-bold text-green-600 dark:text-green-400">{stat.in ? stat.goals : '-'}</div>
+                    <div className="w-8 text-center font-bold text-blue-600 dark:text-blue-400">{stat.in ? stat.assists : '-'}</div>
+                    <div className="w-8 text-center font-bold text-orange-600 dark:text-orange-400">{stat.in ? stat.turnovers : '-'}</div>
                   </div>
                 ))}
               </div>
@@ -501,7 +529,25 @@ export default function Roster() {
   }
 
   // ── Roster List View ──────────────────────────────────────────────────────────
-  if (loading) return <div className="flex items-center justify-center h-64"><div className="text-muted-foreground">Loading players...</div></div>
+  // Show skeleton player cards until the first players fetch resolves. Gating on
+  // players === undefined keeps skeletons out of later refetches once we have data.
+  if (loading && players === undefined) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-foreground">Roster</h1>
+          <Skeleton className="h-9 w-20 rounded-md" />
+        </div>
+        <Skeleton className="h-10 w-full rounded-md" />
+        <Skeleton className="h-10 w-full rounded-md" />
+        <div className="grid grid-cols-1 gap-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <RosterCardSkeleton key={i} />
+          ))}
+        </div>
+      </div>
+    )
+  }
   if (error) return <div className="flex items-center justify-center h-64"><div className="text-destructive">Error: {error}</div></div>
 
   return (
@@ -510,12 +556,14 @@ export default function Roster() {
         <h1 className="text-2xl font-bold text-foreground">Roster</h1>
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">{filteredPlayers?.length || 0} of {players?.length || 0}</span>
-          <button
-            onClick={() => setShowNewPlayer(true)}
-            className="flex items-center gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-2 text-sm font-medium transition-colors"
-          >
-            <Plus className="w-4 h-4" />Add
-          </button>
+          {allowed && (
+            <button
+              onClick={() => setShowNewPlayer(true)}
+              className="flex items-center gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-2 text-sm font-medium transition-colors"
+            >
+              <Plus className="w-4 h-4" />Add
+            </button>
+          )}
         </div>
       </div>
 
@@ -539,42 +587,46 @@ export default function Roster() {
       </div>
 
       <div className="grid grid-cols-1 gap-3">
-        {filteredPlayers?.map(player => (
-          <Card key={player.id} onClick={() => handleSelectPlayer(player)}
-            className="bg-card text-card-foreground border-border cursor-pointer hover:bg-accent/50 active:scale-[0.99] transition-all"
-          >
-            <CardContent className="p-4">
-              <div className="flex items-center gap-4">
-                <PlayerAvatar photoUrl={player.photo_url} name={player.display_name} size="md" />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-foreground text-lg truncate">{player.display_name}</span>
-                    {player.is_sub && <Badge variant="secondary" className="text-xs shrink-0">Sub</Badge>}
-                    {player.number != null && <Badge variant="outline" className="text-xs font-mono shrink-0">#{player.number}</Badge>}
+        {filteredPlayers?.map((player, index) => (
+          <FadeIn key={player.id} delay={index * 40}>
+            <Card onClick={() => handleSelectPlayer(player)}
+              className="bg-card text-card-foreground border-border cursor-pointer hover:bg-accent/50 active:scale-[0.99] transition-all"
+            >
+              <CardContent className="p-4">
+                <div className="flex items-center gap-4">
+                  <PlayerAvatar photoUrl={player.photo_url} name={player.display_name} size="md" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-foreground text-lg truncate">{player.display_name}</span>
+                      {player.is_sub && <Badge variant="secondary" className="text-xs shrink-0">Sub</Badge>}
+                      {player.number != null && <Badge variant="outline" className="text-xs font-mono shrink-0">#{player.number}</Badge>}
+                    </div>
+                    <div className="flex items-center gap-3 mt-1 flex-wrap">
+                      {player.position && <span className="text-sm text-muted-foreground">{player.position}</span>}
+                      {player.gender_match && <span className="text-sm text-muted-foreground">{player.gender_match}</span>}
+                      {player.phone && (
+                        <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                          <Phone className="w-3 h-3" />{player.phone}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 mt-1 flex-wrap">
-                    {player.position && <span className="text-sm text-muted-foreground">{player.position}</span>}
-                    {player.gender_match && <span className="text-sm text-muted-foreground">{player.gender_match}</span>}
-                    {player.phone && (
-                      <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                        <Phone className="w-3 h-3" />{player.phone}
-                      </div>
-                    )}
-                  </div>
+                  <ChevronRight className="w-5 h-5 text-muted-foreground shrink-0" />
                 </div>
-                <ChevronRight className="w-5 h-5 text-muted-foreground shrink-0" />
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          </FadeIn>
         ))}
 
         {filteredPlayers?.length === 0 && (
-          <Card className="bg-card text-card-foreground border-border">
-            <CardContent className="py-12 text-center">
-              <Users className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
-              <p className="text-muted-foreground">No players found</p>
-            </CardContent>
-          </Card>
+          <FadeIn>
+            <Card className="bg-card text-card-foreground border-border">
+              <CardContent className="py-12 text-center">
+                <Users className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
+                <p className="text-muted-foreground">No players found</p>
+              </CardContent>
+            </Card>
+          </FadeIn>
         )}
       </div>
 
@@ -597,7 +649,7 @@ export default function Roster() {
                 <Select value={newPlayerData.gender_match || '__none__'} onValueChange={v => setNewPlayerData(d => ({ ...d, gender_match: v === '__none__' ? '' : v }))}>
                   <SelectTrigger className="h-9 text-sm bg-background border-border text-foreground"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="__none__">— Not set —</SelectItem>
+                    <SelectItem value="__none__">Not set</SelectItem>
                     {GENDERS.map(g => <SelectItem key={g} value={g}>{g}</SelectItem>)}
                   </SelectContent>
                 </Select>
@@ -608,7 +660,7 @@ export default function Roster() {
               <Select value={newPlayerData.position || '__none__'} onValueChange={v => setNewPlayerData(d => ({ ...d, position: v === '__none__' ? '' : v }))}>
                 <SelectTrigger className="h-9 text-sm bg-background border-border text-foreground"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__">— Not set —</SelectItem>
+                  <SelectItem value="__none__">Not set</SelectItem>
                   {POSITIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
                 </SelectContent>
               </Select>
