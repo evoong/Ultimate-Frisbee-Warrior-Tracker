@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 
 type HookResult<T, P = void> = {
@@ -12,20 +12,23 @@ function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P
   const [data, setData] = useState<T | undefined>(undefined)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const seqRef = useRef(0)
 
   const trigger = useCallback(async (params?: P) => {
+    // Guard against out-of-order responses: only the latest call may set state
+    const callId = ++seqRef.current
     setLoading(true)
     setError(null)
     try {
       const result = await fn(params as P)
-      setData(result)
+      if (callId === seqRef.current) setData(result)
       return result
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      setError(msg)
+      if (callId === seqRef.current) setError(msg)
       return undefined
     } finally {
-      setLoading(false)
+      if (callId === seqRef.current) setLoading(false)
     }
   }, [fn])
 
@@ -107,12 +110,18 @@ export function useDeleteGame() {
 
 export function useGetLineups() {
   const fn = useCallback(async (params: { gameId: number }) => {
+    // Join players so the UI can render names/positions directly
     const { data, error } = await supabase
       .from('game_lineups')
-      .select('*')
+      .select('*, players(display_name, position, gender_match)')
       .eq('game_id', params.gameId)
     if (error) throw new Error(error.message)
-    return data as any[]
+    return ((data ?? []) as any[]).map((row: any) => ({
+      ...row,
+      display_name: row.players?.display_name ?? null,
+      position: row.players?.position ?? null,
+      gender_match: row.players?.gender_match ?? null,
+    }))
   }, [])
   return useApiCall<any[], { gameId: number }>(fn)
 }

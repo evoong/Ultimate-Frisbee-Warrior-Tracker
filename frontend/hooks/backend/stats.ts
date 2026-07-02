@@ -1,5 +1,6 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
+import { isTurnoverEvent } from '../../lib/eventUtils'
 
 type HookResult<T, P = void> = {
   data: T | undefined
@@ -12,20 +13,23 @@ function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P
   const [data, setData] = useState<T | undefined>(undefined)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const seqRef = useRef(0)
 
   const trigger = useCallback(async (params?: P) => {
+    // Guard against out-of-order responses: only the latest call may set state
+    const callId = ++seqRef.current
     setLoading(true)
     setError(null)
     try {
       const result = await fn(params as P)
-      setData(result)
+      if (callId === seqRef.current) setData(result)
       return result
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      setError(msg)
+      if (callId === seqRef.current) setError(msg)
       return undefined
     } finally {
-      setLoading(false)
+      if (callId === seqRef.current) setLoading(false)
     }
   }, [fn])
 
@@ -60,10 +64,17 @@ export function useGetSeasonsMeta() {
   const fn = useCallback(async () => {
     const { data, error } = await supabase
       .from('seasons')
-      .select('id, name, year, organizer')
+      .select('id, name, year, organizer, location')
       .order('year', { ascending: false })
     if (error) throw new Error(error.message)
-    return data as any[]
+    const rows = (data ?? []) as { name: string | null; year: number | null; organizer: string | null; location: string | null }[]
+    const uniq = <T,>(vals: (T | null)[]) => [...new Set(vals.filter((v): v is T => v != null && v !== ('' as unknown as T)))]
+    return {
+      organizers: uniq(rows.map(r => r.organizer)),
+      names: uniq(rows.map(r => r.name)),
+      years: uniq(rows.map(r => r.year)).sort((a, b) => b - a),
+      locations: uniq(rows.map(r => r.location)),
+    }
   }, [])
   return useApiCall(fn)
 }
@@ -85,22 +96,28 @@ export function useCreateSeason() {
 
 export function useGetPlayerStats() {
   const fn = useCallback(async (params?: { seasonIds?: number[]; gameIds?: number[] }) => {
-    // Fetch events separately without relational joins to avoid ambiguous foreign key
-    const { data: events, error: eventsError } = await supabase
-      .from('game_events')
-      .select('player_id, related_player_id, event_type, game_id')
-
-    if (eventsError) throw new Error(eventsError.message)
-    if (!events) return []
-
-    // Fetch games to get season_id
-    const { data: games, error: gamesError } = await supabase
-      .from('games')
-      .select('id, season_id')
-
+    // Resolve the games in scope first so events/attendance can be filtered
+    // server-side (supabase caps unfiltered fetches at 1000 rows).
+    let gamesQuery = supabase.from('games').select('id, season_id')
+    if (params?.seasonIds && params.seasonIds.length > 0) {
+      gamesQuery = gamesQuery.in('season_id', params.seasonIds)
+    }
+    const { data: games, error: gamesError } = await gamesQuery
     if (gamesError) throw new Error(gamesError.message)
 
-    const gamesMap = new Map(games?.map((g: any) => [g.id, g]) ?? [])
+    const scopedGameIds = params?.gameIds && params.gameIds.length > 0
+      ? params.gameIds
+      : params?.seasonIds && params.seasonIds.length > 0
+        ? (games ?? []).map((g: any) => g.id)
+        : null
+
+    let eventsQuery = supabase
+      .from('game_events')
+      .select('player_id, related_player_id, event_type, game_id')
+    if (scopedGameIds) eventsQuery = eventsQuery.in('game_id', scopedGameIds)
+    const { data: events, error: eventsError } = await eventsQuery
+    if (eventsError) throw new Error(eventsError.message)
+    if (!events) return []
 
     // Fetch all players
     const { data: players, error: playersError } = await supabase
@@ -111,37 +128,22 @@ export function useGetPlayerStats() {
 
     const playersMap = new Map(players?.map((p: any) => [p.id, p]) ?? [])
 
-    // Filter by seasons or games if specified
-    let filtered = events
-    let filteredSeasonIds: number[] | null = null
-    if (params?.seasonIds && params.seasonIds.length > 0) {
-      filteredSeasonIds = params.seasonIds
-      filtered = events.filter((e: any) => {
-        const game = gamesMap.get(e.game_id)
-        return game && params.seasonIds?.includes(game.season_id)
-      })
-    }
-    if (params?.gameIds && params.gameIds.length > 0) {
-      filtered = events.filter((e: any) => params.gameIds?.includes(e.game_id))
-    }
+    const filtered = events
 
     // games_played = games the player actually attended (in = true)
-    const { data: attendanceRows } = await supabase
+    let attendanceQuery = supabase
       .from('game_attendance')
       .select('game_id, player_id')
       .eq('in', true)
+    if (scopedGameIds) attendanceQuery = attendanceQuery.in('game_id', scopedGameIds)
+    const { data: attendanceRows } = await attendanceQuery
     const attendanceMap = new Map<number, Set<number>>() // player_id → Set<game_id>
     ;(attendanceRows ?? []).forEach((r: any) => {
       if (!attendanceMap.has(r.player_id)) attendanceMap.set(r.player_id, new Set())
       attendanceMap.get(r.player_id)!.add(r.game_id)
     })
 
-    // When season/game filter is active, restrict attendance to those games
-    const filteredGameIds = filteredSeasonIds
-      ? new Set(games?.filter((g: any) => filteredSeasonIds.includes(g.season_id)).map((g: any) => g.id) ?? [])
-      : params?.gameIds?.length
-        ? new Set(params.gameIds)
-        : null
+    const filteredGameIds = scopedGameIds ? new Set(scopedGameIds) : null
 
     // Aggregate stats by player
     const statsMap = new Map<number, any>()
@@ -165,7 +167,7 @@ export function useGetPlayerStats() {
       stats.games_played.add(event.game_id)
 
       if (event.event_type === 'Goal') stats.goals++
-      else if (event.event_type === 'Turnover' || event.event_type === 'Throwaway' || event.event_type === 'Drop') stats.turnovers++
+      else if (isTurnoverEvent(event.event_type)) stats.turnovers++
 
       // Credit assist to the related player on a Goal
       if (event.event_type === 'Goal' && event.related_player_id) {
@@ -211,22 +213,24 @@ export function useGetPlayerStats() {
 
 export function useGetCumulativeStats() {
   const fn = useCallback(async (params?: { seasonId?: number }) => {
-    // Fetch events without relational joins to avoid ambiguous foreign key
-    const { data: events, error: eventsError } = await supabase
-      .from('game_events')
-      .select('player_id, related_player_id, event_type, game_id')
-
-    if (eventsError) throw new Error(eventsError.message)
-    if (!events) return []
-
-    // Fetch games
-    const { data: games, error: gamesError } = await supabase
-      .from('games')
-      .select('id, opponent, game_date, season_id')
-
+    // Fetch the season's games first so events can be filtered server-side
+    // (supabase caps unfiltered fetches at 1000 rows)
+    let gamesQuery = supabase.from('games').select('id, opponent, game_date, season_id')
+    if (params?.seasonId != null) gamesQuery = gamesQuery.eq('season_id', params.seasonId)
+    const { data: games, error: gamesError } = await gamesQuery
     if (gamesError) throw new Error(gamesError.message)
 
     const gamesMap = new Map(games?.map((g: any) => [g.id, g]) ?? [])
+
+    let eventsQuery = supabase
+      .from('game_events')
+      .select('player_id, related_player_id, event_type, game_id')
+    if (params?.seasonId != null) {
+      eventsQuery = eventsQuery.in('game_id', (games ?? []).map((g: any) => g.id))
+    }
+    const { data: events, error: eventsError } = await eventsQuery
+    if (eventsError) throw new Error(eventsError.message)
+    if (!events) return []
 
     // Fetch players
     const { data: players, error: playersError } = await supabase
@@ -237,19 +241,12 @@ export function useGetCumulativeStats() {
 
     const playersMap = new Map(players?.map((p: any) => [p.id, p]) ?? [])
 
-    // Filter by season if specified
-    let filtered = events
-    if (params?.seasonId != null) {
-      filtered = events.filter((e: any) => {
-        const game = gamesMap.get(e.game_id)
-        return game && game.season_id === params.seasonId
-      })
-    }
+    const filtered = events
 
     const rows: any[] = []
     filtered.forEach((e: any) => {
       const game = gamesMap.get(e.game_id)
-      const isTurnover = e.event_type === 'Turnover' || e.event_type === 'Throwaway' || e.event_type === 'Drop'
+      const isTurnover = isTurnoverEvent(e.event_type)
 
       // Row for the primary player (scorer / turnover player)
       if (e.player_id && (e.event_type === 'Goal' || isTurnover)) {

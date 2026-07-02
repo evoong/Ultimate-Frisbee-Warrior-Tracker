@@ -230,11 +230,20 @@ export default function Stats() {
   }
 
   const statsArr = stats as PlayerStat[] | undefined
-  const avgGoals = statsArr && statsArr.length > 0
-    ? (statsArr.reduce((s, p) => s + parseInt(p.goals), 0) / statsArr.reduce((s, p) => s + parseInt(p.games_played), 0)).toFixed(2)
+  // Averages are team totals per game, so divide by the number of games in the
+  // current filter that have been played — not the sum of every player's games_played
+  const todayStr = new Date().toISOString().slice(0, 10)
+  const gamesInFilter = ((games as Game[] | undefined) ?? []).filter(g => {
+    if (g.game_date > todayStr) return false
+    if (filterType === 'season' && selectedSeasonIds.length > 0) return g.season_id != null && selectedSeasonIds.includes(g.season_id)
+    if (filterType === 'games' && selectedGameIds.length > 0) return selectedGameIds.includes(g.id)
+    return true
+  }).length
+  const avgGoals = statsArr && statsArr.length > 0 && gamesInFilter > 0
+    ? (statsArr.reduce((s, p) => s + parseInt(p.goals), 0) / gamesInFilter).toFixed(2)
     : null
-  const avgAssists = statsArr && statsArr.length > 0
-    ? (statsArr.reduce((s, p) => s + parseInt(p.assists), 0) / statsArr.reduce((s, p) => s + parseInt(p.games_played), 0)).toFixed(2)
+  const avgAssists = statsArr && statsArr.length > 0 && gamesInFilter > 0
+    ? (statsArr.reduce((s, p) => s + parseInt(p.assists), 0) / gamesInFilter).toFixed(2)
     : null
 
   return (

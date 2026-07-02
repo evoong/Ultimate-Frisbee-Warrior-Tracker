@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 
 type HookResult<T, P = void> = {
@@ -12,20 +12,23 @@ function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P
   const [data, setData] = useState<T | undefined>(undefined)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const seqRef = useRef(0)
 
   const trigger = useCallback(async (params?: P) => {
+    // Guard against out-of-order responses: only the latest call may set state
+    const callId = ++seqRef.current
     setLoading(true)
     setError(null)
     try {
       const result = await fn(params as P)
-      setData(result)
+      if (callId === seqRef.current) setData(result)
       return result
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      setError(msg)
+      if (callId === seqRef.current) setError(msg)
       return undefined
     } finally {
-      setLoading(false)
+      if (callId === seqRef.current) setLoading(false)
     }
   }, [fn])
 
@@ -45,14 +48,15 @@ export function useGetGameAttendance() {
   return useApiCall<{ player_id: number; in: boolean }[], { gameId: number }>(fn)
 }
 
-// Flips the `in` boolean on an existing row (row always exists — backfilled at game creation)
+// Upsert so players added to a season after the game was created (no backfilled row) still work
 export function useSetAttendance() {
   const fn = useCallback(async (params: { gameId: number; playerId: number; attending: boolean }) => {
     const { error } = await supabase
       .from('game_attendance')
-      .update({ in: params.attending })
-      .eq('game_id', params.gameId)
-      .eq('player_id', params.playerId)
+      .upsert(
+        { game_id: params.gameId, player_id: params.playerId, in: params.attending },
+        { onConflict: 'game_id,player_id' }
+      )
     if (error) throw new Error(error.message)
   }, [])
   return useApiCall<void, { gameId: number; playerId: number; attending: boolean }>(fn)

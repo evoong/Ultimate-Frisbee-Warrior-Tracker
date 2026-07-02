@@ -20,18 +20,6 @@ function getInitialTheme(): 'light' | 'dark' {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
-const TABS = [
-  { key: 'quickscore', label: 'QUICK',    fullLabel: 'QUICK SCORE', icon: Zap,       page: QuickScore },
-  { key: 'schedule',   label: 'GAMES',    fullLabel: 'SCHEDULE',    icon: Calendar,  page: Schedule   },
-  { key: 'roster',     label: 'SQUAD',    fullLabel: 'ROSTER',      icon: Users,     page: Roster     },
-  { key: 'stats',      label: 'STATS',    fullLabel: 'STATISTICS',  icon: BarChart3, page: Stats      },
-] as const
-
-type TabKey = typeof TABS[number]['key']
-
-const LIME = 'hsl(74 100% 50%)'
-const LIME_DIM = 'hsl(74 100% 50% / 0.12)'
-
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('quickscore')
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme)

@@ -130,8 +130,25 @@ export default function QuickScore() {
   const resolvePlayerId = (id: string) =>
     (id && id !== '__none__' && id !== '__opponent__') ? parseInt(id) : null
 
+  // Season roster refetch needs the game's season id, not the game id
+  const selectedGameSeasonId = selectedGame?.season_id ?? null
+  const refreshRoster = async () => {
+    if (selectedGameSeasonId) {
+      await fetchPlayers({ seasonId: selectedGameSeasonId })
+      await fetchOtherPlayers({ seasonId: selectedGameSeasonId })
+    } else {
+      await fetchOtherPlayers({})
+    }
+  }
+
   const handleQuickGoal = async () => {
     if (!selectedGameId) return
+    // Picking "— Opponent —" as scorer on a goal means the other team scored
+    if (selectedEventType === 'Goal' && defaultScorerId === '__opponent__') {
+      await createOpponentGoal({ gameId: selectedGameId })
+      fetchEvents({ gameId: selectedGameId })
+      return
+    }
     await createGoal({
       gameId: selectedGameId,
       playerId: resolvePlayerId(defaultScorerId),
@@ -195,10 +212,9 @@ export default function QuickScore() {
 
   const handleAddPlayer = async (name: string) => {
     if (!selectedGameId) return
-    const result = await createPlayerForGame({ displayName: name, gameId: selectedGameId })
+    const result = await createPlayerForGame({ display_name: name, gameId: selectedGameId })
     if (result) {
-      await fetchPlayers({ gameId: selectedGameId })
-      await fetchOtherPlayers({ gameId: selectedGameId })
+      await refreshRoster()
       const newId = (result as { id: number }).id.toString()
       setDefaultScorerId(newId)
     }
@@ -207,8 +223,7 @@ export default function QuickScore() {
   const handleDeleteSub = async (playerId: string) => {
     if (!selectedGameId) return
     await deleteSubPlayer({ playerId: parseInt(playerId), gameId: selectedGameId })
-    await fetchPlayers({ gameId: selectedGameId })
-    await fetchOtherPlayers({ gameId: selectedGameId })
+    await refreshRoster()
     if (defaultScorerId === playerId) setDefaultScorerId('')
     if (defaultAssisterId === playerId) setDefaultAssisterId('')
     if (editScorerId === playerId) setEditScorerId('')
@@ -217,10 +232,9 @@ export default function QuickScore() {
 
   const handleAddAssister = async (name: string) => {
     if (!selectedGameId) return
-    const result = await createPlayerForGame({ displayName: name, gameId: selectedGameId })
+    const result = await createPlayerForGame({ display_name: name, gameId: selectedGameId })
     if (result) {
-      await fetchPlayers({ gameId: selectedGameId })
-      await fetchOtherPlayers({ gameId: selectedGameId })
+      await refreshRoster()
       const newId = (result as { id: number }).id.toString()
       setDefaultAssisterId(newId)
     }
@@ -229,16 +243,14 @@ export default function QuickScore() {
   const handleAddExistingScorer = async (playerId: string) => {
     if (!selectedGameId) return
     await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGameId })
-    await fetchPlayers({ gameId: selectedGameId })
-    await fetchOtherPlayers({ gameId: selectedGameId })
+    await refreshRoster()
     setDefaultScorerId(playerId)
   }
 
   const handleAddExistingAssister = async (playerId: string) => {
     if (!selectedGameId) return
     await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGameId })
-    await fetchPlayers({ gameId: selectedGameId })
-    await fetchOtherPlayers({ gameId: selectedGameId })
+    await refreshRoster()
     setDefaultAssisterId(playerId)
   }
 
