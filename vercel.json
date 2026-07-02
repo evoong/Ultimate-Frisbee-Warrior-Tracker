@@ -8,6 +8,8 @@
   },
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index.ts" },
+    { "source": "/auth/(.*)", "destination": "/api/index.ts" },
+    { "source": "/db/(.*)", "destination": "/api/index.ts" },
     { "source": "/uploads/(.*)", "destination": "/api/index.ts" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]

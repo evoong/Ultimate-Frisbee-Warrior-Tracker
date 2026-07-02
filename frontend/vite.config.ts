@@ -18,6 +18,16 @@ export default defineConfig({
         target: 'http://localhost:3001',
         changeOrigin: true,
       },
+      // changeOrigin stays false: the gateway compares the Origin header
+      // against the request Host for CSRF, so it must see localhost:5000.
+      '/auth': {
+        target: 'http://localhost:3001',
+        changeOrigin: false,
+      },
+      '/db': {
+        target: 'http://localhost:3001',
+        changeOrigin: false,
+      },
     },
   },
 })

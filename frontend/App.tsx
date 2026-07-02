@@ -5,7 +5,10 @@ import QuickScore from './pages/QuickScore'
 import Ranking from './pages/Ranking'
 import Stats from './pages/Stats'
 import Chat from './pages/Chat'
-import { Calendar, Users, Zap, Award, BarChart3, MessageCircle, Moon, Sun } from 'lucide-react'
+import Login from './pages/Login'
+import ResetPassword from './pages/ResetPassword'
+import { useAuth } from './contexts/AuthContext'
+import { Calendar, Users, Zap, Award, BarChart3, MessageCircle, Moon, Sun, Loader2, LogOut } from 'lucide-react'
 
 type Tab = 'schedule' | 'roster' | 'quickscore' | 'ranking' | 'stats' | 'chat'
 
@@ -32,6 +35,7 @@ const LIME_DIM = 'hsl(74 100% 50% / 0.12)'
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('quickscore')
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme)
+  const { user, allowed, loading, logout } = useAuth()
 
   useEffect(() => {
     const root = document.documentElement
@@ -41,6 +45,24 @@ export default function App() {
   }, [theme])
 
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    )
+  }
+
+  // Recovery-link landing page (the auth gateway redirects here after
+  // verifying the email token and setting session cookies).
+  if (window.location.pathname === '/reset-password') {
+    return <ResetPassword />
+  }
+
+  if (!user || !allowed) {
+    return <Login />
+  }
 
   const tabs = [
     { key: 'quickscore' as Tab, icon: Zap, label: 'Quick' },
@@ -57,13 +79,23 @@ export default function App() {
       <header className="bg-card border-b border-border sticky top-0 z-10">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <h1 className="text-lg font-bold text-primary">⚡ Warrior Tracker</h1>
-          <button
-            onClick={toggleTheme}
-            className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
-            aria-label="Toggle theme"
-          >
-            {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={toggleTheme}
+              className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+              aria-label="Toggle theme"
+            >
+              {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+            </button>
+            <button
+              onClick={() => logout()}
+              className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+              aria-label="Sign out"
+              title={user.email}
+            >
+              <LogOut className="w-5 h-5" />
+            </button>
+          </div>
         </div>
       </header>
 

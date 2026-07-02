@@ -1,68 +1,12 @@
+import { createGateway } from './gateway/index'
+
 interface Env {
   ASSETS: {
     fetch: (request: Request) => Promise<Response>;
   };
   SUPABASE_URL: string;
   SUPABASE_PUBLISHABLE_KEY: string;
-  SUPABASE_SECRET_KEY: string;
-}
-
-async function handleApiRequest(request: Request, env: Env) {
-  const url = new URL(request.url);
-  const path = url.pathname;
-
-  if (path.startsWith("/api/")) {
-    try {
-      const apiPath = path.slice(5);
-      const supabaseUrl = env.SUPABASE_URL;
-      const apiUrl = new URL(`${supabaseUrl}/rest/v1/${apiPath}`);
-
-      url.searchParams.forEach((value, key) => {
-        apiUrl.searchParams.append(key, value);
-      });
-
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-        apikey: env.SUPABASE_PUBLISHABLE_KEY,
-      };
-
-      if (
-        request.method !== "GET" &&
-        request.method !== "HEAD" &&
-        request.method !== "DELETE"
-      ) {
-        headers.Authorization = `Bearer ${env.SUPABASE_SECRET_KEY}`;
-      }
-
-      const apiResponse = await fetch(apiUrl.toString(), {
-        method: request.method,
-        headers,
-        body:
-          request.method === "GET" || request.method === "HEAD"
-            ? undefined
-            : request.body,
-      });
-
-      return new Response(apiResponse.body, {
-        status: apiResponse.status,
-        headers: {
-          ...Object.fromEntries(apiResponse.headers),
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type, Authorization",
-        },
-      });
-    } catch (error) {
-      const errorMsg =
-        error instanceof Error ? error.message : "Unknown error";
-      return new Response(JSON.stringify({ error: errorMsg }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-  }
-
-  return null;
+  SUPABASE_JWKS_URL: string;
 }
 
 export default {
@@ -70,18 +14,14 @@ export default {
     const url = new URL(request.url);
 
     try {
-      if (request.method === "OPTIONS") {
-        return new Response(null, {
-          headers: {
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization",
-          },
-        });
-      }
+      const gateway = createGateway({
+        supabaseUrl: env.SUPABASE_URL,
+        publishableKey: env.SUPABASE_PUBLISHABLE_KEY,
+        jwksUrl: env.SUPABASE_JWKS_URL,
+      });
 
-      const apiResponse = await handleApiRequest(request, env);
-      if (apiResponse) return apiResponse;
+      const gatewayResponse = await gateway(request);
+      if (gatewayResponse) return gatewayResponse;
 
       const response = await env.ASSETS.fetch(request);
 
@@ -89,7 +29,12 @@ export default {
         return response;
       }
 
-      if (!url.pathname.startsWith("/api")) {
+      const isSpaPath =
+        !url.pathname.startsWith("/api") &&
+        !url.pathname.startsWith("/auth") &&
+        !url.pathname.startsWith("/db");
+
+      if (isSpaPath) {
         const indexResponse = await env.ASSETS.fetch(
           new Request(new URL("/index.html", url).toString())
         );

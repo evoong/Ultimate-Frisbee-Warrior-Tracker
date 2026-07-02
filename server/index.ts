@@ -1,16 +1,33 @@
 import "dotenv/config";
 import express from "express";
-import cors from "cors";
+import type { Request as ExpressRequest, Response as ExpressResponse, NextFunction } from "express";
 import { createClient } from "@supabase/supabase-js";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
+import { createGateway, createRequireAllowedUser } from "../gateway/index";
+import { nodeAdapter } from "../gateway/node-adapter";
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
 
-app.use(cors());
+// Vercel/Cloudflare sit in front of this server; x-forwarded-proto decides
+// whether cookies get the __Host-/Secure treatment.
+app.set("trust proxy", 1);
+
+const gatewayConfig = {
+  supabaseUrl: process.env.SUPABASE_URL || "",
+  publishableKey: process.env.SUPABASE_PUBLISHABLE_KEY || "",
+  jwksUrl:
+    process.env.SUPABASE_JWKS_URL ||
+    `${process.env.SUPABASE_URL || ""}/auth/v1/.well-known/jwks.json`,
+};
+
+// Auth gateway (/auth/* + /db/*) mounts before any body parser so /db
+// request bodies stream through to Supabase untouched. No CORS middleware:
+// everything is same-origin (Vite proxy in dev, single host in prod).
+app.use(nodeAdapter(createGateway(gatewayConfig)));
 app.use(express.json());
 
 // Vercel serverless filesystem is read-only except /tmp; use /tmp/uploads there
@@ -43,39 +60,42 @@ const supabase = createClient(
   process.env.SUPABASE_SECRET_KEY || ""
 );
 
-// ── Seasons ──────────────────────────────────────────────────────────────────
+// ── Auth guard for chat routes ───────────────────────────────────────────────
+// The chat endpoints below query Supabase with the SERVICE ROLE, which
+// bypasses RLS — so they must enforce auth themselves: JWKS-verified access
+// token from the httpOnly cookie + allowlist membership (cached 60s).
 
-app.get("/api/seasons", async (req, res) => {
+const allowlistCache = new Map<string, { allowed: boolean; expires: number }>();
+
+async function isEmailAllowed(email: string): Promise<boolean> {
+  const cached = allowlistCache.get(email);
+  if (cached && cached.expires > Date.now()) return cached.allowed;
+  const { data, error } = await supabase
+    .from("allowed_users")
+    .select("email")
+    .eq("email", email)
+    .maybeSingle();
+  const allowed = !error && data !== null;
+  allowlistCache.set(email, { allowed, expires: Date.now() + 60_000 });
+  return allowed;
+}
+
+const requireAllowedUser = createRequireAllowedUser(gatewayConfig, isEmailAllowed);
+
+async function requireAuth(req: ExpressRequest, res: ExpressResponse, next: NextFunction) {
   try {
-    const { data, error } = await supabase
-      .from("seasons")
-      .select("*")
-      .order("year", { ascending: false });
-
-    if (error) throw error;
-    res.json(data);
-  } catch (err: unknown) {
-    res
-      .status(500)
-      .json({ error: err instanceof Error ? err.message : String(err) });
+    const proto = req.protocol;
+    const host = req.get("host") ?? "localhost";
+    const webRequest = new Request(`${proto}://${host}${req.originalUrl}`, {
+      headers: { cookie: req.headers.cookie ?? "" },
+    });
+    const user = await requireAllowedUser(webRequest);
+    if (!user) return res.status(401).json({ error: "not authenticated" });
+    next();
+  } catch (err) {
+    next(err);
   }
-});
-
-app.get("/api/games", async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from("games")
-      .select("*")
-      .order("game_date", { ascending: false });
-
-    if (error) throw error;
-    res.json(data);
-  } catch (err: unknown) {
-    res
-      .status(500)
-      .json({ error: err instanceof Error ? err.message : String(err) });
-  }
-});
+}
 
 // ── AI Chat ───────────────────────────────────────────────────────────────────
 
@@ -186,7 +206,7 @@ ${playerSections.join("\n\n")}
 Answer questions about the team, players, stats, and games. Be concise and friendly. When giving stats, reference the season and game breakdowns where relevant. If asked to do something you can't (like edit data), explain that the app UI should be used for that.`;
 }
 
-app.post("/api/chat", async (req, res) => {
+app.post("/api/chat", requireAuth, async (req, res) => {
   try {
     const { message, session_id, history = [] } = req.body as { message: string; session_id: string; history: { role: string; content: string }[] };
     if (!message || !session_id) return res.status(400).json({ error: "message and session_id required" });
@@ -219,7 +239,7 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
-app.get("/api/chat/history", async (req, res) => {
+app.get("/api/chat/history", requireAuth, async (req, res) => {
   try {
     const { session_id } = req.query as { session_id: string };
     if (!session_id) return res.status(400).json({ error: "session_id required" });
