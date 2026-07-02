@@ -4,9 +4,8 @@ import { useGetSeasonRoster } from '../hooks/backend/players'
 import { useGetGameEvents } from '../hooks/backend/events'
 import { useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useGetEventTypes } from '../hooks/backend/events'
 import { useCreatePlayerForGame, useDeleteSubPlayer, useGetPlayersNotInSeason, useAddPlayerToGame } from '../hooks/backend/players'
-import { useGetAllSeasons, useGetSeasons } from '../hooks/backend/stats'
+import { useGetAllSeasons } from '../hooks/backend/stats'
 import { useGetGameAttendance, useSetAttendance, useSetAllAttendance } from '../hooks/backend/attendance'
-import { getDefaultJamSeasonId } from '../lib/seasonUtils'
 import { useAuth } from '../contexts/AuthContext'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
@@ -31,7 +30,6 @@ export default function QuickScore() {
   const { allowed } = useAuth()
   const { data: games, trigger: fetchGames } = useGetGames()
   const { data: allSeasons, trigger: fetchAllSeasons } = useGetAllSeasons()
-  const { data: seasonsWithGames, trigger: fetchSeasonsWithGames } = useGetSeasons()
   const { data: players, trigger: fetchPlayers } = useGetSeasonRoster()
   const { data: events, trigger: fetchEvents } = useGetGameEvents()
   const { trigger: createGoal } = useCreateGoalEvent()
@@ -61,7 +59,6 @@ export default function QuickScore() {
   useEffect(() => {
     fetchEventTypes()
     fetchAllSeasons()
-    fetchSeasonsWithGames()
   }, [])
 
   useEffect(() => {
@@ -70,37 +67,21 @@ export default function QuickScore() {
   }, [])
 
   useEffect(() => {
-    const seasons = allSeasons as Season[] | undefined
+    // Default game: next upcoming game across ALL seasons (fallback: most recent
+    // past game). The season filter follows the chosen game's season so the
+    // "Change Game" list includes it.
     const g = (games as Game[] | undefined) ?? []
-    if (!seasons || seasons.length === 0 || g.length === 0) return
-    if (selectedSeasonIds.length > 0) return
+    if (g.length === 0 || selectedGameId !== null) return
 
-    const defaultId = getDefaultJamSeasonId(seasons, (seasonsWithGames as { id: number }[] | undefined)?.[0]?.id)
-    if (defaultId == null) return
-    setSelectedSeasonIds([defaultId])
-    if (selectedGameId === null) {
-      const today = new Date().toISOString().slice(0, 10)
-      const seasonGames = g.filter(gm => gm.season_id === defaultId)
-      const upcoming = seasonGames.slice().reverse().find(gm => gm.game_date >= today)
-      const target = upcoming ?? seasonGames[0]
-      if (target) setSelectedGameId(target.id)
+    const today = new Date().toISOString().slice(0, 10)
+    // games come back date-descending, so reverse for chronological order
+    const upcoming = g.slice().reverse().find(gm => gm.game_date >= today)
+    const target = upcoming ?? g[0]!
+    setSelectedGameId(target.id)
+    if (selectedSeasonIds.length === 0 && target.season_id != null) {
+      setSelectedSeasonIds([target.season_id])
     }
-  }, [allSeasons, games, seasonsWithGames])
-
-  useEffect(() => {
-    // Wait for the default season to be chosen before auto-picking a game,
-    // otherwise we'd grab the latest game across ALL seasons (e.g. RHUC)
-    // before the Jam default above has had a chance to run.
-    if (selectedSeasonIds.length === 0) return
-    if (games && (games as Game[]).length > 0 && selectedGameId === null) {
-      const g = games as Game[]
-      const filtered = g.filter(gm => gm.season_id != null && selectedSeasonIds.includes(gm.season_id))
-      if (filtered.length === 0) return
-      const today = new Date().toISOString().slice(0, 10)
-      const upcoming = filtered.slice().reverse().find(gm => gm.game_date >= today)
-      setSelectedGameId((upcoming ?? filtered[0]!).id)
-    }
-  }, [games, selectedSeasonIds])
+  }, [games])
 
   useEffect(() => {
     if (selectedGameId) {

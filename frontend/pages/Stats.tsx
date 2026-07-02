@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useGetGames } from '../hooks/backend/games'
+import { useGetPlayers } from '../hooks/backend/players'
 import { useGetPlayerStats, useGetSeasons, useGetCumulativeStats, useGetAllSeasons } from '../hooks/backend/stats'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
@@ -60,6 +61,7 @@ export default function Stats() {
   const { data: allSeasons, trigger: fetchAllSeasons } = useGetAllSeasons()
   const { data: stats, loading, error, trigger: fetchStats } = useGetPlayerStats()
   const { data: cumulativeRaw, loading: cumulativeLoading, trigger: fetchCumulative } = useGetCumulativeStats()
+  const { data: progressionRoster, trigger: fetchProgressionRoster } = useGetPlayers()
 
   const [filterType, setFilterType] = useState<'all' | 'season' | 'games'>('all')
   const [selectedSeasonIds, setSelectedSeasonIds] = useState<number[]>([])
@@ -103,8 +105,10 @@ export default function Stats() {
   useEffect(() => {
     if (cumulativeSeasonId && cumulativeSeasonId !== '__all__') {
       fetchCumulative({ seasonId: parseInt(cumulativeSeasonId) })
+      fetchProgressionRoster({ seasonIds: [parseInt(cumulativeSeasonId)] })
     } else {
       fetchCumulative({})
+      fetchProgressionRoster({})
     }
     setSelectedPlayerIds([])
   }, [cumulativeSeasonId])
@@ -173,11 +177,19 @@ export default function Stats() {
       playerTotals[r.player_id]!.total += v
     }
 
-    const allPlayersForSelection = Object.entries(playerTotals)
+    // Selection list = full season roster, not just players with events.
+    // Players with stats sort first (by total desc), zero-stat players follow alphabetically.
+    const withEvents = Object.entries(playerTotals)
       .sort((a, b) => b[1].total - a[1].total)
       .map(([id, { name, total }]) => ({ id: parseInt(id), name, total }))
+    const eventIds = new Set(withEvents.map(p => p.id))
+    const rosterOnly = ((progressionRoster as { id: number; display_name: string }[] | undefined) ?? [])
+      .filter(p => !eventIds.has(p.id))
+      .map(p => ({ id: p.id, name: p.display_name, total: 0 }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+    const allPlayersForSelection = [...withEvents, ...rosterOnly]
 
-    // If specific players selected, use those; otherwise top 8
+    // If specific players selected, use those; otherwise default to top 8
     let displayPlayers: { id: number; name: string }[]
     if (selectedPlayerIds.length > 0) {
       displayPlayers = allPlayersForSelection.filter(p => selectedPlayerIds.includes(p.id))
@@ -203,7 +215,7 @@ export default function Stats() {
     })
 
     return { lineData, allPlayersForSelection, topPlayers: displayPlayers }
-  }, [cumulativeRaw, cumulativeStat, selectedPlayerIds, games, cumulativeSeasonId])
+  }, [cumulativeRaw, cumulativeStat, selectedPlayerIds, games, cumulativeSeasonId, progressionRoster])
 
   const BarTooltip = ({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string }) => {
     if (!active || !payload?.length) return null

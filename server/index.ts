@@ -219,7 +219,7 @@ app.post("/api/chat", requireAuth, async (req, res) => {
     }));
 
     const chat = genai.chats.create({
-      model: "gemini-2.5-flash",
+      model: "gemma-4-31b-it",
       history: chatHistory,
       config: { systemInstruction: systemContext },
     });
