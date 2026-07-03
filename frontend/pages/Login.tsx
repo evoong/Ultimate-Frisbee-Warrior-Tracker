@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { Button } from '../lib/shadcn/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../lib/shadcn/card'
@@ -27,15 +27,7 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [showFormHint, setShowFormHint] = useState(true)
   const [showPassword, setShowPassword] = useState(false)
-
-  // The generic "fill out this form" hint auto-dismisses after 5 seconds.
-  useEffect(() => {
-    if (!showFormHint) return
-    const timer = setTimeout(() => setShowFormHint(false), 5000)
-    return () => clearTimeout(timer)
-  }, [showFormHint])
 
   const urlError = useMemo(() => {
     const code = new URLSearchParams(window.location.search).get('auth_error')
@@ -78,7 +70,6 @@ export default function Login() {
       <div className="w-full max-w-sm">
         <div className="text-center mb-6">
           <h1 className="text-2xl font-bold text-primary">Warrior Tracker</h1>
-          <p className="text-sm text-muted-foreground mt-1">Team access only</p>
         </div>
 
         <Card>
@@ -91,7 +82,7 @@ export default function Login() {
             <CardDescription>
               {mode === 'forgot'
                 ? 'Enter your email and we will send a reset link.'
-                : 'Use your team email to continue.'}
+                : 'Use your email to continue.'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -101,9 +92,6 @@ export default function Login() {
                 )}
                 {error && <p className="text-sm text-destructive">{error}</p>}
                 {notice && <p className="text-sm text-primary">{notice}</p>}
-                {showFormHint && !error && !notice && (
-                  <p className="text-sm text-muted-foreground">Please fill out this form.</p>
-                )}
 
                 <form onSubmit={handleSubmit} className="space-y-4" noValidate>
                   <div className="space-y-2">
