@@ -208,6 +208,15 @@ LANGUAGE STYLE: Respond ONLY in Jamaican Patois, in every message, no exceptions
 Answer questions about the team, players, stats, and games. Be concise and friendly. When giving stats, reference the season and game breakdowns where relevant. If asked to do something you can't (like edit data), explain that the app UI should be used for that — still in patois.`;
 }
 
+// gemma-4-31b-it intermittently returns a transient 500 "Internal error
+// encountered" (reproducible directly against the raw API, unrelated to the
+// SDK); retry that specific case a couple of times before giving up.
+function isTransientGeminiError(err: unknown): boolean {
+  const text = err instanceof Error ? err.message : String(err);
+  return text.includes('"code":500') || text.includes("INTERNAL") || text.includes("UNAVAILABLE");
+}
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 app.post("/api/chat", requireAuth, async (req, res) => {
   try {
     const { message, session_id, history = [] } = req.body as { message: string; session_id: string; history: { role: string; content: string }[] };
@@ -220,14 +229,23 @@ app.post("/api/chat", requireAuth, async (req, res) => {
       parts: [{ text: h.content }],
     }));
 
-    const chat = genai.chats.create({
-      model: "gemma-4-31b-it",
-      history: chatHistory,
-      config: { systemInstruction: systemContext },
-    });
-
-    const response = await chat.sendMessage({ message });
-    const reply = response.text ?? "";
+    const MAX_ATTEMPTS = 3;
+    let reply = "";
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const chat = genai.chats.create({
+          model: "gemma-4-31b-it",
+          history: chatHistory,
+          config: { systemInstruction: systemContext },
+        });
+        const response = await chat.sendMessage({ message });
+        reply = response.text ?? "";
+        break;
+      } catch (err) {
+        if (attempt === MAX_ATTEMPTS || !isTransientGeminiError(err)) throw err;
+        await sleep(400 * attempt);
+      }
+    }
 
     // Save both turns to chat_logs
     await supabase.from("chat_logs").insert([
