@@ -1,5 +1,6 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
+import { isTurnoverEvent } from '../../lib/eventUtils'
 
 type HookResult<T, P = void> = {
   data: T | undefined
@@ -12,20 +13,23 @@ function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P
   const [data, setData] = useState<T | undefined>(undefined)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const seqRef = useRef(0)
 
   const trigger = useCallback(async (params?: P) => {
+    // Guard against out-of-order responses: only the latest call may set state
+    const callId = ++seqRef.current
     setLoading(true)
     setError(null)
     try {
       const result = await fn(params as P)
-      setData(result)
+      if (callId === seqRef.current) setData(result)
       return result
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      setError(msg)
+      if (callId === seqRef.current) setError(msg)
       return undefined
     } finally {
-      setLoading(false)
+      if (callId === seqRef.current) setLoading(false)
     }
   }, [fn])
 
@@ -97,12 +101,20 @@ export function useCreatePlayer() {
     display_name: string; first_name?: string; last_name?: string;
     gender_match?: string; phone?: string; number?: number; position?: string; is_sub?: boolean; season_ids?: number[]
   }) => {
+    // season_ids lives in the season_players junction table, not on players
+    const { season_ids, ...playerFields } = params
     const { data, error } = await supabase
       .from('players')
-      .insert(params)
+      .insert(playerFields)
       .select()
     if (error) throw new Error(error.message)
-    return data?.[0]
+    const player = data?.[0]
+    if (player && season_ids && season_ids.length > 0) {
+      const rows = season_ids.map(sid => ({ player_id: (player as any).id, season_id: sid }))
+      const { error: spError } = await supabase.from('season_players').insert(rows)
+      if (spError) throw new Error(spError.message)
+    }
+    return player
   }, [])
   return useApiCall(fn)
 }
@@ -147,9 +159,10 @@ export function useGetPlayersNotInSeason() {
 
 export function useCreatePlayerForGame() {
   const fn = useCallback(async (params: { gameId: number; display_name: string; position?: string; gender_match?: string }) => {
+    // Players created mid-game from QuickScore are subs
     const { data: playerData, error: playerError } = await supabase
       .from('players')
-      .insert({ display_name: params.display_name, position: params.position, gender_match: params.gender_match })
+      .insert({ display_name: params.display_name, position: params.position, gender_match: params.gender_match, is_sub: true })
       .select()
     if (playerError) throw new Error(playerError.message)
     
@@ -206,7 +219,7 @@ export function useDeletePlayer() {
 }
 
 export function useUpdatePlayer() {
-  const fn = useCallback(async (params: { playerId: number; display_name?: string; phone?: string; number?: number }) => {
+  const fn = useCallback(async (params: { playerId: number; display_name?: string; phone?: string; number?: number | null; gender_match?: string; position?: string | null }) => {
     const { playerId, ...body } = params
     const { data, error } = await supabase
       .from('players')
@@ -234,16 +247,28 @@ export function useUpdatePlayerPosition() {
 
 export function useUpdatePlayerSeasons() {
   const fn = useCallback(async (params: { playerId: number; seasonIds: number[] }) => {
-    // Delete all existing season memberships for this player
-    const { error: deleteError } = await supabase
+    // Diff against existing memberships so jersey_number/role/active on kept rows survive
+    const { data: existing, error: fetchError } = await supabase
       .from('season_players')
-      .delete()
+      .select('season_id')
       .eq('player_id', params.playerId)
-    if (deleteError) throw new Error(deleteError.message)
+    if (fetchError) throw new Error(fetchError.message)
 
-    // Re-insert for each selected season
-    if (params.seasonIds.length > 0) {
-      const rows = params.seasonIds.map(sid => ({ player_id: params.playerId, season_id: sid }))
+    const current = new Set(((existing ?? []) as any[]).map((r: any) => r.season_id as number))
+    const wanted = new Set(params.seasonIds)
+    const toAdd = params.seasonIds.filter(sid => !current.has(sid))
+    const toRemove = [...current].filter(sid => !wanted.has(sid))
+
+    if (toRemove.length > 0) {
+      const { error: deleteError } = await supabase
+        .from('season_players')
+        .delete()
+        .eq('player_id', params.playerId)
+        .in('season_id', toRemove)
+      if (deleteError) throw new Error(deleteError.message)
+    }
+    if (toAdd.length > 0) {
+      const rows = toAdd.map(sid => ({ player_id: params.playerId, season_id: sid }))
       const { error: insertError } = await supabase.from('season_players').insert(rows)
       if (insertError) throw new Error(insertError.message)
     }
@@ -258,7 +283,19 @@ export function useUploadPlayerPhoto() {
       .from('player-photos')
       .upload(fileName, params.file)
     if (error) throw new Error(error.message)
-    return data
+
+    const { data: urlData } = supabase.storage
+      .from('player-photos')
+      .getPublicUrl(data.path)
+    const photo_url = urlData.publicUrl
+
+    const { data: updated, error: updateError } = await supabase
+      .from('players')
+      .update({ photo_url })
+      .eq('id', params.playerId)
+      .select()
+    if (updateError) throw new Error(updateError.message)
+    return updated?.[0] as { photo_url: string } | undefined
   }, [])
   return useApiCall(fn)
 }
@@ -324,7 +361,7 @@ export function useGetPlayerGameStats() {
       const stat = statsMap.get(e.game_id)
       if (!stat) return
       if (e.event_type === 'Goal') stat.goals++
-      else if (e.event_type === 'Turnover' || e.event_type === 'Throwaway' || e.event_type === 'Drop') stat.turnovers++
+      else if (isTurnoverEvent(e.event_type)) stat.turnovers++
     })
     ;(assistEvents as any[] ?? []).forEach((e: any) => {
       const stat = statsMap.get(e.game_id)

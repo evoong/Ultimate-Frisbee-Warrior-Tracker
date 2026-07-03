@@ -1,4 +1,4 @@
-import { createGateway } from './gateway/index'
+import { createGateway } from './gateway/index.js'
 
 interface Env {
   ASSETS: {
@@ -29,12 +29,19 @@ export default {
         return response;
       }
 
-      const isSpaPath =
-        !url.pathname.startsWith("/api") &&
-        !url.pathname.startsWith("/auth") &&
-        !url.pathname.startsWith("/db");
+      const isGatewayPath =
+        url.pathname.startsWith("/api") ||
+        url.pathname.startsWith("/auth") ||
+        url.pathname.startsWith("/db");
 
-      if (isSpaPath) {
+      // SPA fallback: only for navigation requests. A missing hashed asset
+      // (e.g. /assets/index-OLD.js after a redeploy) must 404 so the browser
+      // reloads instead of executing index.html as JS (white screen).
+      const isNavigation =
+        !/\.[a-zA-Z0-9]+$/.test(url.pathname) ||
+        (request.headers.get("Accept") ?? "").includes("text/html");
+
+      if (!isGatewayPath && isNavigation) {
         const indexResponse = await env.ASSETS.fetch(
           new Request(new URL("/index.html", url).toString())
         );
@@ -42,7 +49,7 @@ export default {
           status: 200,
           headers: {
             ...Object.fromEntries(indexResponse.headers),
-            "Cache-Control": "public, max-age=3600",
+            "Cache-Control": "no-cache",
           },
         });
       }

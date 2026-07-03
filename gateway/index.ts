@@ -1,8 +1,8 @@
-import { handleAuthRequest, type GatewayConfig } from './auth-handlers'
-import { handleDbProxy } from './proxy'
-import { csrfViolation } from './csrf'
-import { cookieNames, parseCookies } from './cookies'
-import { verifyAccessToken } from './jwt'
+import { handleAuthRequest, type GatewayConfig } from './auth-handlers.js'
+import { handleDbProxy } from './proxy.js'
+import { csrfViolation } from './csrf.js'
+import { cookieNames, parseCookies } from './cookies.js'
+import { verifyAccessToken } from './jwt.js'
 
 export type { GatewayConfig }
 export type Gateway = (request: Request) => Promise<Response | null>

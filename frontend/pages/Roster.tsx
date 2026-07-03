@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeleteSubPlayer, useDeletePlayer, useGetPlayerGameStats, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer } from '../hooks/backend/players'
+import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlayer, useGetPlayerGameStats, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons } from '../hooks/backend/stats'
 import { useSetAttendance } from '../hooks/backend/attendance'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
@@ -70,7 +70,6 @@ export default function Roster() {
   const { data: playerSeasons, trigger: fetchPlayerSeasons } = useGetPlayerSeasons()
   const { trigger: updatePlayer } = useUpdatePlayer()
   const { trigger: updatePosition } = useUpdatePlayerPosition()
-  const { trigger: deleteSubPlayer } = useDeleteSubPlayer()
   const { trigger: deletePlayer } = useDeletePlayer()
   const { trigger: uploadPhoto, loading: uploadingPhoto } = useUploadPlayerPhoto()
   const { trigger: updatePlayerSeasons } = useUpdatePlayerSeasons()
@@ -158,8 +157,9 @@ export default function Roster() {
   }
 
   const handleStartEditSeasons = () => {
+    // Pre-select every membership (not just active) so saving doesn't silently drop inactive rows
     const ps = playerSeasons as PlayerSeason[] | undefined
-    setSelectedSeasonIds((ps ?? []).filter(s => s.active).map(s => s.id))
+    setSelectedSeasonIds((ps ?? []).map(s => s.id))
     setEditingSeasons(true)
   }
 
@@ -175,11 +175,6 @@ export default function Roster() {
     await deletePlayer({ playerId: selectedPlayer.id })
     setDeleteConfirm(false)
     handleBack()
-    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined })
-  }
-
-  const handleDeleteSub = async (playerId: number) => {
-    await deleteSubPlayer({ playerId, gameId: 0 })
     fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined })
   }
 
@@ -208,28 +203,36 @@ export default function Roster() {
   const handleCreatePlayer = async () => {
     if (!newPlayerData.display_name) return
     setCreatingPlayer(true)
-    await createPlayer({
+    const created = await createPlayer({
       display_name: newPlayerData.display_name,
       gender_match: newPlayerData.gender_match || undefined,
       number: newPlayerData.number ? parseInt(newPlayerData.number) : undefined,
       position: newPlayerData.position || undefined,
       season_ids: newPlayerData.season_ids,
     })
+    setCreatingPlayer(false)
+    if (!created) {
+      setUploadError(null)
+      alert('Failed to create player. Please try again.')
+      return
+    }
     setShowNewPlayer(false)
     setNewPlayerData({ display_name: '', number: '', gender_match: '', position: '', season_ids: [] })
-    setCreatingPlayer(false)
     fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined })
   }
 
-  const filteredPlayers = players?.filter(p => p.display_name.toLowerCase().includes(searchQuery.toLowerCase()))
+  const filteredPlayers = players?.filter(p => (p.display_name ?? '').toLowerCase().includes(searchQuery.toLowerCase()))
   const allSeasonsArr = (allSeasons as Season[] | undefined) ?? []
 
   const filteredStats = ((gameStats as GameStat[] | undefined) ?? []).filter(g =>
     seasonFilter === 'all' || g.season_id?.toString() === seasonFilter
   )
 
+  // Only count games the player attended — matches the per-game rows, which show '—' when out
   const summary = filteredStats.reduce(
-    (acc, g) => ({ goals: acc.goals + parseInt(g.goals), assists: acc.assists + parseInt(g.assists), turnovers: acc.turnovers + parseInt(g.turnovers), games: acc.games + (g.in ? 1 : 0) }),
+    (acc, g) => g.in
+      ? { goals: acc.goals + parseInt(g.goals), assists: acc.assists + parseInt(g.assists), turnovers: acc.turnovers + parseInt(g.turnovers), games: acc.games + 1 }
+      : acc,
     { goals: 0, assists: 0, turnovers: 0, games: 0 }
   )
 

@@ -5,6 +5,7 @@ import { useGetPlayers } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons, useCreateSeason, useGetSeasonsMeta } from '../hooks/backend/stats'
 import { useGetGameAttendance, useSetAttendance, useSetAllAttendance } from '../hooks/backend/attendance'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
+import { isTurnoverEvent } from '../lib/eventUtils'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
@@ -99,7 +100,7 @@ export default function Schedule() {
   const [lineupPlayerSelect, setLineupPlayerSelect] = useState<string>('')
 
   useEffect(() => {
-    fetchGames()
+    // fetchGames happens in the scheduleSeasonIds effect below (fires on mount too)
     fetchPlayers()
     fetchSeasons()
     fetchSeasonsMeta()
@@ -237,9 +238,9 @@ export default function Schedule() {
     fetchLineups({ gameId: selectedGame.id })
   }
 
-  const handleRemoveFromLineup = async (playerId: number) => {
+  const handleRemoveFromLineup = async (playerId: number, lineupGroup: string) => {
     if (!selectedGame) return
-    await removeFromLineup({ gameId: selectedGame.id, playerId, lineup_name: lineupName })
+    await removeFromLineup({ gameId: selectedGame.id, playerId, lineup_name: lineupGroup })
     fetchLineups({ gameId: selectedGame.id })
   }
 
@@ -297,7 +298,7 @@ export default function Schedule() {
       if (e.event_type === 'Goal') {
         if (e.player_id && sn) { ensurePlayer(e.player_id, sn); playerMap[e.player_id]!.goals++ }
         if (e.related_player_id && an) { ensurePlayer(e.related_player_id, an); playerMap[e.related_player_id]!.assists++ }
-      } else if (e.event_type === 'Turnover') {
+      } else if (isTurnoverEvent(e.event_type)) {
         if (e.player_id && sn) { ensurePlayer(e.player_id, sn); playerMap[e.player_id]!.turnovers++ }
       }
     })
@@ -449,7 +450,7 @@ export default function Schedule() {
                     const assister = getPlayerName(event.related_player_id)
                     const isGoal = event.event_type === 'Goal'
                     const isOpponentGoal = event.event_type === 'Opponent Goal'
-                    const isTurnover = event.event_type === 'Turnover'
+                    const isTurnover = isTurnoverEvent(event.event_type)
                     const isEditing = editingEventId === event.id
 
                     return (
@@ -566,7 +567,7 @@ export default function Schedule() {
                             {e.position && <span className="text-xs text-muted-foreground ml-2">{e.position}</span>}
                           </div>
                           {allowed && (
-                            <button onClick={() => handleRemoveFromLineup(e.player_id)} className="p-1 rounded hover:bg-destructive/10">
+                            <button onClick={() => handleRemoveFromLineup(e.player_id, e.lineup_name)} className="p-1 rounded hover:bg-destructive/10">
                               <X className="w-3.5 h-3.5 text-muted-foreground hover:text-destructive" />
                             </button>
                           )}
