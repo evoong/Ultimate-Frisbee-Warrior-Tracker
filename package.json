@@ -7,7 +7,7 @@
     "dev": "concurrently \"npm run server\" \"npm run frontend\"",
     "server": "node --dns-result-order=ipv4first node_modules/.bin/tsx server/index.ts",
     "frontend": "cd frontend && npm run dev",
-    "build": "cd frontend && npm run build",
+    "build": "cd frontend && npm ci && npm run build",
     "start": "npm run server",
     "deploy": "npm run build && wrangler deploy --config wrangler.jsonc",
     "deploy:dev": "npm run build && wrangler deploy --config wrangler.jsonc --env development",
