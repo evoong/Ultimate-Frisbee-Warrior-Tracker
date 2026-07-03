@@ -229,7 +229,11 @@ app.post("/api/chat", requireAuth, async (req, res) => {
       parts: [{ text: h.content }],
     }));
 
-    const MAX_ATTEMPTS = 3;
+    // Verified against live production: gemma-4-31b-it sometimes fails its
+    // transient 500 several times in a row within under a second, so a short
+    // 3-attempt retry isn't always enough to ride it out. 5 attempts with
+    // longer backoff closes most of the remaining gap.
+    const MAX_ATTEMPTS = 5;
     let reply = "";
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
@@ -243,7 +247,7 @@ app.post("/api/chat", requireAuth, async (req, res) => {
         break;
       } catch (err) {
         if (attempt === MAX_ATTEMPTS || !isTransientGeminiError(err)) throw err;
-        await sleep(400 * attempt);
+        await sleep(600 * attempt);
       }
     }
 
