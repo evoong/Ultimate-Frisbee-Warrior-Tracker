@@ -106,7 +106,7 @@ async function getTeamContext() {
     supabase.from("players").select("id, display_name, position, gender_match, is_sub").order("display_name"),
     supabase.from("seasons").select("id, name, year, organizer").order("id"),
     supabase.from("games").select("id, season_id, opponent, game_date, result, outcome_override").order("game_date", { ascending: true }),
-    supabase.from("game_events").select("player_id, related_player_id, event_type, game_id"),
+    supabase.from("game_events").select("player_id, related_player_id, event_type, game_id, event_timestamp"),
     supabase.from("season_players").select("player_id, season_id").eq("active", true),
   ]);
 
@@ -192,6 +192,41 @@ async function getTeamContext() {
     return `- ${g.game_date} vs ${g.opponent} [${seasonNames.get(g.season_id) ?? "?"}]: ${goals}-${opp} ${res}`;
   });
 
+  // Chronological, timestamped play-by-play per game — lets the assistant
+  // answer "when"/"what time"/"first"/"last"/time-between-events questions.
+  const eventsByGame = new Map<number, any[]>();
+  (events.data ?? []).forEach((e: any) => {
+    if (!eventsByGame.has(e.game_id)) eventsByGame.set(e.game_id, []);
+    eventsByGame.get(e.game_id)!.push(e);
+  });
+
+  const formatEventTime = (ts: string | null) =>
+    ts ? new Date(ts).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" }) : "?";
+
+  const eventTimelines = (games.data ?? [])
+    .map((g: any) => {
+      const gameEvents = (eventsByGame.get(g.id) ?? [])
+        .slice()
+        .sort((a: any, b: any) => (a.event_timestamp ?? "").localeCompare(b.event_timestamp ?? ""));
+      if (gameEvents.length === 0) return null;
+
+      const lines = gameEvents.map((e: any) => {
+        const time = formatEventTime(e.event_timestamp);
+        const scorer = e.player_id ? playerMap.get(e.player_id)?.display_name ?? "Unknown" : null;
+        const assister = e.related_player_id ? playerMap.get(e.related_player_id)?.display_name : null;
+        if (e.event_type === "Goal") {
+          return `    ${time} - Goal: ${scorer ?? "Unknown"}${assister ? ` (assist: ${assister})` : ""}`;
+        }
+        if (e.event_type === "Opponent Goal") {
+          return `    ${time} - Opponent Goal`;
+        }
+        return `    ${time} - ${e.event_type}${scorer ? `: ${scorer}` : ""}`;
+      });
+
+      return `- ${g.game_date} vs ${g.opponent}:\n${lines.join("\n")}`;
+    })
+    .filter((line: string | null): line is string => line !== null);
+
   return `You are a helpful assistant for the Ultimate Frisbee Warriors team tracking app. You have access to the following live team data:
 
 SEASONS:
@@ -202,6 +237,9 @@ ${gameResultLines.join("\n")}
 
 PLAYER STATS (All-time totals + breakdown by season + breakdown by game):
 ${playerSections.join("\n\n")}
+
+EVENT TIMELINE (chronological, with timestamps — use this for "when"/"what time"/"first"/"last"/time-between-events questions):
+${eventTimelines.join("\n\n")}
 
 LANGUAGE STYLE: Respond ONLY in Jamaican Patois, in every message, no exceptions. Keep it warm and natural (e.g. "wah gwaan", "mi", "yuh", "di", "dem", "nuh", "ting"), but never let the patois obscure the actual answer — names, numbers, dates, and stats must stay exact and easy to read. If a question is complex, prioritize clarity: use simple patois phrasing over anything cute that risks confusing the user.
 
