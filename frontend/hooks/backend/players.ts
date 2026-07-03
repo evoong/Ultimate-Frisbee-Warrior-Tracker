@@ -284,10 +284,13 @@ export function useUploadPlayerPhoto() {
       .upload(fileName, params.file)
     if (error) throw new Error(error.message)
 
-    const { data: urlData } = supabase.storage
-      .from('player-photos')
-      .getPublicUrl(data.path)
-    const photo_url = urlData.publicUrl
+    // Store a domain-relative path, not an absolute URL: the app is served from
+    // multiple origins (Vercel + Cloudflare), and getPublicUrl() bakes in
+    // window.location.origin at upload time. An absolute URL only resolves
+    // (with the session cookie the proxy needs) on the origin it was uploaded
+    // from — viewed from any other deployment it's a cross-origin request with
+    // no cookie, so the gateway 401s and the image never loads.
+    const photo_url = `/db/storage/v1/object/public/player-photos/${data.path}`
 
     const { data: updated, error: updateError } = await supabase
       .from('players')
