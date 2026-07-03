@@ -8,9 +8,11 @@ import Chat from './pages/Chat'
 import Login from './pages/Login'
 import ResetPassword from './pages/ResetPassword'
 import { useAuth } from './contexts/AuthContext'
-import { Calendar, Users, Zap, Award, BarChart3, MessageCircle, Moon, Sun, Loader2, LogOut } from 'lucide-react'
-
-type Tab = 'schedule' | 'roster' | 'quickscore' | 'ranking' | 'stats' | 'chat'
+import { Moon, Sun, Loader2, LogOut } from 'lucide-react'
+import { NAV_ITEMS, type Tab } from './lib/nav'
+import { useMediaQuery } from './lib/shadcn/use-media-query'
+import { SidebarProvider, SidebarInset, SidebarTrigger } from './lib/shadcn/sidebar'
+import AppSidebar from './components/AppSidebar'
 
 const THEME_KEY = 'ufwt_theme'
 
@@ -20,21 +22,10 @@ function getInitialTheme(): 'light' | 'dark' {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
-const TABS = [
-  { key: 'quickscore', label: 'QUICK',    fullLabel: 'QUICK SCORE', icon: Zap,       page: QuickScore },
-  { key: 'schedule',   label: 'GAMES',    fullLabel: 'SCHEDULE',    icon: Calendar,  page: Schedule   },
-  { key: 'roster',     label: 'SQUAD',    fullLabel: 'ROSTER',      icon: Users,     page: Roster     },
-  { key: 'stats',      label: 'STATS',    fullLabel: 'STATISTICS',  icon: BarChart3, page: Stats      },
-] as const
-
-type TabKey = typeof TABS[number]['key']
-
-const LIME = 'hsl(74 100% 50%)'
-const LIME_DIM = 'hsl(74 100% 50% / 0.12)'
-
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('quickscore')
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme)
+  const isDesktop = useMediaQuery('(min-width: 1024px)')
   const { user, allowed, loading, logout } = useAuth()
 
   useEffect(() => {
@@ -67,18 +58,55 @@ export default function App() {
     return <Login />
   }
 
-  const tabs = [
-    { key: 'quickscore' as Tab, icon: Zap, label: 'Quick' },
-    { key: 'schedule' as Tab, icon: Calendar, label: 'Schedule' },
-    { key: 'roster' as Tab, icon: Users, label: 'Roster' },
-    { key: 'ranking' as Tab, icon: Award, label: 'Ranking' },
-    { key: 'stats' as Tab, icon: BarChart3, label: 'Stats' },
-    { key: 'chat' as Tab, icon: MessageCircle, label: 'AI' },
-  ]
+  const pageContent = (
+    <>
+      {activeTab === 'schedule' && <Schedule />}
+      {activeTab === 'roster' && <Roster />}
+      {activeTab === 'quickscore' && <QuickScore />}
+      {activeTab === 'ranking' && <Ranking />}
+      {activeTab === 'stats' && <Stats />}
+      {activeTab === 'chat' && <Chat />}
+    </>
+  )
 
+  const readOnlyNotice = !allowed && (
+    <div className="bg-accent border-b border-border">
+      <div className="max-w-2xl mx-auto px-4 py-2 text-xs text-muted-foreground text-center">
+        You have read-only access. Ask a team admin to add you for editing.
+      </div>
+    </div>
+  )
+
+  // Desktop: collapsible sidebar shell.
+  if (isDesktop) {
+    const activeLabel = NAV_ITEMS.find(item => item.key === activeTab)?.label ?? ''
+    return (
+      <SidebarProvider>
+        <AppSidebar
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          theme={theme}
+          toggleTheme={toggleTheme}
+          userEmail={user.email}
+          logout={logout}
+        />
+        <SidebarInset>
+          <header className="sticky top-0 z-10 flex h-14 items-center gap-2 border-b border-border bg-card px-4">
+            <SidebarTrigger />
+            <h1 className="text-lg font-bold text-primary">{activeLabel}</h1>
+          </header>
+          {readOnlyNotice}
+          <main className="px-6 py-6">
+            {pageContent}
+          </main>
+        </SidebarInset>
+      </SidebarProvider>
+    )
+  }
+
+  // Mobile: sticky header plus fixed bottom navigation.
   return (
     <div className="min-h-screen bg-background text-foreground">
-      {/* Header */}
       <header className="bg-card border-b border-border sticky top-0 z-10">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <h1 className="text-lg font-bold text-primary">Warrior Tracker</h1>
@@ -102,29 +130,15 @@ export default function App() {
         </div>
       </header>
 
-      {/* Read-only notice for signed-in users who aren't on the team allowlist. */}
-      {!allowed && (
-        <div className="bg-accent border-b border-border">
-          <div className="max-w-2xl mx-auto px-4 py-2 text-xs text-muted-foreground text-center">
-            You have read-only access. Ask a team admin to add you for editing.
-          </div>
-        </div>
-      )}
+      {readOnlyNotice}
 
-      {/* Content */}
       <main className="max-w-2xl mx-auto px-4 py-6 pb-24">
-        {activeTab === 'schedule' && <Schedule />}
-        {activeTab === 'roster' && <Roster />}
-        {activeTab === 'quickscore' && <QuickScore />}
-        {activeTab === 'ranking' && <Ranking />}
-        {activeTab === 'stats' && <Stats />}
-        {activeTab === 'chat' && <Chat />}
+        {pageContent}
       </main>
 
-      {/* Bottom Navigation */}
       <nav className="fixed bottom-0 left-0 right-0 bg-card border-t border-border">
         <div className="max-w-2xl mx-auto grid grid-cols-6">
-          {tabs.map(({ key, icon: Icon, label }) => (
+          {NAV_ITEMS.map(({ key, icon: Icon, label }) => (
             <button
               key={key}
               onClick={() => setActiveTab(key)}
@@ -138,7 +152,6 @@ export default function App() {
           ))}
         </div>
       </nav>
-
     </div>
   )
 }
