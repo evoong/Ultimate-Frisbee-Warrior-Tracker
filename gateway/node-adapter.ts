@@ -1,11 +1,22 @@
 import type { IncomingMessage, ServerResponse } from 'http'
 import type { Gateway } from './index.js'
 
+// Paths the gateway owns (mirrors createGateway's check in ./index.ts).
+// Body must only be drained for these — draining it for any other route
+// (e.g. /api/chat) leaves nothing for Express's body-parser to read next,
+// which throws "stream is not readable".
+function isGatewayOwnedPath(path: string): boolean {
+  return path === '/auth' || path.startsWith('/auth/') || path === '/db' || path.startsWith('/db/')
+}
+
 // Express/Node middleware wrapper around the web-standard gateway.
 // Mount BEFORE body parsers so /db request bodies pass through untouched.
 export function nodeAdapter(gateway: Gateway) {
   return async (req: IncomingMessage, res: ServerResponse, next: (err?: unknown) => void) => {
     try {
+      const path = new URL(req.url ?? '/', 'http://localhost').pathname
+      if (!isGatewayOwnedPath(path)) return next()
+
       const request = await toWebRequest(req)
       const response = await gateway(request)
       if (!response) return next()
