@@ -164,7 +164,11 @@ async function callGemini(apiKey: string, systemInstruction: string, history: { 
     throw new Error(`Gemini request failed (${res.status}): ${text.slice(0, 300)}`)
   }
   const data: any = await res.json()
-  return data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join('') ?? ''
+  const parts: any[] = data?.candidates?.[0]?.content?.parts ?? []
+  // Gemini returns reasoning as separate parts marked thought: true; the
+  // official SDK's `.text` getter filters these out, so we must too or the
+  // model's chain-of-thought leaks into the reply.
+  return parts.filter(p => !p.thought).map(p => p.text).join('')
 }
 
 export async function handleChatRequest(config: ChatConfig, request: Request): Promise<Response> {
