@@ -1,4 +1,4 @@
-import { createGateway } from './gateway/index'
+import { createGateway } from './gateway/index.js'
 
 interface Env {
   ASSETS: {

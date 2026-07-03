@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http'
-import type { Gateway } from './index'
+import type { Gateway } from './index.js'
 
 // Express/Node middleware wrapper around the web-standard gateway.
 // Mount BEFORE body parsers so /db request bodies pass through untouched.
