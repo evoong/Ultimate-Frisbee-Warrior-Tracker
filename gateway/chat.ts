@@ -1,9 +1,14 @@
+import { GoogleGenAI } from '@google/genai'
 import { createRequireAllowedUser, type GatewayConfig } from './index.js'
 
 // Chat needs privileged (service-role) Supabase access to read all team data
-// regardless of caller identity, plus a Gemini key. Framework-agnostic (raw
-// fetch, no SDKs) so it runs unchanged on both the Cloudflare Worker and the
-// Express/Vercel server.
+// regardless of caller identity, plus a Gemini key. Team-context/log queries
+// use raw fetch (portable), but the Gemini call itself uses the official SDK
+// — same as server/index.ts — via its browser/fetch build, so behavior matches
+// Vercel exactly. The SDK itself does not retry — gemma-4-31b-it intermittently
+// returns a transient 500 "Internal error encountered" (confirmed reproducible
+// against the raw API directly, independent of SDK vs fetch), so this module
+// retries that specific case itself.
 export interface ChatConfig extends GatewayConfig {
   supabaseSecretKey: string
   geminiApiKey: string
@@ -142,33 +147,39 @@ LANGUAGE STYLE: Respond ONLY in Jamaican Patois, in every message, no exceptions
 Answer questions about the team, players, stats, and games. Be concise and friendly. When giving stats, reference the season and game breakdowns where relevant. If asked to do something you can't (like edit data), explain that the app UI should be used for that — still in patois.`
 }
 
-async function callGemini(apiKey: string, systemInstruction: string, history: { role: string; content: string }[], message: string): Promise<string> {
-  const contents = [
-    ...history.map(h => ({ role: h.role === 'assistant' ? 'model' : 'user', parts: [{ text: h.content }] })),
-    { role: 'user', parts: [{ text: message }] },
-  ]
+function isTransientGeminiError(err: unknown): boolean {
+  const text = err instanceof Error ? err.message : String(err)
+  return text.includes('"code":500') || text.includes('INTERNAL') || text.includes('UNAVAILABLE')
+}
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: systemInstruction }] },
-        contents,
-      }),
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+async function callGemini(apiKey: string, systemInstruction: string, history: { role: string; content: string }[], message: string): Promise<string> {
+  const genai = new GoogleGenAI({ apiKey })
+
+  const chatHistory = history.map(h => ({
+    role: h.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: h.content }],
+  }))
+
+  const MAX_ATTEMPTS = 3
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const chat = genai.chats.create({
+        model: GEMINI_MODEL,
+        history: chatHistory,
+        config: { systemInstruction },
+      })
+      const response = await chat.sendMessage({ message })
+      return response.text ?? ''
+    } catch (err) {
+      if (attempt === MAX_ATTEMPTS || !isTransientGeminiError(err)) throw err
+      await sleep(400 * attempt)
     }
-  )
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`Gemini request failed (${res.status}): ${text.slice(0, 300)}`)
   }
-  const data: any = await res.json()
-  const parts: any[] = data?.candidates?.[0]?.content?.parts ?? []
-  // Gemini returns reasoning as separate parts marked thought: true; the
-  // official SDK's `.text` getter filters these out, so we must too or the
-  // model's chain-of-thought leaks into the reply.
-  return parts.filter(p => !p.thought).map(p => p.text).join('')
+  throw new Error('unreachable')
 }
 
 export async function handleChatRequest(config: ChatConfig, request: Request): Promise<Response> {
