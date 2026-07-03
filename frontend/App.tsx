@@ -96,7 +96,7 @@ export default function App() {
             <h1 className="text-lg font-bold text-primary">{activeLabel}</h1>
           </header>
           {readOnlyNotice}
-          <main className="px-6 py-6">
+          <main className="mx-auto w-full max-w-5xl px-6 py-6">
             {pageContent}
           </main>
         </SidebarInset>
