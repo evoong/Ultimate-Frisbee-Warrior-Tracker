@@ -39,3 +39,6 @@ Thumbs.db
 *.swo
 .vercel
 .wrangler/
+
+# Agent instructions (local only, not tracked)
+CLAUDE.md
