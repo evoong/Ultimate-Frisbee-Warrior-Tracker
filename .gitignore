@@ -50,3 +50,4 @@ attached_assets/
 
 # TypeScript incremental build info
 *.tsbuildinfo
+.dev.vars
