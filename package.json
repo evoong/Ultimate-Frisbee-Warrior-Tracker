@@ -9,8 +9,8 @@
     "frontend": "cd frontend && npm run dev",
     "build": "cd frontend && npm ci && npm run build",
     "start": "npm run server",
-    "deploy": "npm run build && wrangler deploy --config wrangler.jsonc",
-    "deploy:dev": "npm run build && wrangler deploy --config wrangler.jsonc --env development",
+    "deploy": "wrangler deploy --config wrangler.jsonc",
+    "deploy:dev": "wrangler deploy --config wrangler.jsonc --env development",
     "deploy:vercel": "npx vercel --prod --yes",
     "test": "node server.test.mjs"
   },
@@ -41,6 +41,6 @@
     "concurrently": "^8.2.2",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3",
-    "wrangler": "^3.82.0"
+    "wrangler": "^4.107.0"
   }
 }

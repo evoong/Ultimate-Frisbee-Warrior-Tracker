@@ -1,6 +1,11 @@
 {
   "name": "ultimate-frisbee-warrior-tracker",
   "main": "worker.ts",
+  // Build the frontend before bundling so a bare "npx wrangler deploy"
+  // (the Workers Builds default deploy command) is self-contained.
+  "build": {
+    "command": "npm run build"
+  },
   "compatibility_date": "2024-12-16",
   "assets": {
     "directory": "./frontend/dist",
