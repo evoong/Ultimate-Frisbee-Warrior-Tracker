@@ -42,3 +42,11 @@ Thumbs.db
 
 # Agent instructions (local only, not tracked)
 CLAUDE.md
+
+# DB dumps / local data (contains PII — never commit)
+data/
+Replit Schema.csv
+attached_assets/
+
+# TypeScript incremental build info
+*.tsbuildinfo

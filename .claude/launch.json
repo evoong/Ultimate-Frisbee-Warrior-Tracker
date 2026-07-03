@@ -10,10 +10,10 @@
     },
     {
       "name": "Vite Frontend",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "frontend"],
-      "port": 5000,
-      "autoPort": true
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--host", "0.0.0.0", "--port", "5199", "--strictPort"],
+      "cwd": "frontend",
+      "port": 5199
     }
   ]
 }

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 
 type HookResult<T, P = void> = {
@@ -14,20 +14,23 @@ function useApiCall<T, P = void>(
   const [data, setData] = useState<T | undefined>(undefined)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const seqRef = useRef(0)
 
   const trigger = useCallback(async (params?: P) => {
+    // Guard against out-of-order responses: only the latest call may set state
+    const callId = ++seqRef.current
     setLoading(true)
     setError(null)
     try {
       const result = await fn(params as P)
-      setData(result)
+      if (callId === seqRef.current) setData(result)
       return result
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      setError(msg)
+      if (callId === seqRef.current) setError(msg)
       return undefined
     } finally {
-      setLoading(false)
+      if (callId === seqRef.current) setLoading(false)
     }
   }, [fn])
 
@@ -85,23 +88,6 @@ export function useCreateOpponentGoalEvent() {
       .insert({
         game_id: params.gameId,
         event_type: 'Opponent Goal',
-        event_timestamp: new Date().toISOString(),
-      })
-      .select()
-    if (error) throw new Error(error.message)
-    return data?.[0]
-  }, [])
-  return useApiCall(fn)
-}
-
-export function useCreateTurnoverEvent() {
-  const fn = useCallback(async (params: { gameId: number; playerId: number }) => {
-    const { data, error } = await supabase
-      .from('game_events')
-      .insert({
-        game_id: params.gameId,
-        player_id: params.playerId,
-        event_type: 'Turnover',
         event_timestamp: new Date().toISOString(),
       })
       .select()
