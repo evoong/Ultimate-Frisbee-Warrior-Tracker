@@ -6,8 +6,8 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
-import { createGateway, createRequireAllowedUser } from "../gateway/index";
-import { nodeAdapter } from "../gateway/node-adapter";
+import { createGateway, createRequireAllowedUser } from "../gateway/index.js";
+import { nodeAdapter } from "../gateway/node-adapter.js";
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;

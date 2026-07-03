@@ -1,5 +1,5 @@
-import { clearSessionCookies, cookieNames, parseCookies, sessionCookies } from './cookies'
-import { refreshSession, resolveAccessToken, type GatewayConfig } from './auth-handlers'
+import { clearSessionCookies, cookieNames, parseCookies, sessionCookies } from './cookies.js'
+import { refreshSession, resolveAccessToken, type GatewayConfig } from './auth-handlers.js'
 
 // Headers forwarded from the client to Supabase. Everything else — cookies,
 // client-supplied apikey/authorization — is dropped; the gateway injects its

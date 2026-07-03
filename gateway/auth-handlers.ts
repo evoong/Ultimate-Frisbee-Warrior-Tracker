@@ -5,8 +5,8 @@ import {
   parseCookies,
   pkceCookie,
   sessionCookies,
-} from './cookies'
-import { isExpired } from './jwt'
+} from './cookies.js'
+import { isExpired } from './jwt.js'
 
 // Server-side minimum password length. Mirrors the client's PASSWORD_MIN_LENGTH
 // so we enforce the same rule regardless of Supabase's dashboard setting
