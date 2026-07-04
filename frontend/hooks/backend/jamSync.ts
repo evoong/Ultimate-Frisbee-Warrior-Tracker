@@ -37,6 +37,7 @@ function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P
 export type JamSyncConflict = {
   id: number
   jam_uid: string
+  organizer: string
   opponent: string
   event_date: string
   event_time: string

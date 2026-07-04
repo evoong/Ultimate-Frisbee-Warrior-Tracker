@@ -350,8 +350,9 @@ app.delete("/api/chat/history", requireAuth, async (req, res) => {
   }
 });
 
-// ── JAM Sports calendar sync ─────────────────────────────────────────────────
-// Imports games from a .ics feed (see gateway/jamSync.ts). Runs automatically:
+// ── Calendar sync ─────────────────────────────────────────────────────────────
+// Imports games from every enabled calendar_sources row (see gateway/jamSync.ts
+// and supabase-migrations/005_calendar_sources.sql). Runs automatically:
 // - Vercel: daily at 6am Eastern via the "crons" entry in vercel.json hitting
 //   GET /api/cron/sync-jam, authenticated by Vercel's own CRON_SECRET
 //   convention (a plain env var Vercel attaches as a bearer token; not
@@ -361,13 +362,10 @@ app.delete("/api/chat/history", requireAuth, async (req, res) => {
 //   calls runJamSync() in-process and never goes over this HTTP surface.
 // Also exposed as a manual "sync now" trigger for allowlisted users.
 
-const DEFAULT_JAM_CALENDAR_URL = "https://jamsports.com/api/calendar/12273c1d-6683-4d15-8c09-1934475c1e0b.ics";
-
 function jamSyncConfig() {
   return {
     supabaseUrl: process.env.SUPABASE_URL || "",
     supabaseSecretKey: process.env.SUPABASE_SECRET_KEY || "",
-    calendarUrl: process.env.JAM_CALENDAR_URL || DEFAULT_JAM_CALENDAR_URL,
   };
 }
 

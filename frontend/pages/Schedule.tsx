@@ -941,14 +941,15 @@ export default function Schedule() {
         placeholder="All Seasons"
       />
 
-      {/* JAM Sports calendar sync: anything the automatic daily sync
-          couldn't confidently auto-create lands here for manual review. */}
+      {/* Calendar sync: anything the automatic daily sync from a
+          calendar_sources feed couldn't confidently auto-create lands here
+          for manual review. */}
       {allowed && jamConflicts && jamConflicts.length > 0 && (
         <Card className="bg-card border-amber-500/30">
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-amber-500" />
-              JAM Sync — {jamConflicts.length} {jamConflicts.length === 1 ? 'game needs' : 'games need'} review
+              Calendar Sync — {jamConflicts.length} {jamConflicts.length === 1 ? 'game needs' : 'games need'} review
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -958,7 +959,7 @@ export default function Schedule() {
                 <div key={conflict.id} className="border border-border rounded-lg p-3 space-y-2">
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="font-medium text-foreground text-sm truncate">vs {conflict.opponent}</div>
+                      <div className="font-medium text-foreground text-sm truncate">{conflict.organizer} · vs {conflict.opponent}</div>
                       <div className="text-xs text-muted-foreground">
                         {new Date(conflict.event_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} at {conflict.event_time.slice(0, 5)}
                       </div>
@@ -970,7 +971,7 @@ export default function Schedule() {
                       <Select value={jamCreateSeasonChoice[conflict.id] ?? ''} onValueChange={v => setJamCreateSeasonChoice(prev => ({ ...prev, [conflict.id]: v }))}>
                         <SelectTrigger className="h-8 text-xs w-40 bg-background border-border"><SelectValue placeholder="Choose season" /></SelectTrigger>
                         <SelectContent>
-                          {(seasons as Season[] | undefined)?.map(s => <SelectItem key={s.id} value={String(s.id)}>{seasonLabel(s)}</SelectItem>)}
+                          {(seasons as Season[] | undefined)?.filter(s => s.organizer === conflict.organizer).map(s => <SelectItem key={s.id} value={String(s.id)}>{seasonLabel(s)}</SelectItem>)}
                         </SelectContent>
                       </Select>
                     )}

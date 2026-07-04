@@ -14,10 +14,7 @@ interface Env {
   // for these now. Only needed as a fallback/override.
   GEMINI_API_KEY?: string;
   GEMINI_MODEL?: string;
-  JAM_CALENDAR_URL?: string;
 }
-
-const DEFAULT_JAM_CALENDAR_URL = 'https://jamsports.com/api/calendar/12273c1d-6683-4d15-8c09-1934475c1e0b.ics'
 
 // Minimal local aliases so this file doesn't need @cloudflare/workers-types
 // as a dependency just for the scheduled() export's parameter types.
@@ -94,7 +91,6 @@ export default {
           const result = await runJamSync({
             supabaseUrl: env.SUPABASE_URL,
             supabaseSecretKey: env.SUPABASE_SECRET_KEY,
-            calendarUrl: env.JAM_CALENDAR_URL || DEFAULT_JAM_CALENDAR_URL,
           });
           return new Response(JSON.stringify(result), { status: 200, headers: { "Content-Type": "application/json" } });
         } catch (err) {
@@ -146,7 +142,6 @@ export default {
       runJamSync({
         supabaseUrl: env.SUPABASE_URL,
         supabaseSecretKey: env.SUPABASE_SECRET_KEY,
-        calendarUrl: env.JAM_CALENDAR_URL || DEFAULT_JAM_CALENDAR_URL,
       })
         .then(result => console.log("JAM sync:", JSON.stringify(result)))
         .catch(err => console.error("JAM sync failed:", err instanceof Error ? err.message : String(err)))
