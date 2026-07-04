@@ -49,7 +49,17 @@ export default function StrategyBoard({ players, positions, allowed, onPlace, on
 }) {
   const isDesktop = useMediaQuery('(min-width: 1024px)')
   const fieldRef = useRef<HTMLDivElement>(null)
+  // The ref is the authoritative drag state, updated synchronously inside the
+  // event handlers; the state is only a render mirror for the ghost and the
+  // source dimming. React commits pointermove updates at continuous (deferred)
+  // priority, so a flick whose pointermove and pointerup land in the same
+  // frame would read a stale moved=false from state and skip the drop.
+  const dragRef = useRef<DragState | null>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
+  const updateDrag = (d: DragState | null) => {
+    dragRef.current = d
+    setDrag(d)
+  }
 
   const placed = players.filter(p => positions.has(p.id))
   const bench = players.filter(p => !positions.has(p.id))
@@ -59,23 +69,22 @@ export default function StrategyBoard({ players, positions, allowed, onPlace, on
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (!allowed) return
       e.currentTarget.setPointerCapture(e.pointerId)
-      setDrag({ playerId, origin, startX: e.clientX, startY: e.clientY, clientX: e.clientX, clientY: e.clientY, moved: false })
+      updateDrag({ playerId, origin, startX: e.clientX, startY: e.clientY, clientX: e.clientX, clientY: e.clientY, moved: false })
     }
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    setDrag(d => {
-      if (!d) return d
-      const moved = d.moved
-        || Math.abs(e.clientX - d.startX) > DRAG_THRESHOLD_PX
-        || Math.abs(e.clientY - d.startY) > DRAG_THRESHOLD_PX
-      if (!moved) return d
-      return { ...d, clientX: e.clientX, clientY: e.clientY, moved: true }
-    })
+    const d = dragRef.current
+    if (!d) return
+    const moved = d.moved
+      || Math.abs(e.clientX - d.startX) > DRAG_THRESHOLD_PX
+      || Math.abs(e.clientY - d.startY) > DRAG_THRESHOLD_PX
+    if (!moved) return
+    updateDrag({ ...d, clientX: e.clientX, clientY: e.clientY, moved: true })
   }
 
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    const d = drag
-    setDrag(null)
+    const d = dragRef.current
+    updateDrag(null)
     if (!d || !d.moved) return
     const rect = fieldRef.current?.getBoundingClientRect()
     if (!rect) return
@@ -92,7 +101,7 @@ export default function StrategyBoard({ players, positions, allowed, onPlace, on
     }
   }
 
-  const handlePointerCancel = () => setDrag(null)
+  const handlePointerCancel = () => updateDrag(null)
 
   const dragHandlers = allowed
     ? {
@@ -104,17 +113,23 @@ export default function StrategyBoard({ players, positions, allowed, onPlace, on
 
   // End zone strips along the long axis: left/right in landscape,
   // top/bottom in portrait (canonical left end zone renders at the top).
+  // Each carries a small centered label so the zones read as end zones.
   const endZonePct = `${END_ZONE_FRACTION * 100}%`
-  const endZoneClass = 'absolute bg-emerald-600/25 dark:bg-emerald-500/15'
+  const endZoneClass = 'absolute bg-emerald-600/25 dark:bg-emerald-500/15 flex items-center justify-center pointer-events-none'
+  const endZoneLabel = (
+    <span className="text-[9px] font-semibold uppercase tracking-widest text-emerald-800/50 dark:text-emerald-300/40 select-none">
+      End zone
+    </span>
+  )
   const endZones = isDesktop ? (
     <>
-      <div className={`${endZoneClass} inset-y-0 left-0 border-r-2 border-emerald-700/40 dark:border-emerald-400/30`} style={{ width: endZonePct }} />
-      <div className={`${endZoneClass} inset-y-0 right-0 border-l-2 border-emerald-700/40 dark:border-emerald-400/30`} style={{ width: endZonePct }} />
+      <div className={`${endZoneClass} inset-y-0 left-0 border-r-2 border-emerald-700/40 dark:border-emerald-400/30`} style={{ width: endZonePct }}>{endZoneLabel}</div>
+      <div className={`${endZoneClass} inset-y-0 right-0 border-l-2 border-emerald-700/40 dark:border-emerald-400/30`} style={{ width: endZonePct }}>{endZoneLabel}</div>
     </>
   ) : (
     <>
-      <div className={`${endZoneClass} inset-x-0 top-0 border-b-2 border-emerald-700/40 dark:border-emerald-400/30`} style={{ height: endZonePct }} />
-      <div className={`${endZoneClass} inset-x-0 bottom-0 border-t-2 border-emerald-700/40 dark:border-emerald-400/30`} style={{ height: endZonePct }} />
+      <div className={`${endZoneClass} inset-x-0 top-0 border-b-2 border-emerald-700/40 dark:border-emerald-400/30`} style={{ height: endZonePct }}>{endZoneLabel}</div>
+      <div className={`${endZoneClass} inset-x-0 bottom-0 border-t-2 border-emerald-700/40 dark:border-emerald-400/30`} style={{ height: endZonePct }}>{endZoneLabel}</div>
     </>
   )
 
