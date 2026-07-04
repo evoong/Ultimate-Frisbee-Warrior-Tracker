@@ -728,6 +728,81 @@ export default function Schedule() {
   const gamesLoading = gamesData === undefined
   const filteredGames = gamesData ?? []
 
+  // Next upcoming game first, then the rest of the future schedule
+  // chronologically; a separate "Played" section below runs most-recent-first
+  // so the last result is always the first thing you see in that group.
+  // A game counts as "past" once its actual start time has passed, not just
+  // its calendar date, so a game happening later today still shows as upcoming.
+  const gameStartsAt = (g: Game) => new Date(`${g.game_date}T${g.game_time || '00:00:00'}`)
+  const now = new Date()
+  const upcomingGames = filteredGames.filter(g => gameStartsAt(g) >= now).sort((a, b) => gameStartsAt(a).getTime() - gameStartsAt(b).getTime())
+  const pastGames = filteredGames.filter(g => gameStartsAt(g) < now).sort((a, b) => gameStartsAt(b).getTime() - gameStartsAt(a).getTime())
+  const sortedGames = [...upcomingGames, ...pastGames]
+
+  const formatRelativeDay = (dateStr: string) => {
+    const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate())
+    const days = Math.round((startOfDay(new Date(dateStr + 'T00:00:00')).getTime() - startOfDay(now).getTime()) / 86_400_000)
+    if (days === 0) return 'Today'
+    if (days === 1) return 'Tomorrow'
+    if (days > 1 && days <= 6) return `In ${days} days`
+    return null
+  }
+
+  const renderGameCard = (game: Game, index: number, isNext: boolean) => {
+    const displayResult = game.outcome_override ?? game.result
+    const relativeDay = isNext ? formatRelativeDay(game.game_date) : null
+    return (
+      <FadeIn key={game.id} delay={index * 40}>
+        <Card
+          onClick={() => handleSelectGame(game)}
+          className={`bg-card text-card-foreground cursor-pointer hover:bg-accent/50 active:scale-[0.99] transition-all ${isNext ? 'border-primary/50 ring-1 ring-primary/20' : 'border-border'}`}
+        >
+          <CardHeader className="pb-3">
+            <div className="flex items-start justify-between">
+              <div className="flex-1">
+                {isNext && (
+                  <div className="text-xs font-semibold uppercase tracking-wide text-primary mb-1">
+                    Next Up{relativeDay ? ` · ${relativeDay}` : ''}
+                  </div>
+                )}
+                <CardTitle className="text-lg font-bold text-foreground">vs {game.opponent}</CardTitle>
+                <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
+                  <Calendar className="w-4 h-4" />
+                  <span>{formatDate(game.game_date)}</span>
+                  <span>•</span>
+                  <span>{formatTime(game.game_time)}</span>
+                </div>
+                {game.season_id && <div className="text-xs text-muted-foreground mt-0.5">{getSeasonLabel(game.season_id)}</div>}
+              </div>
+              <div className="flex items-center gap-2">
+                {game.game_type === 'Playoff' && <Trophy className="w-5 h-5 text-yellow-500" />}
+                <div className={`px-2 py-1 rounded text-xs font-semibold ${game.game_type === 'Playoff' ? 'bg-yellow-100 text-yellow-900 dark:bg-yellow-950 dark:text-yellow-100' : 'bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-100'}`}>
+                  {game.game_type}
+                </div>
+                <ChevronRight className="w-4 h-4 text-muted-foreground" />
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between">
+              <div className="text-3xl font-bold">
+                <span className="text-primary">{game.our_score}</span>
+                <span className="text-muted-foreground mx-2">-</span>
+                <span className="text-muted-foreground">{game.their_score}</span>
+              </div>
+              {displayResult && (
+                <div className={`text-sm font-medium ${displayResult.startsWith('Win') || displayResult === 'Default Win' ? 'text-green-600 dark:text-green-400' : displayResult === 'Tie' ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-600 dark:text-red-400'}`}>
+                  {displayResult}
+                  {game.outcome_override && <span className="text-xs opacity-60 ml-1">*</span>}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </FadeIn>
+    )
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -961,60 +1036,29 @@ export default function Schedule() {
                 </CardContent>
               </Card>
             ))
-          ) : filteredGames.length === 0 ? (
+          ) : sortedGames.length === 0 ? (
             <Card className="bg-card text-card-foreground border-border">
               <CardContent className="py-12 text-center">
                 <Calendar className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
                 <p className="text-muted-foreground">No games found</p>
               </CardContent>
             </Card>
-          ) : filteredGames.map((game, index) => {
-            const displayResult = game.outcome_override ?? game.result
-            return (
-              <FadeIn key={game.id} delay={index * 40}>
-              <Card onClick={() => handleSelectGame(game)}
-                className="bg-card text-card-foreground border-border cursor-pointer hover:bg-accent/50 active:scale-[0.99] transition-all"
-              >
-                <CardHeader className="pb-3">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <CardTitle className="text-lg font-bold text-foreground">vs {game.opponent}</CardTitle>
-                      <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
-                        <Calendar className="w-4 h-4" />
-                        <span>{formatDate(game.game_date)}</span>
-                        <span>•</span>
-                        <span>{formatTime(game.game_time)}</span>
-                      </div>
-                      {game.season_id && <div className="text-xs text-muted-foreground mt-0.5">{getSeasonLabel(game.season_id)}</div>}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {game.game_type === 'Playoff' && <Trophy className="w-5 h-5 text-yellow-500" />}
-                      <div className={`px-2 py-1 rounded text-xs font-semibold ${game.game_type === 'Playoff' ? 'bg-yellow-100 text-yellow-900 dark:bg-yellow-950 dark:text-yellow-100' : 'bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-100'}`}>
-                        {game.game_type}
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-muted-foreground" />
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center justify-between">
-                    <div className="text-3xl font-bold">
-                      <span className="text-primary">{game.our_score}</span>
-                      <span className="text-muted-foreground mx-2">-</span>
-                      <span className="text-muted-foreground">{game.their_score}</span>
-                    </div>
-                    {displayResult && (
-                      <div className={`text-sm font-medium ${displayResult.startsWith('Win') || displayResult === 'Default Win' ? 'text-green-600 dark:text-green-400' : displayResult === 'Tie' ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-600 dark:text-red-400'}`}>
-                        {displayResult}
-                        {game.outcome_override && <span className="text-xs opacity-60 ml-1">*</span>}
-                      </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-              </FadeIn>
-            )
-          })}
+          ) : (
+            <>
+              {upcomingGames.length > 0 && (
+                <>
+                  <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground px-1">Upcoming</h2>
+                  {upcomingGames.map((game, index) => renderGameCard(game, index, index === 0))}
+                </>
+              )}
+              {pastGames.length > 0 && (
+                <>
+                  <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground px-1 pt-2">Played</h2>
+                  {pastGames.map((game, index) => renderGameCard(game, upcomingGames.length + index, false))}
+                </>
+              )}
+            </>
+          )}
         </div>
       )}
 
