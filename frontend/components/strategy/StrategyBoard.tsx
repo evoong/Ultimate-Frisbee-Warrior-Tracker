@@ -484,7 +484,7 @@ export default function StrategyBoard({
               aria-label="Delete arrow"
               onPointerDown={e => e.stopPropagation()}
               onClick={() => onDeleteArrow(selectedArrow.id)}
-              className="absolute z-20 -translate-x-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center shadow-md"
+              className="absolute z-30 -translate-x-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center shadow-md"
               style={{ left: `${left}%`, top: `${top}%`, marginTop: '-1.5rem' }}
             >
               <X className="w-3.5 h-3.5" />
