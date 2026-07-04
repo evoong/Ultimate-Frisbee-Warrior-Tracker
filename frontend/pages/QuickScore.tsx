@@ -188,6 +188,25 @@ export default function QuickScore() {
     ...((players as { id: number; display_name: string; is_sub: boolean | null }[] | undefined) ?? []).map(p => ({ id: p.id.toString(), label: p.display_name, isSub: !!p.is_sub }))
   ]
 
+  // Scorer/assister quick-select should only offer players marked present for
+  // this game (matches the Attendance section's own default: no row yet means
+  // attending). The Edit Event dialog still uses the full roster so past
+  // events referencing a player who's since been marked absent stay editable.
+  const attendingPlayerIds = new Set(
+    ((players as { id: number }[] | undefined) ?? [])
+      .filter(p => {
+        const row = (attendingIds as { player_id: number; in: boolean }[] | undefined)?.find(r => r.player_id === p.id)
+        return row?.in ?? true
+      })
+      .map(p => p.id)
+  )
+  const attendingPlayerOptions = [
+    { id: '__opponent__', label: 'Opponent' },
+    ...((players as { id: number; display_name: string; is_sub: boolean | null }[] | undefined) ?? [])
+      .filter(p => attendingPlayerIds.has(p.id))
+      .map(p => ({ id: p.id.toString(), label: p.display_name, isSub: !!p.is_sub }))
+  ]
+
   const otherPlayerOptions = ((otherPlayers as { id: number; display_name: string }[] | undefined) ?? [])
     .map(p => ({ id: p.id.toString(), label: p.display_name }))
 
@@ -233,6 +252,20 @@ export default function QuickScore() {
     await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGameId })
     await refreshRoster()
     setDefaultAssisterId(playerId)
+  }
+
+  const handleAddPlayerToAttendance = async (name: string) => {
+    if (!selectedGameId) return
+    await createPlayerForGame({ display_name: name, gameId: selectedGameId })
+    await refreshRoster()
+    fetchAttendance({ gameId: selectedGameId })
+  }
+
+  const handleAddExistingPlayerToAttendance = async (playerId: string) => {
+    if (!selectedGameId) return
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGameId })
+    await refreshRoster()
+    fetchAttendance({ gameId: selectedGameId })
   }
 
   const getSeasonLabel = (seasonId: number | null) => {
@@ -343,9 +376,9 @@ export default function QuickScore() {
           <FadeIn>
           <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
             <CardContent className="py-4 px-5">
-              <div className="grid grid-cols-[1fr_auto_1fr] items-center">
+              <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
                 <div className="min-w-0">
-                  <div className="text-base font-bold text-foreground truncate">vs {selectedGame.opponent}</div>
+                  <div className="text-base font-bold text-foreground truncate" title={`vs ${selectedGame.opponent}`}>vs {selectedGame.opponent}</div>
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
                     <Calendar className="w-3 h-3 flex-shrink-0" />
                     <span>{new Date((selectedGame as { game_date: string }).game_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
@@ -355,19 +388,17 @@ export default function QuickScore() {
                   )}
                 </div>
 
-                <div className="flex items-center gap-3 px-4">
+                <div className="flex items-center gap-2 shrink-0">
                   <div className="text-center">
-                    <div className="text-7xl font-bold text-primary tabular-nums leading-none">{ourGoals}</div>
+                    <div className="text-8xl sm:text-[10rem] font-bold text-primary tabular-nums leading-none">{ourGoals}</div>
                     <div className="text-xs text-muted-foreground mt-1">Us</div>
                   </div>
-                  <div className="text-3xl font-light text-muted-foreground">-</div>
+                  <div className="text-5xl sm:text-6xl font-light text-muted-foreground">-</div>
                   <div className="text-center">
-                    <div className="text-7xl font-bold text-muted-foreground tabular-nums leading-none">{theirGoals}</div>
+                    <div className="text-8xl sm:text-[10rem] font-bold text-muted-foreground tabular-nums leading-none">{theirGoals}</div>
                     <div className="text-xs text-muted-foreground mt-1">Them</div>
                   </div>
                 </div>
-
-                <div />
               </div>
             </CardContent>
           </Card>
@@ -391,6 +422,21 @@ export default function QuickScore() {
               </button>
               {showAttendance && (
                 <CardContent className="pt-0 pb-3 px-5 space-y-2">
+                  {allowed && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground shrink-0">Add player</span>
+                      <PlayerCombobox
+                        players={[]}
+                        otherPlayers={otherPlayerOptions}
+                        value="__none__"
+                        onValueChange={() => {}}
+                        onAddPlayer={handleAddPlayerToAttendance}
+                        onAddExistingPlayer={handleAddExistingPlayerToAttendance}
+                        placeholder="Add player..."
+                        className="flex-1 h-8 text-sm bg-background border-border"
+                      />
+                    </div>
+                  )}
                   {allowed && (
                     <div className="flex justify-end">
                       <button
@@ -455,7 +501,7 @@ export default function QuickScore() {
                 <div className="grid grid-cols-[60px_1fr] items-center gap-2">
                   <span className="text-xs font-medium text-muted-foreground text-right">{scorerLabel}</span>
                   <PlayerCombobox
-                    players={playerOptions}
+                    players={attendingPlayerOptions}
                     otherPlayers={otherPlayerOptions}
                     value={defaultScorerId || '__none__'}
                     onValueChange={setDefaultScorerId}
@@ -486,7 +532,7 @@ export default function QuickScore() {
                 <div className="grid grid-cols-[60px_1fr] items-center gap-2">
                   <span className="text-xs font-medium text-muted-foreground text-right">{assisterLabel}</span>
                   <PlayerCombobox
-                    players={playerOptions}
+                    players={attendingPlayerOptions}
                     otherPlayers={otherPlayerOptions}
                     value={defaultAssisterId || '__none__'}
                     onValueChange={setDefaultAssisterId}
