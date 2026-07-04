@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Card, CardContent } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
 import { Input } from '../lib/shadcn/input'
-import { Send, Bot, User, Loader2 } from 'lucide-react'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
+import { Send, Bot, User, Loader2, Trash2 } from 'lucide-react'
 import FadeIn from '../components/FadeIn'
 import { useAuth } from '../contexts/AuthContext'
 
@@ -49,6 +50,8 @@ export default function Chat() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [historyLoaded, setHistoryLoaded] = useState(false)
+  const [confirmClear, setConfirmClear] = useState(false)
+  const [clearing, setClearing] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const sessionId = useRef(getSessionId())
   const { allowed } = useAuth()
@@ -93,9 +96,56 @@ export default function Chat() {
     }
   }
 
+  const clearHistory = async () => {
+    setClearing(true)
+    try {
+      await fetch(`/api/chat/history?session_id=${sessionId.current}`, { method: 'DELETE' })
+      setMessages([])
+    } finally {
+      setClearing(false)
+      setConfirmClear(false)
+    }
+  }
+
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)]">
-      <h1 className="text-2xl font-bold text-foreground mb-3">Team Assistant</h1>
+      <div className="flex items-center justify-between mb-3">
+        <h1 className="text-2xl font-bold text-foreground">Team Assistant</h1>
+        {allowed && messages.length > 0 && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setConfirmClear(true)}
+            className="text-muted-foreground hover:text-destructive"
+          >
+            <Trash2 className="w-4 h-4 mr-1.5" />
+            Clear chat
+          </Button>
+        )}
+      </div>
+
+      <Dialog open={confirmClear} onOpenChange={open => !open && setConfirmClear(false)}>
+        <DialogContent className="bg-card text-card-foreground">
+          <DialogHeader>
+            <DialogTitle>Clear chat history</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This will permanently delete this chat's message history. This cannot be undone.
+          </p>
+          <div className="flex gap-3 mt-2">
+            <Button variant="outline" onClick={() => setConfirmClear(false)} className="flex-1" disabled={clearing}>
+              Cancel
+            </Button>
+            <Button
+              onClick={clearHistory}
+              disabled={clearing}
+              className="flex-1 bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {clearing ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Clear chat'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Message list */}
       <Card className="flex-1 overflow-hidden bg-card border-border flex flex-col">

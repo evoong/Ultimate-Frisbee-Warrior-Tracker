@@ -80,7 +80,8 @@ export default function Roster() {
 
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
-  const [seasonFilter, setSeasonFilter] = useState<string>('all')
+  // Empty array means "All Seasons"
+  const [seasonFilters, setSeasonFilters] = useState<string[]>([])
   const [rosterSeasonIds, setRosterSeasonIds] = useState<number[]>([])
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
@@ -115,9 +116,15 @@ export default function Roster() {
     fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined })
   }, [rosterSeasonIds])
 
+  useEffect(() => {
+    // Default the stats filter to every active season whenever a player's
+    // seasons load (on select, or after editing their season list).
+    const ps = (playerSeasons as PlayerSeason[] | undefined) ?? []
+    setSeasonFilters(ps.filter(s => s.active).map(s => s.id.toString()))
+  }, [playerSeasons])
+
   const handleSelectPlayer = (player: Player) => {
     setSelectedPlayer(player)
-    setSeasonFilter('all')
     setUploadError(null)
     setEditing(false)
     setEditingSeasons(false)
@@ -225,7 +232,7 @@ export default function Roster() {
   const allSeasonsArr = (allSeasons as Season[] | undefined) ?? []
 
   const filteredStats = ((gameStats as GameStat[] | undefined) ?? []).filter(g =>
-    seasonFilter === 'all' || g.season_id?.toString() === seasonFilter
+    seasonFilters.includes(g.season_id?.toString() ?? '')
   )
 
   // Only count games the player attended — matches the per-game rows, which show '—' when out
@@ -360,14 +367,33 @@ export default function Roster() {
           <CardHeader>
             <CardTitle className="text-base flex items-center justify-between">
               <span>Seasons</span>
-              {allowed && (!editingSeasons ? (
-                <button onClick={handleStartEditSeasons} className="text-xs text-primary hover:underline">Edit</button>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <button onClick={handleSaveSeasons} className="text-xs text-green-600 hover:text-green-700 font-medium">Save</button>
-                  <button onClick={() => setEditingSeasons(false)} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>
-                </div>
-              ))}
+              <div className="flex items-center gap-3">
+                {!editingSeasons && pSeasons.filter(s => s.active).length > 0 && (
+                  <>
+                    <button
+                      className="text-xs text-muted-foreground hover:text-foreground underline"
+                      onClick={() => setSeasonFilters(pSeasons.filter(s => s.active).map(s => s.id.toString()))}
+                    >
+                      Select all
+                    </button>
+                    <button
+                      className="text-xs text-muted-foreground hover:text-foreground underline"
+                      onClick={() => setSeasonFilters([])}
+                    >
+                      Unselect all
+                    </button>
+                    {allowed && <div className="w-px h-3.5 bg-border" />}
+                  </>
+                )}
+                {allowed && (!editingSeasons ? (
+                  <button onClick={handleStartEditSeasons} className="text-xs text-primary hover:underline">Edit</button>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <button onClick={handleSaveSeasons} className="text-xs text-green-600 hover:text-green-700 font-medium">Save</button>
+                    <button onClick={() => setEditingSeasons(false)} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+                  </div>
+                ))}
+              </div>
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -388,33 +414,32 @@ export default function Roster() {
                 ))}
               </div>
             ) : (
-              <div className="flex flex-wrap gap-2">
-                {pSeasons.filter(s => s.active).length > 0
-                  ? pSeasons.filter(s => s.active).map(s => (
-                    <Badge key={s.id} variant="secondary" className="text-xs">{seasonLabel(s)}</Badge>
-                  ))
-                  : <span className="text-sm text-muted-foreground">No seasons assigned</span>
-                }
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-2">
+                  {pSeasons.filter(s => s.active).length > 0
+                    ? pSeasons.filter(s => s.active).map(s => (
+                      <Badge
+                        key={s.id}
+                        variant={seasonFilters.includes(s.id.toString()) ? 'default' : 'secondary'}
+                        className="text-xs cursor-pointer"
+                        onClick={() => setSeasonFilters(prev =>
+                          prev.includes(s.id.toString()) ? prev.filter(id => id !== s.id.toString()) : [...prev, s.id.toString()]
+                        )}
+                      >
+                        {seasonLabel(s)}
+                      </Badge>
+                    ))
+                    : <span className="text-sm text-muted-foreground">No seasons assigned</span>
+                  }
+                </div>
               </div>
             )}
           </CardContent>
         </Card>
 
-        {/* Stats filter */}
-        <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">Filter by Season</Label>
-          <Select value={seasonFilter} onValueChange={setSeasonFilter}>
-            <SelectTrigger className="bg-card border-border text-foreground"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Seasons</SelectItem>
-              {allSeasonsArr.map(s => <SelectItem key={s.id} value={String(s.id)}>{seasonLabel(s)}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-
         {/* Summary Cards */}
         <div className="grid grid-cols-4 gap-2">
-          <Card className="bg-card border-border">
+          <Card className="bg-muted/40 border-border">
             <CardContent className="pt-4 pb-3 text-center">
               <div className="text-2xl font-bold text-foreground">{summary.games}</div>
               <div className="text-xs text-muted-foreground mt-0.5">Games</div>

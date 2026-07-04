@@ -5,17 +5,19 @@ import { createRequireAllowedUser, type GatewayConfig } from './index.js'
 // regardless of caller identity, plus a Gemini key. Team-context/log queries
 // use raw fetch (portable), but the Gemini call itself uses the official SDK
 // — same as server/index.ts — via its browser/fetch build, so behavior matches
-// Vercel exactly. The SDK itself does not retry — gemma-4-31b-it intermittently
-// returns a transient 500 "Internal error encountered" (confirmed reproducible
-// against the raw API directly, independent of SDK vs fetch), so this module
-// retries that specific case itself.
+// Vercel exactly. The SDK itself does not retry transient errors, so this
+// module retries them itself (see isTransientGeminiError).
 export interface ChatConfig extends GatewayConfig {
   supabaseSecretKey: string
   geminiApiKey: string
+  geminiModel?: string
   isEmailAllowed: (email: string) => Promise<boolean>
 }
 
-const GEMINI_MODEL = 'gemma-4-31b-it'
+// Switched from gemma-4-31b-it: side-by-side timing showed gemini-flash-lite
+// averaging ~0.6s per reply vs gemma's ~20s+ (and occasional transient 500s).
+// Overridable via the GEMINI_MODEL env var (see worker.ts).
+const DEFAULT_GEMINI_MODEL = 'gemini-flash-lite-latest'
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -167,7 +169,11 @@ async function getTeamContext(config: ChatConfig): Promise<string> {
     })
     .filter((line: string | null): line is string => line !== null)
 
+  const currentDate = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+
   return `You are a helpful assistant for the Ultimate Frisbee Warriors team tracking app. You have access to the following live team data:
+
+CURRENT DATE: ${currentDate} — use this to resolve relative date questions (today, this week, last game, upcoming, how long ago, etc).
 
 SEASONS:
 ${(seasons ?? []).map((s: any) => `- ${seasonNames.get(s.id)}`).join('\n')}
@@ -195,7 +201,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-async function callGemini(apiKey: string, systemInstruction: string, history: { role: string; content: string }[], message: string): Promise<string> {
+async function callGemini(apiKey: string, model: string, systemInstruction: string, history: { role: string; content: string }[], message: string): Promise<string> {
   const genai = new GoogleGenAI({ apiKey })
 
   const chatHistory = history.map(h => ({
@@ -203,15 +209,14 @@ async function callGemini(apiKey: string, systemInstruction: string, history: { 
     parts: [{ text: h.content }],
   }))
 
-  // Verified against live production: gemma-4-31b-it sometimes fails its
-  // transient 500 several times in a row within under a second, so a short
-  // 3-attempt retry isn't always enough to ride it out. 5 attempts with
-  // longer backoff closes most of the remaining gap.
+  // Retry transient Gemini errors (was tuned against gemma-4-31b-it, which
+  // could fail its transient 500 several times in a row; kept as a general
+  // safety net now that the model has switched to gemini-flash-lite).
   const MAX_ATTEMPTS = 5
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       const chat = genai.chats.create({
-        model: GEMINI_MODEL,
+        model,
         history: chatHistory,
         config: { systemInstruction },
       })
@@ -235,7 +240,7 @@ export async function handleChatRequest(config: ChatConfig, request: Request): P
     if (!message || !session_id) return json({ error: 'message and session_id required' }, 400)
 
     const systemContext = await getTeamContext(config)
-    const reply = await callGemini(config.geminiApiKey, systemContext, history, message)
+    const reply = await callGemini(config.geminiApiKey, config.geminiModel || DEFAULT_GEMINI_MODEL, systemContext, history, message)
 
     await insertChatLogs(config, [
       { session_id, role: 'user', content: message },
@@ -262,6 +267,30 @@ export async function handleChatHistoryRequest(config: ChatConfig, request: Requ
       `/chat_logs?select=role,content,created_at&session_id=eq.${encodeURIComponent(sessionId)}&order=created_at.asc`
     )
     return json(rows ?? [])
+  } catch (err: unknown) {
+    return json({ error: err instanceof Error ? err.message : String(err) }, 500)
+  }
+}
+
+export async function handleChatHistoryDeleteRequest(config: ChatConfig, request: Request): Promise<Response> {
+  const user = await createRequireAllowedUser(config, config.isEmailAllowed)(request)
+  if (!user) return json({ error: 'not authenticated' }, 401)
+
+  try {
+    const url = new URL(request.url)
+    const sessionId = url.searchParams.get('session_id')
+    if (!sessionId) return json({ error: 'session_id required' }, 400)
+
+    const res = await fetch(`${config.supabaseUrl}/rest/v1/chat_logs?session_id=eq.${encodeURIComponent(sessionId)}`, {
+      method: 'DELETE',
+      headers: {
+        apikey: config.supabaseSecretKey,
+        Authorization: `Bearer ${config.supabaseSecretKey}`,
+      },
+    })
+    if (!res.ok) throw new Error(`Supabase delete failed (${res.status})`)
+
+    return json({ ok: true })
   } catch (err: unknown) {
     return json({ error: err instanceof Error ? err.message : String(err) }, 500)
   }

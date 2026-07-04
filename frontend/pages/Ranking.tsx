@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useGetGames } from '../hooks/backend/games'
 import { useGetPlayerStats, useGetAllSeasons, useGetSeasons } from '../hooks/backend/stats'
-import { getDefaultJamSeasonId } from '../lib/seasonUtils'
+import { getLatestJamSeasonWithPlayedGame } from '../lib/seasonUtils'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
 import { Label } from '../lib/shadcn/label'
@@ -36,11 +36,12 @@ export default function Ranking() {
   useEffect(() => {
     const s = seasonsWithGames as { id: number }[] | undefined
     const allS = allSeasons as Season[] | undefined
-    if (!s || s.length === 0 || !allS || allS.length === 0 || selectedSeasonIds.length > 0) return
-    const defaultId = getDefaultJamSeasonId(allS, s[0]!.id)
+    const g = games as Game[] | undefined
+    if (!s || s.length === 0 || !allS || allS.length === 0 || !g || selectedSeasonIds.length > 0) return
+    const defaultId = getLatestJamSeasonWithPlayedGame(allS, g, s[0]!.id)
     setFilterType('season')
     setSelectedSeasonIds([defaultId])
-  }, [seasonsWithGames, allSeasons])
+  }, [seasonsWithGames, allSeasons, games])
 
   useEffect(() => {
     if (filterType === 'all') fetchStats({})

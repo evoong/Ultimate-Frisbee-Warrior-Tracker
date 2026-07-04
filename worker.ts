@@ -1,5 +1,5 @@
 import { createGateway } from './gateway/index.js'
-import { handleChatRequest, handleChatHistoryRequest, type ChatConfig } from './gateway/chat.js'
+import { handleChatRequest, handleChatHistoryRequest, handleChatHistoryDeleteRequest, type ChatConfig } from './gateway/chat.js'
 
 interface Env {
   ASSETS: {
@@ -10,6 +10,7 @@ interface Env {
   SUPABASE_JWKS_URL: string;
   SUPABASE_SECRET_KEY: string;
   GEMINI_API_KEY: string;
+  GEMINI_MODEL?: string;
 }
 
 // Allowlist membership, cached per-isolate for a minute (mirrors the Express
@@ -54,6 +55,7 @@ export default {
           jwksUrl: env.SUPABASE_JWKS_URL,
           supabaseSecretKey: env.SUPABASE_SECRET_KEY,
           geminiApiKey: env.GEMINI_API_KEY,
+          geminiModel: env.GEMINI_MODEL,
           isEmailAllowed: createIsEmailAllowed(env),
         };
         if (url.pathname === "/api/chat" && request.method === "POST") {
@@ -61,6 +63,9 @@ export default {
         }
         if (url.pathname === "/api/chat/history" && request.method === "GET") {
           return handleChatHistoryRequest(chatConfig, request);
+        }
+        if (url.pathname === "/api/chat/history" && request.method === "DELETE") {
+          return handleChatHistoryDeleteRequest(chatConfig, request);
         }
       }
 
