@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai'
 import { createRequireAllowedUser, type GatewayConfig } from './index.js'
+import { getVaultSecret } from './secrets.js'
 
 // Chat needs privileged (service-role) Supabase access to read all team data
 // regardless of caller identity, plus a Gemini key. Team-context/log queries
@@ -9,7 +10,10 @@ import { createRequireAllowedUser, type GatewayConfig } from './index.js'
 // module retries them itself (see isTransientGeminiError).
 export interface ChatConfig extends GatewayConfig {
   supabaseSecretKey: string
-  geminiApiKey: string
+  // Optional: Supabase Vault (see secrets.ts) is the primary source for
+  // these now. These fields are only a fallback/override, e.g. for local
+  // dev before Vault is populated.
+  geminiApiKey?: string
   geminiModel?: string
   isEmailAllowed: (email: string) => Promise<boolean>
 }
@@ -240,7 +244,10 @@ export async function handleChatRequest(config: ChatConfig, request: Request): P
     if (!message || !session_id) return json({ error: 'message and session_id required' }, 400)
 
     const systemContext = await getTeamContext(config)
-    const reply = await callGemini(config.geminiApiKey, config.geminiModel || DEFAULT_GEMINI_MODEL, systemContext, history, message)
+    const geminiApiKey = await getVaultSecret(config, 'gemini_api_key', config.geminiApiKey)
+    const geminiModel = await getVaultSecret(config, 'gemini_model', config.geminiModel) ?? DEFAULT_GEMINI_MODEL
+    if (!geminiApiKey) return json({ error: 'Gemini API key not configured' }, 500)
+    const reply = await callGemini(geminiApiKey, geminiModel, systemContext, history, message)
 
     await insertChatLogs(config, [
       { session_id, role: 'user', content: message },

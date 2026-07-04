@@ -9,7 +9,9 @@ interface Env {
   SUPABASE_PUBLISHABLE_KEY: string;
   SUPABASE_JWKS_URL: string;
   SUPABASE_SECRET_KEY: string;
-  GEMINI_API_KEY: string;
+  // Optional: Supabase Vault (see gateway/secrets.ts) is the primary source
+  // for these now. Only needed as a fallback/override.
+  GEMINI_API_KEY?: string;
   GEMINI_MODEL?: string;
 }
 
