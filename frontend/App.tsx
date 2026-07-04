@@ -4,6 +4,7 @@ import Roster from './pages/Roster'
 import QuickScore from './pages/QuickScore'
 import Ranking from './pages/Ranking'
 import Stats from './pages/Stats'
+import Strategy from './pages/Strategy'
 import Chat from './pages/Chat'
 import Login from './pages/Login'
 import ResetPassword from './pages/ResetPassword'
@@ -68,6 +69,7 @@ export default function App() {
       {activeTab === 'quickscore' && <QuickScore />}
       {activeTab === 'ranking' && <Ranking />}
       {activeTab === 'stats' && <Stats />}
+      {activeTab === 'strategy' && <Strategy />}
       {activeTab === 'chat' && <Chat />}
     </>
   )
@@ -153,7 +155,7 @@ export default function App() {
       </main>
 
       <nav className="fixed bottom-0 left-0 right-0 bg-card border-t border-border">
-        <div className="max-w-2xl mx-auto grid grid-cols-6">
+        <div className="max-w-2xl mx-auto grid grid-cols-7">
           {NAV_ITEMS.map(({ key, icon: Icon, label }) => (
             <button
               key={key}

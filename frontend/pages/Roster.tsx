@@ -5,6 +5,7 @@ import { useSetAttendance } from '../hooks/backend/attendance'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
 import { useAuth } from '../contexts/AuthContext'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
+import PlayerAvatar from '../components/PlayerAvatar'
 import { Badge } from '../lib/shadcn/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
@@ -14,7 +15,7 @@ import { Label } from '../lib/shadcn/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
 import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
-import { User, Phone, Search, ChevronLeft, ChevronRight, Users, TrendingUp, Trophy, Trash2, Camera, Edit2, Save, X, Plus, Hash } from 'lucide-react'
+import { Phone, Search, ChevronLeft, ChevronRight, Users, TrendingUp, Trophy, Trash2, Camera, Edit2, Save, X, Plus, Hash } from 'lucide-react'
 
 type Player = {
   id: number; display_name: string; first_name: string | null; last_name: string | null
@@ -29,17 +30,6 @@ const GENDERS = ['Man', 'Woman']
 
 function seasonLabel(s: { name: string; year: number; organizer: string | null }) {
   return [s.organizer, s.name, s.year].filter(Boolean).join(' ')
-}
-
-function PlayerAvatar({ photoUrl, name, size = 'md' }: { photoUrl: string | null; name: string; size?: 'sm' | 'md' | 'lg' }) {
-  const sizes = { sm: 'w-10 h-10', md: 'w-12 h-12', lg: 'w-20 h-20' }
-  const iconSizes = { sm: 'w-5 h-5', md: 'w-6 h-6', lg: 'w-9 h-9' }
-  if (photoUrl) return <img src={photoUrl} alt={name} className={`${sizes[size]} rounded-full object-cover shrink-0 border-2 border-border`} />
-  return (
-    <div className={`${sizes[size]} rounded-full bg-primary/10 flex items-center justify-center shrink-0`}>
-      <User className={`${iconSizes[size]} text-primary`} />
-    </div>
-  )
 }
 
 // Placeholder card shaped like a real roster player card, shown while the
