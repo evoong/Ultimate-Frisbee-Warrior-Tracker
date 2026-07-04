@@ -101,6 +101,11 @@ async function requireAuth(req: ExpressRequest, res: ExpressResponse, next: Next
 
 const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
+// Switched from gemma-4-31b-it: side-by-side timing showed gemini-flash-lite
+// averaging ~0.6s per reply vs gemma's ~20s+ (and occasional transient 500s).
+// Overridable via the GEMINI_MODEL env var.
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
+
 async function getTeamContext() {
   const [players, seasons, games, events, seasonPlayers] = await Promise.all([
     supabase.from("players").select("id, display_name, position, gender_match, is_sub").order("display_name"),
@@ -227,7 +232,11 @@ async function getTeamContext() {
     })
     .filter((line: string | null): line is string => line !== null);
 
+  const currentDate = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+
   return `You are a helpful assistant for the Ultimate Frisbee Warriors team tracking app. You have access to the following live team data:
+
+CURRENT DATE: ${currentDate} — use this to resolve relative date questions (today, this week, last game, upcoming, how long ago, etc).
 
 SEASONS:
 ${(seasons.data ?? []).map((s: any) => `- ${seasonNames.get(s.id)}`).join("\n")}
@@ -246,9 +255,9 @@ LANGUAGE STYLE: Respond ONLY in Jamaican Patois, in every message, no exceptions
 Answer questions about the team, players, stats, and games. Be concise and friendly. When giving stats, reference the season and game breakdowns where relevant. If asked to do something you can't (like edit data), explain that the app UI should be used for that — still in patois.`;
 }
 
-// gemma-4-31b-it intermittently returns a transient 500 "Internal error
-// encountered" (reproducible directly against the raw API, unrelated to the
-// SDK); retry that specific case a couple of times before giving up.
+// Retry transient Gemini errors (was tuned against gemma-4-31b-it, which
+// could fail its transient 500 several times in a row; kept as a general
+// safety net now that the model has switched to gemini-flash-lite).
 function isTransientGeminiError(err: unknown): boolean {
   const text = err instanceof Error ? err.message : String(err);
   return text.includes('"code":500') || text.includes("INTERNAL") || text.includes("UNAVAILABLE");
@@ -267,16 +276,12 @@ app.post("/api/chat", requireAuth, async (req, res) => {
       parts: [{ text: h.content }],
     }));
 
-    // Verified against live production: gemma-4-31b-it sometimes fails its
-    // transient 500 several times in a row within under a second, so a short
-    // 3-attempt retry isn't always enough to ride it out. 5 attempts with
-    // longer backoff closes most of the remaining gap.
     const MAX_ATTEMPTS = 5;
     let reply = "";
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
         const chat = genai.chats.create({
-          model: "gemma-4-31b-it",
+          model: GEMINI_MODEL,
           history: chatHistory,
           config: { systemInstruction: systemContext },
         });
@@ -314,6 +319,19 @@ app.get("/api/chat/history", requireAuth, async (req, res) => {
 
     if (error) throw error;
     res.json(data ?? []);
+  } catch (err: unknown) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.delete("/api/chat/history", requireAuth, async (req, res) => {
+  try {
+    const { session_id } = req.query as { session_id: string };
+    if (!session_id) return res.status(400).json({ error: "session_id required" });
+
+    const { error } = await supabase.from("chat_logs").delete().eq("session_id", session_id);
+    if (error) throw error;
+    res.json({ ok: true });
   } catch (err: unknown) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
