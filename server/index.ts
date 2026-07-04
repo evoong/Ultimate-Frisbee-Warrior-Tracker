@@ -9,6 +9,7 @@ import { GoogleGenAI } from "@google/genai";
 import { createGateway, createRequireAllowedUser } from "../gateway/index.js";
 import { nodeAdapter } from "../gateway/node-adapter.js";
 import { getVaultSecret } from "../gateway/secrets.js";
+import { runJamSync } from "../gateway/jamSync.js";
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
@@ -344,6 +345,47 @@ app.delete("/api/chat/history", requireAuth, async (req, res) => {
     const { error } = await supabase.from("chat_logs").delete().eq("session_id", session_id);
     if (error) throw error;
     res.json({ ok: true });
+  } catch (err: unknown) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// ── Calendar sync ─────────────────────────────────────────────────────────────
+// Imports games from every enabled calendar_sources row (see gateway/jamSync.ts
+// and supabase-migrations/005_calendar_sources.sql). Runs automatically:
+// - Vercel: daily at 6am Eastern via the "crons" entry in vercel.json hitting
+//   GET /api/cron/sync-jam, authenticated by Vercel's own CRON_SECRET
+//   convention (a plain env var Vercel attaches as a bearer token; not
+//   Vault, since Vault doesn't have anything to do with Vercel's own cron
+//   auth mechanism).
+// - Cloudflare Workers: daily at 6am Eastern via worker.ts's scheduled() export, which
+//   calls runJamSync() in-process and never goes over this HTTP surface.
+// Also exposed as a manual "sync now" trigger for allowlisted users.
+
+function jamSyncConfig() {
+  return {
+    supabaseUrl: process.env.SUPABASE_URL || "",
+    supabaseSecretKey: process.env.SUPABASE_SECRET_KEY || "",
+  };
+}
+
+app.post("/api/schedule/sync-jam", requireAuth, async (_req, res) => {
+  try {
+    const result = await runJamSync(jamSyncConfig());
+    res.json(result);
+  } catch (err: unknown) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.get("/api/cron/sync-jam", async (req, res) => {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret || req.headers.authorization !== `Bearer ${cronSecret}`) {
+    return res.status(401).json({ error: "not authenticated" });
+  }
+  try {
+    const result = await runJamSync(jamSyncConfig());
+    res.json(result);
   } catch (err: unknown) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }

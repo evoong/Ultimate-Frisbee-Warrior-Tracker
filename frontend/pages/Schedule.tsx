@@ -4,6 +4,7 @@ import { useGetGameEvents, useCreateGoalEvent, useCreateOpponentGoalEvent, useDe
 import { useGetPlayers } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons, useCreateSeason, useGetSeasonsMeta } from '../hooks/backend/stats'
 import { useGetGameAttendance, useSetAttendance, useSetAllAttendance } from '../hooks/backend/attendance'
+import { useGetJamSyncConflicts, useSyncJamNow, useCreateGameFromConflict, useLinkConflictToGame, useDismissConflict, type JamSyncConflict } from '../hooks/backend/jamSync'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
 import { isTurnoverEvent } from '../lib/eventUtils'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
@@ -18,7 +19,18 @@ import PlayerCombobox from '../components/PlayerCombobox'
 import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
 import { useAuth } from '../contexts/AuthContext'
-import { Calendar, Plus, Trophy, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Target, TrendingUp, PlusCircle, Trash2, Edit2, Save, X, Users, LayoutList, CalendarDays, StickyNote, ClipboardCheck } from 'lucide-react'
+import { Calendar, Plus, Trophy, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Target, TrendingUp, PlusCircle, Trash2, Edit2, Save, X, Users, LayoutList, CalendarDays, StickyNote, ClipboardCheck, AlertTriangle, RefreshCw } from 'lucide-react'
+
+function jamConflictReasonLabel(reason: string): string {
+  switch (reason) {
+    case 'possible_duplicate': return 'possible duplicate of an existing game'
+    case 'multiple_candidates': return 'possible duplicate of multiple existing games'
+    case 'no_season_match': return 'no season covers this date'
+    case 'multiple_season_match': return 'multiple seasons cover this date'
+    case 'unparseable': return "couldn't read this calendar event"
+    default: return reason
+  }
+}
 
 type Game = {
   id: number; opponent: string; game_date: string; game_time: string; game_type: string
@@ -61,6 +73,13 @@ export default function Schedule() {
   const { data: attendanceRows, trigger: fetchAttendance } = useGetGameAttendance()
   const { trigger: setAttendance } = useSetAttendance()
   const { trigger: setAllAttendance } = useSetAllAttendance()
+
+  const { data: jamConflicts, trigger: fetchJamConflicts } = useGetJamSyncConflicts()
+  const { trigger: syncJamNow, loading: syncingJam } = useSyncJamNow()
+  const { trigger: createGameFromConflict } = useCreateGameFromConflict()
+  const { trigger: linkConflictToGame } = useLinkConflictToGame()
+  const { trigger: dismissConflict } = useDismissConflict()
+  const [jamCreateSeasonChoice, setJamCreateSeasonChoice] = useState<Record<number, string>>({})
   const [selectedGame, setSelectedGame] = useState<Game | null>(null)
   const [activeTab, setActiveTab] = useState<'events' | 'lineups' | 'attendance' | 'notes'>('events')
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list')
@@ -108,7 +127,33 @@ export default function Schedule() {
     fetchSeasonsMeta()
     fetchEventTypes()
     fetchSeasonsWithGames()
+    fetchJamConflicts()
   }, [])
+
+  const handleSyncJamNow = async () => {
+    await syncJamNow()
+    fetchJamConflicts()
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined })
+  }
+
+  const handleCreateGameFromConflict = async (conflict: JamSyncConflict) => {
+    const chosen = jamCreateSeasonChoice[conflict.id]
+    await createGameFromConflict({ conflict, seasonId: chosen ? parseInt(chosen) : null })
+    fetchJamConflicts()
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined })
+  }
+
+  const handleLinkJamConflict = async (conflict: JamSyncConflict) => {
+    if (!conflict.existing_game_id) return
+    await linkConflictToGame({ conflict, gameId: conflict.existing_game_id })
+    fetchJamConflicts()
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined })
+  }
+
+  const handleDismissJamConflict = async (conflictId: number) => {
+    await dismissConflict({ conflictId })
+    fetchJamConflicts()
+  }
 
   useEffect(() => {
     const s = seasonsWithGames as { id: number }[] | undefined
@@ -827,6 +872,16 @@ export default function Schedule() {
             </button>
           </div>
           {allowed && (
+          <button
+            onClick={handleSyncJamNow}
+            disabled={syncingJam}
+            title="Sync games from the JAM Sports calendar now (also runs automatically once a day at 6am Eastern)"
+            className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${syncingJam ? 'animate-spin' : ''}`} />
+          </button>
+          )}
+          {allowed && (
           <Dialog open={isDialogOpen} onOpenChange={open => { setIsDialogOpen(open); if (!open) setShowNewSeason(false) }}>
             <button onClick={() => setIsDialogOpen(true)} className="flex items-center gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-2 text-sm font-medium transition-colors">
               <Plus className="w-4 h-4" />Add Game
@@ -969,6 +1024,63 @@ export default function Schedule() {
         onChange={setScheduleSeasonIds}
         placeholder="All Seasons"
       />
+
+      {/* Calendar sync: anything the automatic daily sync from a
+          calendar_sources feed couldn't confidently auto-create lands here
+          for manual review. */}
+      {allowed && jamConflicts && jamConflicts.length > 0 && (
+        <Card className="bg-card border-amber-500/30">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-500" />
+              Calendar Sync — {jamConflicts.length} {jamConflicts.length === 1 ? 'game needs' : 'games need'} review
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {jamConflicts.map(conflict => {
+              const needsSeasonChoice = conflict.reason === 'no_season_match' || conflict.reason === 'multiple_season_match'
+              return (
+                <div key={conflict.id} className="border border-border rounded-lg p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="font-medium text-foreground text-sm truncate">{conflict.organizer} · vs {conflict.opponent}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {new Date(conflict.event_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} at {conflict.event_time.slice(0, 5)}
+                      </div>
+                    </div>
+                    <span className="text-xs text-muted-foreground text-right shrink-0">{jamConflictReasonLabel(conflict.reason)}</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {needsSeasonChoice && (
+                      <Select value={jamCreateSeasonChoice[conflict.id] ?? ''} onValueChange={v => setJamCreateSeasonChoice(prev => ({ ...prev, [conflict.id]: v }))}>
+                        <SelectTrigger className="h-8 text-xs w-40 bg-background border-border"><SelectValue placeholder="Choose season" /></SelectTrigger>
+                        <SelectContent>
+                          {(seasons as Season[] | undefined)?.filter(s => s.organizer === conflict.organizer).map(s => <SelectItem key={s.id} value={String(s.id)}>{seasonLabel(s)}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    )}
+                    <Button
+                      size="sm" variant="outline" className="h-8 text-xs"
+                      disabled={needsSeasonChoice && !jamCreateSeasonChoice[conflict.id]}
+                      onClick={() => handleCreateGameFromConflict(conflict)}
+                    >
+                      Create as new game
+                    </Button>
+                    {conflict.existing_game_id && (
+                      <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => handleLinkJamConflict(conflict)}>
+                        Link to existing game
+                      </Button>
+                    )}
+                    <Button size="sm" variant="ghost" className="h-8 text-xs text-muted-foreground" onClick={() => handleDismissJamConflict(conflict.id)}>
+                      Dismiss
+                    </Button>
+                  </div>
+                </div>
+              )
+            })}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Calendar View */}
       {viewMode === 'calendar' ? (

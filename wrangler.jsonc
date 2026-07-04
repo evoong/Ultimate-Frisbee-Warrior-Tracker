@@ -11,6 +11,15 @@
     "directory": "./frontend/dist",
     "binding": "ASSETS"
   },
+  // Daily JAM Sports calendar sync at 6am Eastern (see worker.ts's
+  // scheduled() export and gateway/jamSync.ts). Runs in-process, no HTTP
+  // round trip needed. Cron triggers run in UTC and don't support
+  // timezones/DST: 10:00 UTC = 6am EDT (summer); during EST (winter) this
+  // will fire at 5am Eastern instead. Adjust to "0 11 * * *" for winter if
+  // exact wall-clock time matters, or revisit if DST drift becomes annoying.
+  "triggers": {
+    "crons": ["0 10 * * *"]
+  },
   "vars": {
     "SUPABASE_URL": "https://pyqngqyqwevfpaxcmfnd.supabase.co",
     "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_oUie8kxlAp6DD0UPMSG-ZQ_QBEWo3vT",

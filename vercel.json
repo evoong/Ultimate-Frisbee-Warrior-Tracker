@@ -12,5 +12,8 @@
     { "source": "/db/(.*)", "destination": "/api/index.ts" },
     { "source": "/uploads/(.*)", "destination": "/api/index.ts" },
     { "source": "/(.*)", "destination": "/index.html" }
+  ],
+  "crons": [
+    { "path": "/api/cron/sync-jam", "schedule": "0 10 * * *" }
   ]
 }
