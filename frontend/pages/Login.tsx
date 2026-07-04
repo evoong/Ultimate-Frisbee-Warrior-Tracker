@@ -4,7 +4,8 @@ import { Button } from '../lib/shadcn/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Input } from '../lib/shadcn/input'
 import { Label } from '../lib/shadcn/label'
-import { Eye, EyeOff, Loader2 } from 'lucide-react'
+import { Eye, EyeOff, KeyRound, Loader2 } from 'lucide-react'
+import { isCeremonyCancelled, passkeysAvailable } from '../lib/passkeys'
 
 const AUTH_ERROR_MESSAGES: Record<string, string> = {
   login_expired: 'The sign-in attempt took too long. Please try again.',
@@ -20,7 +21,7 @@ type Mode = 'login' | 'signup' | 'forgot'
 const PASSWORD_MIN_LENGTH = 8
 
 export default function Login() {
-  const { login, signup, loginWithGoogle, forgotPassword } = useAuth()
+  const { login, signup, loginWithGoogle, loginWithPasskey, forgotPassword } = useAuth()
   const [mode, setMode] = useState<Mode>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -60,6 +61,22 @@ export default function Login() {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handlePasskey() {
+    setError(null)
+    setNotice(null)
+    setBusy(true)
+    try {
+      await loginWithPasskey()
+    } catch (err) {
+      // Dismissing the browser prompt is a normal way out, not a failure.
+      if (!isCeremonyCancelled(err)) {
+        setError(err instanceof Error ? err.message : 'Passkey sign-in failed')
+      }
     } finally {
       setBusy(false)
     }
@@ -162,6 +179,18 @@ export default function Login() {
                     >
                       Continue with Google
                     </Button>
+                    {mode === 'login' && passkeysAvailable() && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full"
+                        onClick={handlePasskey}
+                        disabled={busy}
+                      >
+                        <KeyRound className="w-4 h-4 mr-2" />
+                        Sign in with a passkey
+                      </Button>
+                    )}
                   </>
                 )}
 

@@ -8,11 +8,13 @@ import Chat from './pages/Chat'
 import Login from './pages/Login'
 import ResetPassword from './pages/ResetPassword'
 import { useAuth } from './contexts/AuthContext'
-import { Moon, Sun, Loader2, LogOut } from 'lucide-react'
+import { Moon, Sun, Loader2, LogOut, KeyRound } from 'lucide-react'
 import { NAV_ITEMS, type Tab } from './lib/nav'
 import { useMediaQuery } from './lib/shadcn/use-media-query'
 import { SidebarProvider, SidebarInset, SidebarTrigger } from './lib/shadcn/sidebar'
 import AppSidebar from './components/AppSidebar'
+import PasskeysDialog from './components/PasskeysDialog'
+import { passkeysAvailable } from './lib/passkeys'
 
 const THEME_KEY = 'ufwt_theme'
 
@@ -25,6 +27,7 @@ function getInitialTheme(): 'light' | 'dark' {
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('quickscore')
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme)
+  const [passkeysOpen, setPasskeysOpen] = useState(false)
   const isDesktop = useMediaQuery('(min-width: 1024px)')
   const { user, allowed, loading, logout } = useAuth()
 
@@ -89,7 +92,9 @@ export default function App() {
           toggleTheme={toggleTheme}
           userEmail={user.email}
           logout={logout}
+          openPasskeys={passkeysAvailable() ? () => setPasskeysOpen(true) : undefined}
         />
+        <PasskeysDialog open={passkeysOpen} onOpenChange={setPasskeysOpen} />
         <SidebarInset>
           <header className="sticky top-0 z-10 flex h-14 items-center gap-2 border-b border-border bg-card px-4">
             <SidebarTrigger />
@@ -111,6 +116,15 @@ export default function App() {
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <h1 className="text-lg font-bold text-primary">Warrior Tracker</h1>
           <div className="flex items-center gap-1">
+            {passkeysAvailable() && (
+              <button
+                onClick={() => setPasskeysOpen(true)}
+                className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+                aria-label="Manage passkeys"
+              >
+                <KeyRound className="w-5 h-5" />
+              </button>
+            )}
             <button
               onClick={toggleTheme}
               className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
@@ -131,6 +145,8 @@ export default function App() {
       </header>
 
       {readOnlyNotice}
+
+      <PasskeysDialog open={passkeysOpen} onOpenChange={setPasskeysOpen} />
 
       <main className="max-w-2xl mx-auto px-4 py-6 pb-24">
         {pageContent}

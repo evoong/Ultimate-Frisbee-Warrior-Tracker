@@ -136,12 +136,43 @@ async function checkAllowed(config: GatewayConfig, accessToken: string): Promise
   return (await res.json()) === true
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+// Proxies a passkey endpoint that requires the caller's session, resolving
+// (and if needed refreshing) the access token from cookies first.
+async function authenticatedPasskeyProxy(
+  config: GatewayConfig,
+  request: Request,
+  url: URL,
+  path: string,
+  init: { method?: string; body?: unknown }
+): Promise<Response> {
+  const { accessToken, setCookies } = await resolveAccessToken(config, request, url)
+  if (!accessToken) return json({ error: 'not authenticated' }, 401, setCookies)
+  const { status, data } = await supabaseAuth(config, path, { ...init, accessToken })
+  if (status < 200 || status >= 300) {
+    return json({ error: authErrorMessage(data) }, status >= 500 ? 502 : 400, setCookies)
+  }
+  return json(data ?? {}, status, setCookies)
+}
+
 export async function handleAuthRequest(
   config: GatewayConfig,
   request: Request,
   url: URL
 ): Promise<Response> {
   const route = `${request.method} ${url.pathname}`
+
+  // Passkey deletion carries the passkey id in the path, so it cannot be a
+  // static case below.
+  const deleteMatch = url.pathname.match(/^\/auth\/passkeys\/([^/]+)$/)
+  if (request.method === 'DELETE' && deleteMatch) {
+    const id = deleteMatch[1]
+    if (!UUID_RE.test(id)) return json({ error: 'invalid passkey id' }, 400)
+    return authenticatedPasskeyProxy(config, request, url, `/passkeys/${id}`, {
+      method: 'DELETE',
+    })
+  }
 
   switch (route) {
     case 'POST /auth/login': {
@@ -276,6 +307,54 @@ export async function handleAuthRequest(
       }
       const allowed = await checkAllowed(config, accessToken)
       return json({ user: { id: data.id, email: data.email }, allowed }, 200, setCookies)
+    }
+
+    case 'POST /auth/passkeys/registration/options': {
+      return authenticatedPasskeyProxy(config, request, url, '/passkeys/registration/options', {
+        body: {},
+      })
+    }
+
+    case 'POST /auth/passkeys/registration/verify': {
+      const { challenge_id, credential } = await readJsonBody(request)
+      if (typeof challenge_id !== 'string' || typeof credential !== 'object' || !credential) {
+        return json({ error: 'challenge_id and credential are required' }, 400)
+      }
+      return authenticatedPasskeyProxy(config, request, url, '/passkeys/registration/verify', {
+        body: { challenge_id, credential },
+      })
+    }
+
+    case 'POST /auth/passkeys/authentication/options': {
+      const { status, data } = await supabaseAuth(config, '/passkeys/authentication/options', {
+        body: {},
+      })
+      if (status !== 200) return json({ error: authErrorMessage(data) }, 400)
+      return json(data)
+    }
+
+    case 'POST /auth/passkeys/authentication/verify': {
+      const { challenge_id, credential } = await readJsonBody(request)
+      if (typeof challenge_id !== 'string' || typeof credential !== 'object' || !credential) {
+        return json({ error: 'challenge_id and credential are required' }, 400)
+      }
+      const { status, data } = await supabaseAuth(config, '/passkeys/authentication/verify', {
+        body: { challenge_id, credential },
+      })
+      if (status !== 200 || !data?.access_token) {
+        return json({ error: authErrorMessage(data) }, status === 400 ? 400 : 401)
+      }
+      // Same contract as password login: tokens become httpOnly cookies and
+      // never reach the browser.
+      return json(
+        { user: { id: data.user?.id, email: data.user?.email } },
+        200,
+        sessionCookies(url, data)
+      )
+    }
+
+    case 'GET /auth/passkeys': {
+      return authenticatedPasskeyProxy(config, request, url, '/passkeys', { method: 'GET' })
     }
 
     case 'POST /auth/forgot-password': {
