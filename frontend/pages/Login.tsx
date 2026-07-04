@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { Button } from '../lib/shadcn/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Input } from '../lib/shadcn/input'
 import { Label } from '../lib/shadcn/label'
-import { Eye, EyeOff, Loader2 } from 'lucide-react'
+import { Eye, EyeOff, KeyRound, Loader2 } from 'lucide-react'
+import { isCeremonyCancelled, passkeysAvailable } from '../lib/passkeys'
 
 const AUTH_ERROR_MESSAGES: Record<string, string> = {
   login_expired: 'The sign-in attempt took too long. Please try again.',
@@ -20,22 +21,14 @@ type Mode = 'login' | 'signup' | 'forgot'
 const PASSWORD_MIN_LENGTH = 8
 
 export default function Login() {
-  const { login, signup, loginWithGoogle, forgotPassword } = useAuth()
+  const { login, signup, loginWithGoogle, loginWithPasskey, forgotPassword } = useAuth()
   const [mode, setMode] = useState<Mode>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [showFormHint, setShowFormHint] = useState(true)
   const [showPassword, setShowPassword] = useState(false)
-
-  // The generic "fill out this form" hint auto-dismisses after 5 seconds.
-  useEffect(() => {
-    if (!showFormHint) return
-    const timer = setTimeout(() => setShowFormHint(false), 5000)
-    return () => clearTimeout(timer)
-  }, [showFormHint])
 
   const urlError = useMemo(() => {
     const code = new URLSearchParams(window.location.search).get('auth_error')
@@ -73,12 +66,27 @@ export default function Login() {
     }
   }
 
+  async function handlePasskey() {
+    setError(null)
+    setNotice(null)
+    setBusy(true)
+    try {
+      await loginWithPasskey()
+    } catch (err) {
+      // Dismissing the browser prompt is a normal way out, not a failure.
+      if (!isCeremonyCancelled(err)) {
+        setError(err instanceof Error ? err.message : 'Passkey sign-in failed')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-background text-foreground flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-6">
           <h1 className="text-2xl font-bold text-primary">Warrior Tracker</h1>
-          <p className="text-sm text-muted-foreground mt-1">Team access only</p>
         </div>
 
         <Card>
@@ -91,7 +99,7 @@ export default function Login() {
             <CardDescription>
               {mode === 'forgot'
                 ? 'Enter your email and we will send a reset link.'
-                : 'Use your team email to continue.'}
+                : 'Use your email to continue.'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -101,9 +109,6 @@ export default function Login() {
                 )}
                 {error && <p className="text-sm text-destructive">{error}</p>}
                 {notice && <p className="text-sm text-primary">{notice}</p>}
-                {showFormHint && !error && !notice && (
-                  <p className="text-sm text-muted-foreground">Please fill out this form.</p>
-                )}
 
                 <form onSubmit={handleSubmit} className="space-y-4" noValidate>
                   <div className="space-y-2">
@@ -174,6 +179,18 @@ export default function Login() {
                     >
                       Continue with Google
                     </Button>
+                    {mode === 'login' && passkeysAvailable() && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full"
+                        onClick={handlePasskey}
+                        disabled={busy}
+                      >
+                        <KeyRound className="w-4 h-4 mr-2" />
+                        Sign in with a passkey
+                      </Button>
+                    )}
                   </>
                 )}
 

@@ -1,4 +1,4 @@
-import { Disc, Moon, Sun, LogOut } from "lucide-react"
+import { Disc, Moon, Sun, LogOut, KeyRound } from "lucide-react"
 import { NAV_ITEMS, type Tab } from "../lib/nav"
 import {
   Sidebar,
@@ -20,6 +20,8 @@ type AppSidebarProps = {
   toggleTheme: () => void
   userEmail: string
   logout: () => void
+  // Absent when passkeys are unavailable on this deployment (see passkeys.ts).
+  openPasskeys?: () => void
 }
 
 export default function AppSidebar({
@@ -29,6 +31,7 @@ export default function AppSidebar({
   toggleTheme,
   userEmail,
   logout,
+  openPasskeys,
 }: AppSidebarProps) {
   return (
     <Sidebar collapsible="icon">
@@ -76,6 +79,14 @@ export default function AppSidebar({
               <span>{theme === "dark" ? "Light mode" : "Dark mode"}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
+          {openPasskeys && (
+            <SidebarMenuItem>
+              <SidebarMenuButton onClick={openPasskeys} tooltip="Manage passkeys">
+                <KeyRound />
+                <span>Passkeys</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
           <SidebarMenuItem>
             <SidebarMenuButton onClick={() => logout()} tooltip={userEmail}>
               <LogOut />
