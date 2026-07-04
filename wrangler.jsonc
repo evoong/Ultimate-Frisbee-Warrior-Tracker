@@ -11,6 +11,11 @@
     "directory": "./frontend/dist",
     "binding": "ASSETS"
   },
+  // Hourly JAM Sports calendar sync (see worker.ts's scheduled() export and
+  // gateway/jamSync.ts). Runs in-process, no HTTP round trip needed.
+  "triggers": {
+    "crons": ["0 * * * *"]
+  },
   "vars": {
     "SUPABASE_URL": "https://pyqngqyqwevfpaxcmfnd.supabase.co",
     "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_oUie8kxlAp6DD0UPMSG-ZQ_QBEWo3vT",

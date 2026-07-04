@@ -1,5 +1,6 @@
-import { createGateway } from './gateway/index.js'
+import { createGateway, createRequireAllowedUser } from './gateway/index.js'
 import { handleChatRequest, handleChatHistoryRequest, handleChatHistoryDeleteRequest, type ChatConfig } from './gateway/chat.js'
+import { runJamSync } from './gateway/jamSync.js'
 
 interface Env {
   ASSETS: {
@@ -13,7 +14,15 @@ interface Env {
   // for these now. Only needed as a fallback/override.
   GEMINI_API_KEY?: string;
   GEMINI_MODEL?: string;
+  JAM_CALENDAR_URL?: string;
 }
+
+const DEFAULT_JAM_CALENDAR_URL = 'https://jamsports.com/api/calendar/12273c1d-6683-4d15-8c09-1934475c1e0b.ics'
+
+// Minimal local aliases so this file doesn't need @cloudflare/workers-types
+// as a dependency just for the scheduled() export's parameter types.
+type ScheduledEvent = { cron: string; scheduledTime: number };
+type ExecutionContext = { waitUntil: (promise: Promise<unknown>) => void };
 
 // Allowlist membership, cached per-isolate for a minute (mirrors the Express
 // server's cache) so repeated chat calls don't hit Postgres every time.
@@ -71,6 +80,28 @@ export default {
         }
       }
 
+      // Manual "sync now" trigger for the JAM calendar importer (also runs
+      // automatically every hour via the scheduled() export below).
+      if (url.pathname === "/api/schedule/sync-jam" && request.method === "POST") {
+        const gatewayConfig = {
+          supabaseUrl: env.SUPABASE_URL,
+          publishableKey: env.SUPABASE_PUBLISHABLE_KEY,
+          jwksUrl: env.SUPABASE_JWKS_URL,
+        };
+        const user = await createRequireAllowedUser(gatewayConfig, createIsEmailAllowed(env))(request);
+        if (!user) return new Response(JSON.stringify({ error: "not authenticated" }), { status: 401, headers: { "Content-Type": "application/json" } });
+        try {
+          const result = await runJamSync({
+            supabaseUrl: env.SUPABASE_URL,
+            supabaseSecretKey: env.SUPABASE_SECRET_KEY,
+            calendarUrl: env.JAM_CALENDAR_URL || DEFAULT_JAM_CALENDAR_URL,
+          });
+          return new Response(JSON.stringify(result), { status: 200, headers: { "Content-Type": "application/json" } });
+        } catch (err) {
+          return new Response(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }), { status: 500, headers: { "Content-Type": "application/json" } });
+        }
+      }
+
       const response = await env.ASSETS.fetch(request);
 
       if (response.status !== 404) {
@@ -107,5 +138,18 @@ export default {
       console.error("Worker error:", error);
       return new Response("Internal Server Error", { status: 500 });
     }
+  },
+
+  // Hourly JAM Sports calendar sync (see wrangler.jsonc's triggers.crons).
+  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(
+      runJamSync({
+        supabaseUrl: env.SUPABASE_URL,
+        supabaseSecretKey: env.SUPABASE_SECRET_KEY,
+        calendarUrl: env.JAM_CALENDAR_URL || DEFAULT_JAM_CALENDAR_URL,
+      })
+        .then(result => console.log("JAM sync:", JSON.stringify(result)))
+        .catch(err => console.error("JAM sync failed:", err instanceof Error ? err.message : String(err)))
+    );
   },
 };
