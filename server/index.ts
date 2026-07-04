@@ -8,6 +8,7 @@ import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
 import { createGateway, createRequireAllowedUser } from "../gateway/index.js";
 import { nodeAdapter } from "../gateway/node-adapter.js";
+import { getVaultSecret } from "../gateway/secrets.js";
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
@@ -99,12 +100,18 @@ async function requireAuth(req: ExpressRequest, res: ExpressResponse, next: Next
 
 // ── AI Chat ───────────────────────────────────────────────────────────────────
 
-const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+// Supabase Vault (see gateway/secrets.ts) is the primary source for these,
+// so they only need to be configured in one place instead of separately
+// across Vercel, Cloudflare, and local .env. GEMINI_API_KEY/GEMINI_MODEL env
+// vars still work as a fallback/override, e.g. before Vault is populated.
+const vaultConfig = {
+  supabaseUrl: process.env.SUPABASE_URL || "",
+  supabaseSecretKey: process.env.SUPABASE_SECRET_KEY || "",
+};
 
 // Switched from gemma-4-31b-it: side-by-side timing showed gemini-flash-lite
 // averaging ~0.6s per reply vs gemma's ~20s+ (and occasional transient 500s).
-// Overridable via the GEMINI_MODEL env var.
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-flash-lite-latest";
+const DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest";
 
 async function getTeamContext() {
   const [players, seasons, games, events, seasonPlayers] = await Promise.all([
@@ -271,6 +278,11 @@ app.post("/api/chat", requireAuth, async (req, res) => {
 
     const systemContext = await getTeamContext();
 
+    const geminiApiKey = await getVaultSecret(vaultConfig, "gemini_api_key", process.env.GEMINI_API_KEY);
+    const geminiModel = (await getVaultSecret(vaultConfig, "gemini_model", process.env.GEMINI_MODEL)) ?? DEFAULT_GEMINI_MODEL;
+    if (!geminiApiKey) return res.status(500).json({ error: "Gemini API key not configured" });
+    const genai = new GoogleGenAI({ apiKey: geminiApiKey });
+
     const chatHistory = history.map((h: any) => ({
       role: h.role === "assistant" ? "model" : "user",
       parts: [{ text: h.content }],
@@ -281,7 +293,7 @@ app.post("/api/chat", requireAuth, async (req, res) => {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
         const chat = genai.chats.create({
-          model: GEMINI_MODEL,
+          model: geminiModel,
           history: chatHistory,
           config: { systemInstruction: systemContext },
         });
