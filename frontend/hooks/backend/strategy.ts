@@ -127,3 +127,61 @@ export function useDeleteStrategyPosition() {
   }, [])
   return useApiCall<boolean, { playId: number; playerId: number }>(fn)
 }
+
+// ---- Strategy arrows ----
+// Arrows are freeform annotations (not tied to a player). Each is a
+// quadratic Bezier stored as canonical [0,1] field fractions:
+// start (x1,y1), end (x2,y2), control point (cx,cy).
+export type ArrowGeom = { x1: number; y1: number; x2: number; y2: number; cx: number; cy: number }
+export type StrategyArrow = ArrowGeom & { id: number }
+
+export function useGetStrategyArrows() {
+  const fn = useCallback(async (params: { playId: number }) => {
+    const { data, error } = await supabase
+      .from('strategy_arrows')
+      .select('id, x1, y1, x2, y2, cx, cy')
+      .eq('play_id', params.playId)
+      .order('id')
+    if (error) throw new Error(error.message)
+    return (data ?? []) as StrategyArrow[]
+  }, [])
+  return useApiCall<StrategyArrow[], { playId: number }>(fn)
+}
+
+export function useCreateStrategyArrow() {
+  const fn = useCallback(async (params: { playId: number } & ArrowGeom) => {
+    const { playId, ...geom } = params
+    const { data, error } = await supabase
+      .from('strategy_arrows')
+      .insert({ play_id: playId, ...geom })
+      .select('id, x1, y1, x2, y2, cx, cy')
+    if (error) throw new Error(error.message)
+    return data?.[0] as StrategyArrow
+  }, [])
+  return useApiCall<StrategyArrow, { playId: number } & ArrowGeom>(fn)
+}
+
+export function useUpdateStrategyArrow() {
+  const fn = useCallback(async (params: { id: number } & ArrowGeom) => {
+    const { id, ...geom } = params
+    const { error } = await supabase
+      .from('strategy_arrows')
+      .update(geom)
+      .eq('id', id)
+    if (error) throw new Error(error.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { id: number } & ArrowGeom>(fn)
+}
+
+export function useDeleteStrategyArrow() {
+  const fn = useCallback(async (params: { id: number }) => {
+    const { error } = await supabase
+      .from('strategy_arrows')
+      .delete()
+      .eq('id', params.id)
+    if (error) throw new Error(error.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { id: number }>(fn)
+}
