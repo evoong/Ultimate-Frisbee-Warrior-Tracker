@@ -342,32 +342,25 @@ export default function QuickScore() {
           {/* Live Scoreboard */}
           <FadeIn>
           <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
-            <CardContent className="py-4 px-5">
-              <div className="grid grid-cols-[1fr_auto_1fr] items-center">
-                <div className="min-w-0">
-                  <div className="text-base font-bold text-foreground truncate">vs {selectedGame.opponent}</div>
-                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5">
-                    <Calendar className="w-3 h-3 flex-shrink-0" />
-                    <span>{new Date((selectedGame as { game_date: string }).game_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
-                  </div>
-                  {selectedGame.season_id && (
-                    <div className="text-xs text-muted-foreground mt-0.5">{getSeasonLabel(selectedGame.season_id)}</div>
-                  )}
+            <CardContent className="p-5">
+              <div className="text-center">
+                <div className="text-lg font-bold text-foreground leading-snug break-words">vs {selectedGame.opponent}</div>
+                <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground mt-1">
+                  <Calendar className="w-3 h-3 flex-shrink-0" />
+                  <span>
+                    {new Date((selectedGame as { game_date: string }).game_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                    {selectedGame.season_id && getSeasonLabel(selectedGame.season_id) ? ` · ${getSeasonLabel(selectedGame.season_id)}` : ''}
+                  </span>
                 </div>
+              </div>
 
-                <div className="flex items-center gap-3 px-4">
-                  <div className="text-center">
-                    <div className="text-7xl font-bold text-primary tabular-nums leading-none">{ourGoals}</div>
-                    <div className="text-xs text-muted-foreground mt-1">Us</div>
-                  </div>
-                  <div className="text-3xl font-light text-muted-foreground">-</div>
-                  <div className="text-center">
-                    <div className="text-7xl font-bold text-muted-foreground tabular-nums leading-none">{theirGoals}</div>
-                    <div className="text-xs text-muted-foreground mt-1">Them</div>
-                  </div>
-                </div>
-
+              <div className="grid grid-cols-[5rem_auto_5rem] items-baseline justify-center gap-x-3 mt-4">
+                <div className="text-6xl font-bold text-primary tabular-nums leading-none text-center">{ourGoals}</div>
+                <div className="text-3xl font-light text-muted-foreground/50">-</div>
+                <div className="text-6xl font-bold text-muted-foreground tabular-nums leading-none text-center">{theirGoals}</div>
+                <div className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground text-center mt-2">Us</div>
                 <div />
+                <div className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground text-center mt-2">Them</div>
               </div>
             </CardContent>
           </Card>
