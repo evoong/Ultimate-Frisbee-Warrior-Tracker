@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import PlayerAvatar from '../PlayerAvatar'
 import { useMediaQuery } from '../../lib/shadcn/use-media-query'
 
@@ -174,14 +175,19 @@ export default function StrategyBoard({ players, positions, allowed, onPlace, on
         })}
       </div>
 
-      {/* Drag ghost: follows the pointer while dragging, TFT-style. */}
-      {drag?.moved && dragPlayer && (
+      {/* Drag ghost: follows the pointer while dragging, TFT-style. Rendered
+          through a portal to document.body because position:fixed is resolved
+          against the nearest transformed ancestor, and the page's FadeIn
+          wrapper keeps an identity transform applied (fill-mode-both), which
+          would offset the ghost from the pointer by the wrapper's position. */}
+      {drag?.moved && dragPlayer && createPortal(
         <div
           className="fixed z-50 -translate-x-1/2 -translate-y-1/2 pointer-events-none scale-110 drop-shadow-lg"
           style={{ left: drag.clientX, top: drag.clientY }}
         >
           <PlayerAvatar photoUrl={dragPlayer.photo_url} name={dragPlayer.display_name} size="sm" />
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )
