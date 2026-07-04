@@ -750,54 +750,61 @@ export default function Schedule() {
     return null
   }
 
-  const renderGameCard = (game: Game, index: number, isNext: boolean) => {
+  const renderGameCard = (game: Game, index: number, isNext: boolean, isPlayed: boolean) => {
     const displayResult = game.outcome_override ?? game.result
     const relativeDay = isNext ? formatRelativeDay(game.game_date) : null
+    // Redundant once a single season is already the active filter; only earns
+    // its place in the meta line when the list is mixing seasons together.
+    const showSeasonLabel = game.season_id && scheduleSeasonIds.length !== 1
     return (
       <FadeIn key={game.id} delay={index * 40}>
         <Card
           onClick={() => handleSelectGame(game)}
           className={`bg-card text-card-foreground cursor-pointer hover:bg-accent/50 active:scale-[0.99] transition-all ${isNext ? 'border-primary/50 ring-1 ring-primary/20' : 'border-border'}`}
         >
-          <CardHeader className="pb-3">
-            <div className="flex items-start justify-between">
-              <div className="flex-1">
+          <CardContent className="py-3.5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
                 {isNext && (
-                  <div className="text-xs font-semibold uppercase tracking-wide text-primary mb-1">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-primary mb-0.5">
                     Next Up{relativeDay ? ` · ${relativeDay}` : ''}
                   </div>
                 )}
-                <CardTitle className="text-lg font-bold text-foreground">vs {game.opponent}</CardTitle>
-                <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
-                  <Calendar className="w-4 h-4" />
+                <div className="flex items-center gap-1.5">
+                  <span className="text-base font-bold text-foreground truncate">vs {game.opponent}</span>
+                  {game.game_type === 'Playoff' && <Trophy className="w-4 h-4 text-yellow-500 shrink-0" />}
+                </div>
+                <div className="flex items-center gap-1.5 mt-0.5 text-sm text-muted-foreground truncate">
+                  <Calendar className="w-3.5 h-3.5 shrink-0" />
                   <span>{formatDate(game.game_date)}</span>
                   <span>•</span>
                   <span>{formatTime(game.game_time)}</span>
+                  {showSeasonLabel && (
+                    <>
+                      <span>•</span>
+                      <span className="truncate">{getSeasonLabel(game.season_id!)}</span>
+                    </>
+                  )}
                 </div>
-                {game.season_id && <div className="text-xs text-muted-foreground mt-0.5">{getSeasonLabel(game.season_id)}</div>}
               </div>
-              <div className="flex items-center gap-2">
-                {game.game_type === 'Playoff' && <Trophy className="w-5 h-5 text-yellow-500" />}
-                <div className={`px-2 py-1 rounded text-xs font-semibold ${game.game_type === 'Playoff' ? 'bg-yellow-100 text-yellow-900 dark:bg-yellow-950 dark:text-yellow-100' : 'bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-100'}`}>
-                  {game.game_type}
-                </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {isPlayed && (
+                  <div className="text-right">
+                    <div className="text-2xl font-bold leading-none">
+                      <span className="text-primary">{game.our_score}</span>
+                      <span className="text-muted-foreground mx-1">-</span>
+                      <span className="text-muted-foreground">{game.their_score}</span>
+                    </div>
+                    {displayResult && (
+                      <div className={`text-xs font-medium mt-1 ${displayResult.startsWith('Win') || displayResult === 'Default Win' ? 'text-green-600 dark:text-green-400' : displayResult === 'Tie' ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-600 dark:text-red-400'}`}>
+                        {displayResult}
+                        {game.outcome_override && <span className="text-[10px] opacity-60 ml-0.5">*</span>}
+                      </div>
+                    )}
+                  </div>
+                )}
                 <ChevronRight className="w-4 h-4 text-muted-foreground" />
               </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center justify-between">
-              <div className="text-3xl font-bold">
-                <span className="text-primary">{game.our_score}</span>
-                <span className="text-muted-foreground mx-2">-</span>
-                <span className="text-muted-foreground">{game.their_score}</span>
-              </div>
-              {displayResult && (
-                <div className={`text-sm font-medium ${displayResult.startsWith('Win') || displayResult === 'Default Win' ? 'text-green-600 dark:text-green-400' : displayResult === 'Tie' ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-600 dark:text-red-400'}`}>
-                  {displayResult}
-                  {game.outcome_override && <span className="text-xs opacity-60 ml-1">*</span>}
-                </div>
-              )}
             </div>
           </CardContent>
         </Card>
@@ -1015,25 +1022,19 @@ export default function Schedule() {
         </Card>
       ) : (
         /* List View */
-        <div className="space-y-3">
+        <div className="space-y-2">
           {gamesLoading ? (
             /* Skeleton placeholders shaped like the real game cards below, so the
                list keeps its footprint while data loads instead of popping in. */
             Array.from({ length: 5 }).map((_, i) => (
               <Card key={`skeleton-${i}`} className="bg-card text-card-foreground border-border">
-                <CardHeader className="pb-3">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1 space-y-2">
-                      <Skeleton className="h-6 w-40" />
+                <CardContent className="py-3.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="space-y-2">
+                      <Skeleton className="h-5 w-40" />
                       <Skeleton className="h-4 w-32" />
                     </div>
-                    <Skeleton className="h-6 w-16 rounded" />
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-center justify-between">
-                    <Skeleton className="h-8 w-24" />
-                    <Skeleton className="h-4 w-12" />
+                    <Skeleton className="h-6 w-14" />
                   </div>
                 </CardContent>
               </Card>
@@ -1056,7 +1057,7 @@ export default function Schedule() {
                     <span>Upcoming ({upcomingGames.length})</span>
                     {showUpcoming ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                   </button>
-                  {showUpcoming && upcomingGames.map((game, index) => renderGameCard(game, index, index === 0))}
+                  {showUpcoming && upcomingGames.map((game, index) => renderGameCard(game, index, index === 0, false))}
                 </>
               )}
               {pastGames.length > 0 && (
@@ -1068,7 +1069,7 @@ export default function Schedule() {
                     <span>Played ({pastGames.length})</span>
                     {showPlayed ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                   </button>
-                  {showPlayed && pastGames.map((game, index) => renderGameCard(game, upcomingGames.length + index, false))}
+                  {showPlayed && pastGames.map((game, index) => renderGameCard(game, upcomingGames.length + index, false, true))}
                 </>
               )}
             </>
