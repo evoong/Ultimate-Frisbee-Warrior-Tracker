@@ -791,7 +791,7 @@ export default function Schedule() {
           <button
             onClick={handleSyncJamNow}
             disabled={syncingJam}
-            title="Sync games from the JAM Sports calendar now (also runs automatically every hour)"
+            title="Sync games from the JAM Sports calendar now (also runs automatically once a day at 6am Eastern)"
             className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
           >
             <RefreshCw className={`w-4 h-4 ${syncingJam ? 'animate-spin' : ''}`} />
@@ -941,7 +941,7 @@ export default function Schedule() {
         placeholder="All Seasons"
       />
 
-      {/* JAM Sports calendar sync: anything the automatic hourly sync
+      {/* JAM Sports calendar sync: anything the automatic daily sync
           couldn't confidently auto-create lands here for manual review. */}
       {allowed && jamConflicts && jamConflicts.length > 0 && (
         <Card className="bg-card border-amber-500/30">

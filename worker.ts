@@ -81,7 +81,7 @@ export default {
       }
 
       // Manual "sync now" trigger for the JAM calendar importer (also runs
-      // automatically every hour via the scheduled() export below).
+      // automatically once a day at 6am Eastern via the scheduled() export below).
       if (url.pathname === "/api/schedule/sync-jam" && request.method === "POST") {
         const gatewayConfig = {
           supabaseUrl: env.SUPABASE_URL,
@@ -140,7 +140,7 @@ export default {
     }
   },
 
-  // Hourly JAM Sports calendar sync (see wrangler.jsonc's triggers.crons).
+  // Daily JAM Sports calendar sync at 6am Eastern (see wrangler.jsonc's triggers.crons).
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(
       runJamSync({

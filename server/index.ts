@@ -352,12 +352,12 @@ app.delete("/api/chat/history", requireAuth, async (req, res) => {
 
 // ── JAM Sports calendar sync ─────────────────────────────────────────────────
 // Imports games from a .ics feed (see gateway/jamSync.ts). Runs automatically:
-// - Vercel: hourly via the "crons" entry in vercel.json hitting
+// - Vercel: daily at 6am Eastern via the "crons" entry in vercel.json hitting
 //   GET /api/cron/sync-jam, authenticated by Vercel's own CRON_SECRET
 //   convention (a plain env var Vercel attaches as a bearer token; not
 //   Vault, since Vault doesn't have anything to do with Vercel's own cron
 //   auth mechanism).
-// - Cloudflare Workers: hourly via worker.ts's scheduled() export, which
+// - Cloudflare Workers: daily at 6am Eastern via worker.ts's scheduled() export, which
 //   calls runJamSync() in-process and never goes over this HTTP surface.
 // Also exposed as a manual "sync now" trigger for allowlisted users.
 
