@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useGetGames } from '../hooks/backend/games'
 import { useGetPlayers } from '../hooks/backend/players'
 import { useGetPlayerStats, useGetSeasons, useGetCumulativeStats, useGetAllSeasons } from '../hooks/backend/stats'
-import { getDefaultJamSeasonId } from '../lib/seasonUtils'
+import { getLatestJamSeasonWithPlayedGame } from '../lib/seasonUtils'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
 import { Label } from '../lib/shadcn/label'
@@ -78,12 +78,13 @@ export default function Stats() {
     fetchAllSeasons()
   }, [])
 
-  // Default both filters to the most relevant Jam season
+  // Default both filters to the latest Jam season that's actually been played
   useEffect(() => {
     const s = seasons as StatsSeasonRow[] | undefined
     const allS = allSeasons as Season[] | undefined
-    if (!s || s.length === 0 || !allS || allS.length === 0) return
-    const defaultId = getDefaultJamSeasonId(allS, s[0]!.id)
+    const g = games as Game[] | undefined
+    if (!s || s.length === 0 || !allS || allS.length === 0 || !g) return
+    const defaultId = getLatestJamSeasonWithPlayedGame(allS, g, s[0]!.id)
     if (filterType === 'all' && selectedSeasonIds.length === 0) {
       setFilterType('season')
       setSelectedSeasonIds([defaultId])
@@ -91,7 +92,7 @@ export default function Stats() {
     if (!cumulativeSeasonId) {
       setCumulativeSeasonId(String(defaultId))
     }
-  }, [seasons, allSeasons])
+  }, [seasons, allSeasons, games])
 
   useEffect(() => {
     if (filterType === 'all') fetchStats({})
