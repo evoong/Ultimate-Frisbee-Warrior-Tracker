@@ -18,7 +18,7 @@ import PlayerCombobox from '../components/PlayerCombobox'
 import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
 import { useAuth } from '../contexts/AuthContext'
-import { Calendar, Plus, Trophy, ChevronLeft, ChevronRight, Target, TrendingUp, PlusCircle, Trash2, Edit2, Save, X, Users, LayoutList, CalendarDays, StickyNote, ClipboardCheck } from 'lucide-react'
+import { Calendar, Plus, Trophy, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Target, TrendingUp, PlusCircle, Trash2, Edit2, Save, X, Users, LayoutList, CalendarDays, StickyNote, ClipboardCheck } from 'lucide-react'
 
 type Game = {
   id: number; opponent: string; game_date: string; game_time: string; game_type: string
@@ -78,6 +78,8 @@ export default function Schedule() {
   const [newSeasonLocationMode, setNewSeasonLocationMode] = useState<'select' | 'new'>('select')
   const [creatingSeasonLoading, setCreatingSeasonLoading] = useState(false)
   const [scheduleSeasonIds, setScheduleSeasonIds] = useState<number[]>([])
+  const [showUpcoming, setShowUpcoming] = useState(true)
+  const [showPlayed, setShowPlayed] = useState(true)
 
   // Delete game
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null)
@@ -1047,14 +1049,26 @@ export default function Schedule() {
             <>
               {upcomingGames.length > 0 && (
                 <>
-                  <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground px-1">Upcoming</h2>
-                  {upcomingGames.map((game, index) => renderGameCard(game, index, index === 0))}
+                  <button
+                    onClick={() => setShowUpcoming(v => !v)}
+                    className="w-full flex items-center justify-between px-1 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <span>Upcoming ({upcomingGames.length})</span>
+                    {showUpcoming ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
+                  {showUpcoming && upcomingGames.map((game, index) => renderGameCard(game, index, index === 0))}
                 </>
               )}
               {pastGames.length > 0 && (
                 <>
-                  <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground px-1 pt-2">Played</h2>
-                  {pastGames.map((game, index) => renderGameCard(game, upcomingGames.length + index, false))}
+                  <button
+                    onClick={() => setShowPlayed(v => !v)}
+                    className="w-full flex items-center justify-between px-1 py-1 pt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <span>Played ({pastGames.length})</span>
+                    {showPlayed ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
+                  {showPlayed && pastGames.map((game, index) => renderGameCard(game, upcomingGames.length + index, false))}
                 </>
               )}
             </>
