@@ -9,6 +9,7 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<void>
   signup: (email: string, password: string) => Promise<{ confirmationRequired: boolean }>
   loginWithGoogle: () => void
+  loginWithPasskey: () => Promise<void>
   logout: () => Promise<void>
   forgotPassword: (email: string) => Promise<void>
 }
@@ -47,6 +48,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [refreshSessionState]
   )
 
+  const loginWithPasskey = useCallback(async () => {
+    await authClient.signInWithPasskey()
+    await refreshSessionState()
+  }, [refreshSessionState])
+
   const logout = useCallback(async () => {
     await authClient.logout()
     setUser(null)
@@ -62,6 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         login,
         signup,
         loginWithGoogle: authClient.loginWithGoogle,
+        loginWithPasskey,
         logout,
         forgotPassword: authClient.forgotPassword,
       }}

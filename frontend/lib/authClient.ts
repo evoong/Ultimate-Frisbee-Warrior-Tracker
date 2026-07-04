@@ -1,6 +1,8 @@
 // Thin client for the gateway's /auth/* endpoints. Sessions live in
 // httpOnly cookies, so this module never sees or stores a token.
 
+import { createCredential, getCredential } from './passkeys'
+
 export interface AuthUser {
   id: string
   email: string
@@ -84,4 +86,52 @@ export function refresh(): Promise<boolean> {
 
 export function loginWithGoogle(): void {
   window.location.href = '/auth/login/google'
+}
+
+// ── Passkeys ────────────────────────────────────────────────────────────────
+// Each flow is the standard two-step WebAuthn ceremony: fetch options and a
+// challenge id from the gateway, run the browser prompt, send the signed
+// credential back for verification. Tokens stay server-side throughout.
+
+export interface PasskeyInfo {
+  id: string
+  friendly_name?: string
+  created_at: string
+}
+
+async function postForJson(path: string, body?: unknown): Promise<any> {
+  const res = await post(path, body)
+  if (!res.ok) throw new Error(await readError(res))
+  return res.json()
+}
+
+export async function signInWithPasskey(): Promise<AuthUser> {
+  const { challenge_id, options } = await postForJson('/auth/passkeys/authentication/options')
+  const credential = await getCredential(options)
+  const data = await postForJson('/auth/passkeys/authentication/verify', {
+    challenge_id,
+    credential,
+  })
+  return data.user
+}
+
+export async function registerPasskey(): Promise<void> {
+  const { challenge_id, options } = await postForJson('/auth/passkeys/registration/options')
+  const credential = await createCredential(options)
+  await postForJson('/auth/passkeys/registration/verify', { challenge_id, credential })
+}
+
+export async function listPasskeys(): Promise<PasskeyInfo[]> {
+  const res = await fetch('/auth/passkeys', { credentials: 'include' })
+  if (!res.ok) throw new Error(await readError(res))
+  const data = await res.json()
+  return Array.isArray(data) ? data : (data?.passkeys ?? [])
+}
+
+export async function deletePasskey(id: string): Promise<void> {
+  const res = await fetch(`/auth/passkeys/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  })
+  if (!res.ok) throw new Error(await readError(res))
 }
