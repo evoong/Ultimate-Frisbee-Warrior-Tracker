@@ -11,13 +11,24 @@
 -- Run this entire file in the Supabase SQL Editor AFTER 002.
 -- Re-runnable (create or replace, drop trigger if exists).
 --
--- MANUAL DASHBOARD STEP (required alongside this migration):
---   Enable "Confirm email" under Authentication -> Sign In / Up ->
---   Email. If it stays disabled, Supabase auto-confirms every signup
---   and write access is granted at signup instead of at verification.
---   The Confirm Signup email template must point at
+-- DASHBOARD STATE (verified via the management API, 2026-07-04):
+--   "Confirm email" (Authentication -> Sign In / Up -> Email) is
+--   already enabled, so signups require verification before the
+--   trigger grants write access. If it is ever disabled, Supabase
+--   auto-confirms every signup and write access is granted at signup
+--   instead of at verification.
+--   The Confirm Signup template still uses the default
+--   {{ .ConfirmationURL }} link and CANNOT be edited on the free tier
+--   with the default email provider (the dashboard hides the option
+--   and the management API returns 400). That is fine for this
+--   feature: clicking the default link sets email_confirmed_at, which
+--   fires the trigger and grants write access. The user just is not
+--   signed in afterwards and logs in manually. If a custom SMTP
+--   provider or a paid plan is ever added, point the template at
 --     {{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=signup
---   (the gateway already handles this route).
+--   so confirmation also signs the user in through the gateway, and
+--   strip the trailing slash from site_url first or the rendered link
+--   contains a double slash the gateway rejects.
 --
 -- VERIFICATION (run in the SQL editor after applying):
 --   1. Trigger exists and is enabled ('O' = enabled):

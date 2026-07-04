@@ -99,15 +99,24 @@ the function and `drop trigger if exists` before `create trigger`. Contents:
    on conflict do nothing;
    ```
 
-## Manual dashboard step (required)
+## Manual dashboard step
 
-Enable "Confirm email" under Authentication, Sign In / Up, Email in the
-Supabase dashboard. If it stays disabled, Supabase auto-confirms every
-signup and the trigger grants write access at signup, which defeats the
-read-only-until-verified rule. The Confirm Signup email template must point
-at `{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=signup`,
-which the gateway already handles. Dashboard access is limited to the project
-owner (evoong), so this step is theirs.
+"Confirm email" (Authentication, Sign In / Up, Email) was verified already
+enabled on 2026-07-04 via the management API, so no action is needed. If it
+is ever disabled, Supabase auto-confirms every signup and the trigger grants
+write access at signup, which defeats the read-only-until-verified rule.
+
+The Confirm Signup email template keeps the default `{{ .ConfirmationURL }}`
+link: template editing is not available on the free tier with the default
+email provider (confirmed by a 400 from the management API). The default
+link is sufficient for this feature, because GoTrue sets `email_confirmed_at`
+when it is clicked, which fires the trigger. The only loss is that the user
+is not signed in automatically afterwards and logs in manually. If a custom
+SMTP provider or a paid plan is ever added, point the template at
+`{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=signup` (the
+gateway already handles this route) and strip the trailing slash from
+`site_url` first, or the rendered link contains a double slash the gateway
+rejects.
 
 ## Security notes
 
