@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import PlayerAvatar from '../PlayerAvatar'
 import { useMediaQuery } from '../../lib/shadcn/use-media-query'
@@ -13,6 +13,7 @@ type BoardPlayer = { id: number; display_name: string; photo_url: string | null 
 
 type DragState = {
   playerId: number
+  pointerId: number
   origin: 'bench' | 'field'
   startX: number
   startY: number
@@ -56,60 +57,81 @@ export default function StrategyBoard({ players, positions, allowed, onPlace, on
   // frame would read a stale moved=false from state and skip the drop.
   const dragRef = useRef<DragState | null>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
+  // The last placed circle the user grabbed; it renders above the others so
+  // overlapping circles stay individually reachable.
+  const [lastActiveId, setLastActiveId] = useState<number | null>(null)
   const updateDrag = (d: DragState | null) => {
     dragRef.current = d
     setDrag(d)
   }
+  // Removes whatever window listeners the current drag installed. Stored in a
+  // ref so both the drag's own pointerup and the unmount cleanup can call it.
+  const teardownRef = useRef<() => void>(() => {})
+  useEffect(() => () => teardownRef.current(), [])
 
   const placed = players.filter(p => positions.has(p.id))
   const bench = players.filter(p => !positions.has(p.id))
   const dragPlayer = drag ? players.find(p => p.id === drag.playerId) : undefined
 
+  // The move/up/cancel handlers live on window for the duration of a drag, not
+  // on the dragged avatar. Relying on the avatar's own pointerup (via pointer
+  // capture) meant a release over an overlapping circle or empty field, or a
+  // browser-issued pointercancel, could land on an element with no handler and
+  // silently skip the drop. Window listeners catch the release wherever it
+  // happens; capture is no longer needed.
   const handlePointerDown = (playerId: number, origin: 'bench' | 'field') =>
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (!allowed) return
-      e.currentTarget.setPointerCapture(e.pointerId)
-      updateDrag({ playerId, origin, startX: e.clientX, startY: e.clientY, clientX: e.clientX, clientY: e.clientY, moved: false })
-    }
+      teardownRef.current() // defensively end any drag still in flight
+      if (origin === 'field') setLastActiveId(playerId)
+      updateDrag({ playerId, pointerId: e.pointerId, origin, startX: e.clientX, startY: e.clientY, clientX: e.clientX, clientY: e.clientY, moved: false })
 
-  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    const d = dragRef.current
-    if (!d) return
-    const moved = d.moved
-      || Math.abs(e.clientX - d.startX) > DRAG_THRESHOLD_PX
-      || Math.abs(e.clientY - d.startY) > DRAG_THRESHOLD_PX
-    if (!moved) return
-    updateDrag({ ...d, clientX: e.clientX, clientY: e.clientY, moved: true })
-  }
-
-  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    const d = dragRef.current
-    updateDrag(null)
-    if (!d || !d.moved) return
-    const rect = fieldRef.current?.getBoundingClientRect()
-    if (!rect) return
-    const inside = e.clientX >= rect.left && e.clientX <= rect.right
-      && e.clientY >= rect.top && e.clientY <= rect.bottom
-    if (inside) {
-      const relLeft = (e.clientX - rect.left) / rect.width
-      const relTop = (e.clientY - rect.top) / rect.height
-      const { x, y } = toCanonical(relLeft, relTop, isDesktop)
-      onPlace(d.playerId, x, y)
-    } else if (d.origin === 'field') {
-      // Any off-field drop returns the player to the bench.
-      onRemove(d.playerId)
-    }
-  }
-
-  const handlePointerCancel = () => updateDrag(null)
-
-  const dragHandlers = allowed
-    ? {
-        onPointerMove: handlePointerMove,
-        onPointerUp: handlePointerUp,
-        onPointerCancel: handlePointerCancel,
+      const onMove = (ev: PointerEvent) => {
+        const d = dragRef.current
+        if (!d || ev.pointerId !== d.pointerId) return
+        const moved = d.moved
+          || Math.abs(ev.clientX - d.startX) > DRAG_THRESHOLD_PX
+          || Math.abs(ev.clientY - d.startY) > DRAG_THRESHOLD_PX
+        if (!moved) return
+        updateDrag({ ...d, clientX: ev.clientX, clientY: ev.clientY, moved: true })
       }
-    : {}
+      const onUp = (ev: PointerEvent) => {
+        const d = dragRef.current
+        if (!d || ev.pointerId !== d.pointerId) return
+        teardown()
+        updateDrag(null)
+        if (!d.moved) return
+        const rect = fieldRef.current?.getBoundingClientRect()
+        if (!rect) return
+        const inside = ev.clientX >= rect.left && ev.clientX <= rect.right
+          && ev.clientY >= rect.top && ev.clientY <= rect.bottom
+        if (inside) {
+          const relLeft = (ev.clientX - rect.left) / rect.width
+          const relTop = (ev.clientY - rect.top) / rect.height
+          const { x, y } = toCanonical(relLeft, relTop, isDesktop)
+          onPlace(d.playerId, x, y)
+        } else if (d.origin === 'field') {
+          // Any off-field drop returns the player to the bench.
+          onRemove(d.playerId)
+        }
+      }
+      const onCancel = (ev: PointerEvent) => {
+        const d = dragRef.current
+        if (d && ev.pointerId !== d.pointerId) return
+        teardown()
+        updateDrag(null)
+      }
+      const teardown = () => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        window.removeEventListener('pointercancel', onCancel)
+        teardownRef.current = () => {}
+      }
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onCancel)
+      teardownRef.current = teardown
+    }
 
   // End zone strips along the long axis: left/right in landscape,
   // top/bottom in portrait (canonical left end zone renders at the top).
@@ -146,15 +168,18 @@ export default function StrategyBoard({ players, positions, allowed, onPlace, on
           const pos = positions.get(player.id)!
           const { left, top } = toRendered(pos.x, pos.y, isDesktop)
           const isDragSource = drag?.moved && drag.playerId === player.id
+          // The most recently grabbed circle renders on top, so overlapping
+          // circles can be peeled apart: whatever you touch comes forward and
+          // stays there, letting you re-grab it instead of the one beneath.
+          const onTop = lastActiveId === player.id
           return (
             <div
               key={player.id}
               onPointerDown={handlePointerDown(player.id, 'field')}
-              {...dragHandlers}
               className={`absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center touch-none ${
                 allowed ? 'cursor-grab' : ''
               } ${isDragSource ? 'opacity-40' : ''}`}
-              style={{ left: `${left}%`, top: `${top}%` }}
+              style={{ left: `${left}%`, top: `${top}%`, zIndex: onTop ? 20 : 10 }}
             >
               <PlayerAvatar photoUrl={player.photo_url} name={player.display_name} size="sm" />
               <span className="text-[9px] font-medium text-foreground bg-background/70 rounded px-1 mt-0.5 max-w-16 truncate">
@@ -176,7 +201,6 @@ export default function StrategyBoard({ players, positions, allowed, onPlace, on
             <div
               key={player.id}
               onPointerDown={handlePointerDown(player.id, 'bench')}
-              {...dragHandlers}
               className={`flex flex-col items-center w-14 touch-none ${allowed ? 'cursor-grab' : ''} ${
                 isDragSource ? 'opacity-40' : ''
               }`}
