@@ -43,7 +43,11 @@
 --    The email comes from auth.users.email, a server-controlled
 --    column, never from user-editable metadata. The null guard covers
 --    accounts without an email (for example phone-only), where there
---    is nothing to allowlist.
+--    is nothing to allowlist. There is deliberately no exception
+--    handler: if the insert ever fails, the error aborts the
+--    auth.users write and surfaces loudly in Supabase Auth logs,
+--    which is preferable to silently stranding a verified user
+--    without write access.
 -- ------------------------------------------------------------
 create or replace function public.grant_write_on_verify()
 returns trigger

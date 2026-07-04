@@ -45,7 +45,10 @@ Alternatives considered and rejected:
 - The grant is permanent: the allowlist row persists independently of any
   later state of the auth user.
 - Revocation: delete the row from `allowed_users`. The account drops back to
-  read-only on its next request.
+  read-only on its next request. Revocation is per-email, not per-person: a
+  revoked user who changes their account email and confirms the new address
+  is re-granted by the trigger. This is within the accepted exposure model
+  described in the security notes.
 - Existing verified accounts are backfilled so nobody who already confirmed
   their email is left read-only.
 - No gateway or frontend changes. The `allowed` flag returned by the session

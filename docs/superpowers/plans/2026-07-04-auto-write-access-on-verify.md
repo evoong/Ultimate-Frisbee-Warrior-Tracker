@@ -17,7 +17,7 @@
 - No Co-Authored-By lines or AI attribution in commits or PR bodies.
 - Migrations must be re-runnable: `create or replace` for functions, `drop trigger if exists` before `create trigger` (convention from migrations 001 and 002).
 - Migrations CANNOT be executed from this environment. They run manually in the Supabase SQL editor. Never claim the migration was applied; the deliverable is the file plus verification instructions.
-- CLAUDE.md must be updated in the same change as the logic change (CLAUDE.md rule).
+- CLAUDE.md must be updated in the same change as the logic change (CLAUDE.md rule). CLAUDE.md is gitignored in this repo (local only, .gitignore line 44), so the update happens in the working tree and is never committed.
 
 ---
 
@@ -219,12 +219,11 @@ with:
 
 Check the two edited sections contain no em dashes and no emojis, and that no other CLAUDE.md statement now contradicts them (search CLAUDE.md for "allowlist" and read each hit).
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Confirm the file stays local-only**
 
-```bash
-git add CLAUDE.md
-git commit -m "Document automatic write access on email verification"
-```
+CLAUDE.md is gitignored ("local only, not tracked", .gitignore line 44), so
+there is nothing to commit for this task. Run `git status --short` and confirm
+no staged changes remain. Never use `git add -f` on CLAUDE.md.
 
 ---
 
