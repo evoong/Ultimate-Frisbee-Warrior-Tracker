@@ -130,7 +130,8 @@ export default function Strategy() {
     if (cancelledRef.current.has(tempId)) {
       cancelledRef.current.delete(tempId)
       pendingEditsRef.current.delete(tempId)
-      deleteArrow({ id: row.id })
+      const ok = await deleteArrow({ id: row.id })
+      if (!ok && selectedPlayId !== null) loadArrows(selectedPlayId)
       return
     }
     // Reconcile temp id -> server id and keep selection following it.
