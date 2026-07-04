@@ -1,4 +1,5 @@
 import { createGateway } from './gateway/index.js'
+import { handleChatRequest, handleChatHistoryRequest, type ChatConfig } from './gateway/chat.js'
 
 interface Env {
   ASSETS: {
@@ -7,6 +8,27 @@ interface Env {
   SUPABASE_URL: string;
   SUPABASE_PUBLISHABLE_KEY: string;
   SUPABASE_JWKS_URL: string;
+  SUPABASE_SECRET_KEY: string;
+  GEMINI_API_KEY: string;
+}
+
+// Allowlist membership, cached per-isolate for a minute (mirrors the Express
+// server's cache) so repeated chat calls don't hit Postgres every time.
+const allowlistCache = new Map<string, { allowed: boolean; expires: number }>()
+
+function createIsEmailAllowed(env: Env) {
+  return async (email: string): Promise<boolean> => {
+    const cached = allowlistCache.get(email)
+    if (cached && cached.expires > Date.now()) return cached.allowed
+    const res = await fetch(
+      `${env.SUPABASE_URL}/rest/v1/allowed_users?select=email&email=eq.${encodeURIComponent(email)}`,
+      { headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: `Bearer ${env.SUPABASE_SECRET_KEY}` } }
+    )
+    const data: any = res.ok ? await res.json() : []
+    const allowed = Array.isArray(data) && data.length > 0
+    allowlistCache.set(email, { allowed, expires: Date.now() + 60_000 })
+    return allowed
+  }
 }
 
 export default {
@@ -22,6 +44,25 @@ export default {
 
       const gatewayResponse = await gateway(request);
       if (gatewayResponse) return gatewayResponse;
+
+      // AI chat: needs the service-role key and Gemini, so it lives outside
+      // the gateway (which only ever proxies as the caller's own token).
+      if (url.pathname === "/api/chat" || url.pathname === "/api/chat/history") {
+        const chatConfig: ChatConfig = {
+          supabaseUrl: env.SUPABASE_URL,
+          publishableKey: env.SUPABASE_PUBLISHABLE_KEY,
+          jwksUrl: env.SUPABASE_JWKS_URL,
+          supabaseSecretKey: env.SUPABASE_SECRET_KEY,
+          geminiApiKey: env.GEMINI_API_KEY,
+          isEmailAllowed: createIsEmailAllowed(env),
+        };
+        if (url.pathname === "/api/chat" && request.method === "POST") {
+          return handleChatRequest(chatConfig, request);
+        }
+        if (url.pathname === "/api/chat/history" && request.method === "GET") {
+          return handleChatHistoryRequest(chatConfig, request);
+        }
+      }
 
       const response = await env.ASSETS.fetch(request);
 
