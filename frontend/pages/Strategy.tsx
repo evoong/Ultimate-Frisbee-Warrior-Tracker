@@ -255,10 +255,14 @@ export default function Strategy() {
   const handleAddPlayer = async () => {
     const name = newPlayerName.trim()
     if (!name) return
-    await createPlayer({ display_name: name, is_sub: true })
+    // Join the assigned game's season roster (not just the global players
+    // table) so the sub isn't immediately filtered out by the attendance
+    // check below, same convention as QuickScore's mid-game sub creation.
+    await createPlayer({ display_name: name, is_sub: true, season_ids: selectedGame?.season_id ? [selectedGame.season_id] : undefined })
     setNewPlayerName('')
     setShowAddPlayer(false)
     fetchPlayers()
+    if (selectedGame?.season_id) fetchSeasonRoster({ seasonId: selectedGame.season_id })
   }
 
   const stepList = (steps as StrategyStep[] | undefined) ?? []

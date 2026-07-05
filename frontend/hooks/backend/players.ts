@@ -158,14 +158,14 @@ export function useGetPlayersNotInSeason() {
 }
 
 export function useCreatePlayerForGame() {
-  const fn = useCallback(async (params: { gameId: number; display_name: string; position?: string; gender_match?: string }) => {
+  const fn = useCallback(async (params: { gameId: number; seasonId?: number | null; display_name: string; position?: string; gender_match?: string }) => {
     // Players created mid-game from QuickScore are subs
     const { data: playerData, error: playerError } = await supabase
       .from('players')
       .insert({ display_name: params.display_name, position: params.position, gender_match: params.gender_match, is_sub: true })
       .select()
     if (playerError) throw new Error(playerError.message)
-    
+
     const playerId = playerData?.[0]?.id
     if (!playerId) throw new Error('Failed to create player')
 
@@ -174,13 +174,22 @@ export function useCreatePlayerForGame() {
       .insert({ game_id: params.gameId, player_id: playerId, lineup_name: 'Starting' })
       .select()
     if (error) throw new Error(error.message)
+
+    // Also join the game's season roster (not just game_lineups) so the sub
+    // shows up anywhere a season-scoped roster or attendance filter is
+    // applied (QuickScore, Strategy, ...), instead of being invisible
+    // everywhere except this one game's lineup tab.
+    if (params.seasonId) {
+      const { error: spError } = await supabase.from('season_players').insert({ player_id: playerId, season_id: params.seasonId })
+      if (spError) throw new Error(spError.message)
+    }
     return data?.[0]
   }, [])
   return useApiCall(fn)
 }
 
 export function useDeleteSubPlayer() {
-  const fn = useCallback(async (params: { gameId: number; playerId: number }) => {
+  const fn = useCallback(async (params: { gameId: number; seasonId?: number | null; playerId: number }) => {
     const { data, error } = await supabase
       .from('game_lineups')
       .delete()
@@ -188,6 +197,14 @@ export function useDeleteSubPlayer() {
       .eq('player_id', params.playerId)
       .select()
     if (error) throw new Error(error.message)
+    if (params.seasonId) {
+      const { error: spError } = await supabase
+        .from('season_players')
+        .delete()
+        .eq('season_id', params.seasonId)
+        .eq('player_id', params.playerId)
+      if (spError) throw new Error(spError.message)
+    }
     return data?.[0]
   }, [])
   return useApiCall(fn)
