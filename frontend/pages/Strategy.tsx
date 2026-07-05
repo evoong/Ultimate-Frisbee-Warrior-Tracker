@@ -96,8 +96,13 @@ export default function Strategy() {
   const sortedGames = sortGamesUpcomingFirst((games as Game[] | undefined) ?? [])
 
   // Load this play's steps whenever it changes, defaulting to the first step.
+  // Clearing the board here (not on every step change below) keeps a stale
+  // play's placements from flashing while a different play's steps load.
   useEffect(() => {
     setSelectedStepId(null)
+    setPositions(new Map())
+    setOpponents([])
+    setArrows([])
     if (selectedPlayId !== null) {
       fetchSteps({ playId: selectedPlayId }).then(rows => {
         if (rows && rows.length > 0) setSelectedStepId(rows[0]!.id)
@@ -119,8 +124,11 @@ export default function Strategy() {
   }, [selectedPlay?.game_id, selectedGame?.season_id])
 
   // Load positions/opponents/arrows whenever the selected step changes.
-  // Clearing first keeps the previous step's placements from flashing on the
-  // new board.
+  // Deliberately does NOT clear state first: leaving the previous step's
+  // positions in place until the new ones arrive is what lets a player
+  // present in both steps slide from A to B (same key = same DOM node, so
+  // StrategyBoard's left/top CSS transition animates the change) instead of
+  // vanishing and popping back in at the new spot.
   const loadStepData = async (stepId: number) => {
     const [posRows, oppRows, arrowRows] = await Promise.all([
       fetchPositions({ stepId }),
@@ -133,9 +141,6 @@ export default function Strategy() {
   }
 
   useEffect(() => {
-    setPositions(new Map())
-    setOpponents([])
-    setArrows([])
     if (selectedStepId !== null) loadStepData(selectedStepId)
   }, [selectedStepId])
 
@@ -270,8 +275,12 @@ export default function Strategy() {
 
   const handleDeleteStep = async () => {
     if (selectedStepId === null || stepList.length <= 1) return
+    const deletedIndex = stepIndex
     await removeStep({ stepId: selectedStepId })
-    await fetchSteps({ playId: selectedPlayId! })
+    const remaining = await fetchSteps({ playId: selectedPlayId! })
+    if (remaining && remaining.length > 0) {
+      setSelectedStepId(remaining[Math.max(0, deletedIndex - 1)]!.id)
+    }
   }
 
   const saveError = upsertError || removeError
