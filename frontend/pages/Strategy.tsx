@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
-import { useGetPlayers, useCreatePlayer } from '../hooks/backend/players'
+import { useGetPlayers, useGetSeasonRoster, useCreatePlayer } from '../hooks/backend/players'
 import { useGetGames } from '../hooks/backend/games'
 import { useGetGameAttendance } from '../hooks/backend/attendance'
+import { sortGamesUpcomingFirst } from '../lib/gameOrder'
 import {
   useGetStrategyPlays, useCreateStrategyPlay, useUpdateStrategyPlay, useDeleteStrategyPlay,
   useGetStrategySteps, useAddStrategyStep, useDeleteStrategyStep,
@@ -23,7 +24,7 @@ import { Skeleton } from '../lib/shadcn/skeleton'
 import { ClipboardList, Plus, Edit2, Trash2, UserPlus, ChevronLeft, ChevronRight, X } from 'lucide-react'
 
 type Player = { id: number; display_name: string; photo_url: string | null; is_sub: boolean | null }
-type Game = { id: number; opponent: string; game_date: string; season_id: number | null }
+type Game = { id: number; opponent: string; game_date: string; game_time: string | null; season_id: number | null }
 
 const NO_GAME = '__none__'
 
@@ -33,6 +34,7 @@ export default function Strategy() {
   const { trigger: createPlayer } = useCreatePlayer()
   const { data: games, trigger: fetchGames } = useGetGames()
   const { data: attendanceRows, trigger: fetchAttendance } = useGetGameAttendance()
+  const { data: seasonRoster, trigger: fetchSeasonRoster } = useGetSeasonRoster()
 
   const { data: plays, loading: playsLoading, error: playsError, trigger: fetchPlays } = useGetStrategyPlays()
   const { trigger: createPlay, loading: creating } = useCreateStrategyPlay()
@@ -89,6 +91,9 @@ export default function Strategy() {
   }, [plays])
 
   const selectedPlay = (plays as StrategyPlay[] | undefined)?.find(p => p.id === selectedPlayId) ?? null
+  const selectedGame = (games as Game[] | undefined)?.find(g => g.id === selectedPlay?.game_id) ?? null
+  // Same upcoming-first, then most-recent-first ordering as the Schedule page.
+  const sortedGames = sortGamesUpcomingFirst((games as Game[] | undefined) ?? [])
 
   // Load this play's steps whenever it changes, defaulting to the first step.
   useEffect(() => {
@@ -100,10 +105,18 @@ export default function Strategy() {
     }
   }, [selectedPlayId])
 
-  // Fetch attendance whenever the selected play's assigned game changes.
+  // Fetch attendance and that game's season roster whenever the selected
+  // play's assigned game changes. Scoping to the season roster first matters:
+  // game_attendance only has rows for players actually on that season's
+  // roster, so filtering the *global* player list by attendance alone barely
+  // narrows anything (everyone else defaults to "attending" via row?.in ??
+  // true, same as Quick Score's convention, since they have no row at all).
   useEffect(() => {
-    if (selectedPlay?.game_id) fetchAttendance({ gameId: selectedPlay.game_id })
-  }, [selectedPlay?.game_id])
+    if (selectedPlay?.game_id) {
+      fetchAttendance({ gameId: selectedPlay.game_id })
+      if (selectedGame?.season_id) fetchSeasonRoster({ seasonId: selectedGame.season_id })
+    }
+  }, [selectedPlay?.game_id, selectedGame?.season_id])
 
   // Load positions/opponents/arrows whenever the selected step changes.
   // Clearing first keeps the previous step's placements from flashing on the
@@ -126,17 +139,15 @@ export default function Strategy() {
     if (selectedStepId !== null) loadStepData(selectedStepId)
   }, [selectedStepId])
 
-  const attendingPlayerIds = selectedPlay?.game_id
-    ? new Set(
-        (players ?? [])
-          .filter(p => {
-            const row = (attendanceRows as { player_id: number; in: boolean }[] | undefined)?.find(r => r.player_id === p.id)
-            return row?.in ?? true
-          })
-          .map(p => p.id)
-      )
-    : null
-  const boardPlayers = attendingPlayerIds ? (players ?? []).filter(p => attendingPlayerIds.has(p.id)) : (players ?? [])
+  // When a game is assigned, scope down to that game's season roster first
+  // (matching the QuickScore convention), then filter by attendance on top
+  // of that roster; missing attendance row still defaults to "attending".
+  const boardPlayers = selectedPlay?.game_id
+    ? ((selectedGame?.season_id ? (seasonRoster as Player[] | undefined) : players) ?? []).filter(p => {
+        const row = (attendanceRows as { player_id: number; in: boolean }[] | undefined)?.find(r => r.player_id === p.id)
+        return row?.in ?? true
+      })
+    : (players ?? [])
 
   const handlePlace = async (playerId: number, x: number, y: number) => {
     if (selectedStepId === null) return
@@ -350,7 +361,7 @@ export default function Strategy() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value={NO_GAME}>No game (full roster)</SelectItem>
-                    {(games as Game[] | undefined)?.map(g => (
+                    {sortedGames.map(g => (
                       <SelectItem key={g.id} value={String(g.id)}>vs {g.opponent} — {g.game_date}</SelectItem>
                     ))}
                   </SelectContent>
@@ -448,7 +459,7 @@ export default function Strategy() {
                 <SelectTrigger className="bg-background border-border"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NO_GAME}>No game (full roster)</SelectItem>
-                  {(games as Game[] | undefined)?.map(g => (
+                  {sortedGames.map(g => (
                     <SelectItem key={g.id} value={String(g.id)}>vs {g.opponent} — {g.game_date}</SelectItem>
                   ))}
                 </SelectContent>

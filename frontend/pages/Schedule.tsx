@@ -7,6 +7,7 @@ import { useGetGameAttendance, useSetAttendance, useSetAllAttendance } from '../
 import { useGetJamSyncConflicts, useSyncJamNow, useCreateGameFromConflict, useLinkConflictToGame, useDismissConflict, type JamSyncConflict } from '../hooks/backend/jamSync'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
 import { isTurnoverEvent } from '../lib/eventUtils'
+import { sortGamesUpcomingFirst } from '../lib/gameOrder'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
@@ -874,13 +875,11 @@ export default function Schedule() {
   // Next upcoming game first, then the rest of the future schedule
   // chronologically; a separate "Played" section below runs most-recent-first
   // so the last result is always the first thing you see in that group.
-  // A game counts as "past" once its actual start time has passed, not just
-  // its calendar date, so a game happening later today still shows as upcoming.
-  const gameStartsAt = (g: Game) => new Date(`${g.game_date}T${g.game_time || '00:00:00'}`)
   const now = new Date()
+  const gameStartsAt = (g: Game) => new Date(`${g.game_date}T${g.game_time || '00:00:00'}`)
   const upcomingGames = filteredGames.filter(g => gameStartsAt(g) >= now).sort((a, b) => gameStartsAt(a).getTime() - gameStartsAt(b).getTime())
   const pastGames = filteredGames.filter(g => gameStartsAt(g) < now).sort((a, b) => gameStartsAt(b).getTime() - gameStartsAt(a).getTime())
-  const sortedGames = [...upcomingGames, ...pastGames]
+  const sortedGames = sortGamesUpcomingFirst(filteredGames, now)
 
   const formatRelativeDay = (dateStr: string) => {
     const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate())
