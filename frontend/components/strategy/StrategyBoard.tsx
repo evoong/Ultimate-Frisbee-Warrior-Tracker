@@ -400,7 +400,7 @@ export default function StrategyBoard({
         ref={fieldRef}
         onPointerDown={handleFieldPointerDown}
         className={`relative overflow-hidden rounded-xl border border-border bg-emerald-600/20 dark:bg-emerald-500/10 touch-none ${
-          isDesktop ? 'w-full aspect-[100/37]' : 'mx-auto h-[70vh] aspect-[37/100]'
+          isDesktop ? 'w-full aspect-[100/37]' : 'mx-auto w-full max-w-xl max-h-[75vh] aspect-[37/100]'
         } ${drawArmed ? 'cursor-crosshair' : ''}`}
       >
         {endZones}
