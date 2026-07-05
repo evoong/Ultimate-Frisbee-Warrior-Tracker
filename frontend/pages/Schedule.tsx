@@ -317,7 +317,7 @@ export default function Schedule() {
 
   const handleAddToLineup = async () => {
     if (!selectedGame || !lineupPlayerSelect) return
-    await addToLineup({ gameId: selectedGame.id, player_id: parseInt(lineupPlayerSelect), lineup_name: lineupName })
+    await addToLineup({ gameId: selectedGame.id, player_id: parseInt(lineupPlayerSelect), lineup_name: lineupName, seasonId: selectedGame.season_id })
     setLineupPlayerSelect('')
     fetchLineups({ gameId: selectedGame.id })
   }

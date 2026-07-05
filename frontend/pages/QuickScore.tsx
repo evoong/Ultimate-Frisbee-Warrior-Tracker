@@ -242,14 +242,14 @@ export default function QuickScore() {
 
   const handleAddExistingScorer = async (playerId: string) => {
     if (!selectedGameId) return
-    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGameId })
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGameId, seasonId: selectedGameSeasonId })
     await refreshRoster()
     setDefaultScorerId(playerId)
   }
 
   const handleAddExistingAssister = async (playerId: string) => {
     if (!selectedGameId) return
-    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGameId })
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGameId, seasonId: selectedGameSeasonId })
     await refreshRoster()
     setDefaultAssisterId(playerId)
   }
@@ -263,7 +263,7 @@ export default function QuickScore() {
 
   const handleAddExistingPlayerToAttendance = async (playerId: string) => {
     if (!selectedGameId) return
-    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGameId })
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGameId, seasonId: selectedGameSeasonId })
     await refreshRoster()
     fetchAttendance({ gameId: selectedGameId })
   }
