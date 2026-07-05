@@ -127,7 +127,7 @@ export function useGetLineups() {
 }
 
 export function useAddToLineup() {
-  const fn = useCallback(async (params: { gameId: number; player_id: number; lineup_name?: string }) => {
+  const fn = useCallback(async (params: { gameId: number; player_id: number; lineup_name?: string; seasonId?: number | null }) => {
     const { data, error } = await supabase
       .from('game_lineups')
       .insert({
@@ -137,6 +137,24 @@ export function useAddToLineup() {
       })
       .select()
     if (error) throw new Error(error.message)
+
+    // Also join the game's season roster, same as useCreatePlayerForGame:
+    // without this a player added straight to a lineup (rather than through
+    // Roster) stays invisible to season-scoped attendance/roster filters.
+    // ignoreDuplicates since they may already be a member of this season.
+    if (params.seasonId) {
+      const { error: spError } = await supabase
+        .from('season_players')
+        .upsert({ player_id: params.player_id, season_id: params.seasonId }, { onConflict: 'season_id,player_id', ignoreDuplicates: true })
+      if (spError) throw new Error(spError.message)
+    }
+    // See useCreatePlayerForGame (players.ts): a row for this specific game
+    // so the Attendance tab (which lists existing rows, not the roster)
+    // shows them immediately rather than only from the next game onward.
+    const { error: gaError } = await supabase
+      .from('game_attendance')
+      .upsert({ game_id: params.gameId, player_id: params.player_id, in: true }, { onConflict: 'game_id,player_id', ignoreDuplicates: true })
+    if (gaError) throw new Error(gaError.message)
     return data?.[0]
   }, [])
   return useApiCall(fn)

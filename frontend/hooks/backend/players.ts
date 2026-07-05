@@ -158,14 +158,14 @@ export function useGetPlayersNotInSeason() {
 }
 
 export function useCreatePlayerForGame() {
-  const fn = useCallback(async (params: { gameId: number; display_name: string; position?: string; gender_match?: string }) => {
+  const fn = useCallback(async (params: { gameId: number; seasonId?: number | null; display_name: string; position?: string; gender_match?: string }) => {
     // Players created mid-game from QuickScore are subs
     const { data: playerData, error: playerError } = await supabase
       .from('players')
       .insert({ display_name: params.display_name, position: params.position, gender_match: params.gender_match, is_sub: true })
       .select()
     if (playerError) throw new Error(playerError.message)
-    
+
     const playerId = playerData?.[0]?.id
     if (!playerId) throw new Error('Failed to create player')
 
@@ -174,13 +174,31 @@ export function useCreatePlayerForGame() {
       .insert({ game_id: params.gameId, player_id: playerId, lineup_name: 'Starting' })
       .select()
     if (error) throw new Error(error.message)
+
+    // Also join the game's season roster (not just game_lineups) so the sub
+    // shows up anywhere a season-scoped roster or attendance filter is
+    // applied (QuickScore, Strategy, ...), instead of being invisible
+    // everywhere except this one game's lineup tab.
+    if (params.seasonId) {
+      const { error: spError } = await supabase.from('season_players').insert({ player_id: playerId, season_id: params.seasonId })
+      if (spError) throw new Error(spError.message)
+    }
+    // A new game backfills game_attendance for the season roster at that
+    // moment (see trg_backfill_game_attendance), but that only fires once
+    // at game creation; a player joining later needs its own row so
+    // Schedule's Attendance tab (which lists existing rows, not the roster)
+    // picks them up immediately instead of only from the next game onward.
+    const { error: gaError } = await supabase
+      .from('game_attendance')
+      .upsert({ game_id: params.gameId, player_id: playerId, in: true }, { onConflict: 'game_id,player_id', ignoreDuplicates: true })
+    if (gaError) throw new Error(gaError.message)
     return data?.[0]
   }, [])
   return useApiCall(fn)
 }
 
 export function useDeleteSubPlayer() {
-  const fn = useCallback(async (params: { gameId: number; playerId: number }) => {
+  const fn = useCallback(async (params: { gameId: number; seasonId?: number | null; playerId: number }) => {
     const { data, error } = await supabase
       .from('game_lineups')
       .delete()
@@ -188,18 +206,51 @@ export function useDeleteSubPlayer() {
       .eq('player_id', params.playerId)
       .select()
     if (error) throw new Error(error.message)
+    if (params.seasonId) {
+      const { error: spError } = await supabase
+        .from('season_players')
+        .delete()
+        .eq('season_id', params.seasonId)
+        .eq('player_id', params.playerId)
+      if (spError) throw new Error(spError.message)
+    }
+    const { error: gaError } = await supabase
+      .from('game_attendance')
+      .delete()
+      .eq('game_id', params.gameId)
+      .eq('player_id', params.playerId)
+    if (gaError) throw new Error(gaError.message)
     return data?.[0]
   }, [])
   return useApiCall(fn)
 }
 
 export function useAddPlayerToGame() {
-  const fn = useCallback(async (params: { gameId: number; playerId: number }) => {
+  const fn = useCallback(async (params: { gameId: number; playerId: number; seasonId?: number | null }) => {
     const { data, error } = await supabase
       .from('game_lineups')
       .insert({ game_id: params.gameId, player_id: params.playerId, lineup_name: 'Starting' })
       .select()
     if (error) throw new Error(error.message)
+
+    // Also join the game's season roster, same as useCreatePlayerForGame:
+    // this may be an existing player from a *different* season, and without
+    // a season_players row here they'd be invisible to this season's
+    // attendance/roster filters. ignoreDuplicates since they may already be
+    // a member of this season.
+    if (params.seasonId) {
+      const { error: spError } = await supabase
+        .from('season_players')
+        .upsert({ player_id: params.playerId, season_id: params.seasonId }, { onConflict: 'season_id,player_id', ignoreDuplicates: true })
+      if (spError) throw new Error(spError.message)
+    }
+    // See useCreatePlayerForGame: a row for this specific game so the
+    // Attendance tab (which lists existing rows, not the roster) shows them
+    // immediately rather than only from the next game onward.
+    const { error: gaError } = await supabase
+      .from('game_attendance')
+      .upsert({ game_id: params.gameId, player_id: params.playerId, in: true }, { onConflict: 'game_id,player_id', ignoreDuplicates: true })
+    if (gaError) throw new Error(gaError.message)
     return data?.[0]
   }, [])
   return useApiCall(fn)

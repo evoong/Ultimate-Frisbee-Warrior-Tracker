@@ -1,8 +1,17 @@
 import { useState, useCallback, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 
-export type StrategyPlay = { id: number; name: string; created_at: string }
+export type StrategyPlay = { id: number; name: string; created_at: string; game_id: number | null }
+export type StrategyStep = { id: number; play_id: number; step_number: number }
 export type StrategyPosition = { player_id: number; x: number; y: number }
+export type StrategyOpponentMarker = { id: number; label: string; x: number; y: number }
+export type StrategyArrow = {
+  id: number
+  x1: number; y1: number
+  x2: number; y2: number
+  cx: number; cy: number
+  arrow_type: 'run' | 'throw'
+}
 
 type HookResult<T, P = void> = {
   data: T | undefined
@@ -50,30 +59,40 @@ export function useGetStrategyPlays() {
   return useApiCall<StrategyPlay[]>(fn)
 }
 
+// Every play needs at least one step, so creation inserts the play and its
+// first step together; callers never have to special-case a stepless play.
 export function useCreateStrategyPlay() {
-  const fn = useCallback(async (params: { name: string }) => {
+  const fn = useCallback(async (params: { name: string; game_id?: number | null }) => {
     const { data, error } = await supabase
       .from('strategy_plays')
-      .insert({ name: params.name })
+      .insert({ name: params.name, game_id: params.game_id ?? null })
       .select()
     if (error) throw new Error(error.message)
-    return data?.[0] as StrategyPlay
+    const play = data?.[0] as StrategyPlay
+    const { data: stepData, error: stepError } = await supabase
+      .from('strategy_steps')
+      .insert({ play_id: play.id, step_number: 1 })
+      .select()
+    if (stepError) throw new Error(stepError.message)
+    return { ...play, firstStepId: (stepData?.[0] as { id: number }).id }
   }, [])
-  return useApiCall<StrategyPlay, { name: string }>(fn)
+  return useApiCall<StrategyPlay & { firstStepId: number }, { name: string; game_id?: number | null }>(fn)
 }
 
-export function useRenameStrategyPlay() {
-  const fn = useCallback(async (params: { id: number; name: string }) => {
+export function useUpdateStrategyPlay() {
+  const fn = useCallback(async (params: { id: number; name?: string; game_id?: number | null }) => {
+    const { id, ...body } = params
     const { error } = await supabase
       .from('strategy_plays')
-      .update({ name: params.name })
-      .eq('id', params.id)
+      .update(body)
+      .eq('id', id)
     if (error) throw new Error(error.message)
   }, [])
-  return useApiCall<void, { id: number; name: string }>(fn)
+  return useApiCall<void, { id: number; name?: string; game_id?: number | null }>(fn)
 }
 
-// Deleting a play cascades to its strategy_positions rows.
+// Deleting a play cascades to its steps, which cascade to their
+// positions/opponent markers/arrows.
 export function useDeleteStrategyPlay() {
   const fn = useCallback(async (params: { id: number }) => {
     const { error } = await supabase
@@ -85,16 +104,62 @@ export function useDeleteStrategyPlay() {
   return useApiCall<void, { id: number }>(fn)
 }
 
-export function useGetStrategyPositions() {
+export function useGetStrategySteps() {
   const fn = useCallback(async (params: { playId: number }) => {
+    const { data, error } = await supabase
+      .from('strategy_steps')
+      .select('id, play_id, step_number')
+      .eq('play_id', params.playId)
+      .order('step_number')
+    if (error) throw new Error(error.message)
+    return (data ?? []) as StrategyStep[]
+  }, [])
+  return useApiCall<StrategyStep[], { playId: number }>(fn)
+}
+
+export function useAddStrategyStep() {
+  const fn = useCallback(async (params: { playId: number }) => {
+    const { data: existing, error: fetchError } = await supabase
+      .from('strategy_steps')
+      .select('step_number')
+      .eq('play_id', params.playId)
+      .order('step_number', { ascending: false })
+      .limit(1)
+    if (fetchError) throw new Error(fetchError.message)
+    const nextNumber = ((existing?.[0] as { step_number: number } | undefined)?.step_number ?? 0) + 1
+    const { data, error } = await supabase
+      .from('strategy_steps')
+      .insert({ play_id: params.playId, step_number: nextNumber })
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0] as StrategyStep
+  }, [])
+  return useApiCall<StrategyStep, { playId: number }>(fn)
+}
+
+// Deleting a step cascades to its positions/opponent markers/arrows. The
+// caller is responsible for not letting a play drop to zero steps.
+export function useDeleteStrategyStep() {
+  const fn = useCallback(async (params: { stepId: number }) => {
+    const { error } = await supabase
+      .from('strategy_steps')
+      .delete()
+      .eq('id', params.stepId)
+    if (error) throw new Error(error.message)
+  }, [])
+  return useApiCall<void, { stepId: number }>(fn)
+}
+
+export function useGetStrategyPositions() {
+  const fn = useCallback(async (params: { stepId: number }) => {
     const { data, error } = await supabase
       .from('strategy_positions')
       .select('player_id, x, y')
-      .eq('play_id', params.playId)
+      .eq('step_id', params.stepId)
     if (error) throw new Error(error.message)
     return (data ?? []) as StrategyPosition[]
   }, [])
-  return useApiCall<StrategyPosition[], { playId: number }>(fn)
+  return useApiCall<StrategyPosition[], { stepId: number }>(fn)
 }
 
 // Upsert so moving an already-placed player writes the same row (see
@@ -102,28 +167,133 @@ export function useGetStrategyPositions() {
 // caller can tell success from a failed trigger (which returns undefined),
 // letting the page revert its optimistic update.
 export function useUpsertStrategyPosition() {
-  const fn = useCallback(async (params: { playId: number; playerId: number; x: number; y: number }) => {
+  const fn = useCallback(async (params: { stepId: number; playerId: number; x: number; y: number }) => {
     const { error } = await supabase
       .from('strategy_positions')
       .upsert(
-        { play_id: params.playId, player_id: params.playerId, x: params.x, y: params.y },
-        { onConflict: 'play_id,player_id' }
+        { step_id: params.stepId, player_id: params.playerId, x: params.x, y: params.y },
+        { onConflict: 'step_id,player_id' }
       )
     if (error) throw new Error(error.message)
     return true
   }, [])
-  return useApiCall<boolean, { playId: number; playerId: number; x: number; y: number }>(fn)
+  return useApiCall<boolean, { stepId: number; playerId: number; x: number; y: number }>(fn)
 }
 
 export function useDeleteStrategyPosition() {
-  const fn = useCallback(async (params: { playId: number; playerId: number }) => {
+  const fn = useCallback(async (params: { stepId: number; playerId: number }) => {
     const { error } = await supabase
       .from('strategy_positions')
       .delete()
-      .eq('play_id', params.playId)
+      .eq('step_id', params.stepId)
       .eq('player_id', params.playerId)
     if (error) throw new Error(error.message)
     return true
   }, [])
-  return useApiCall<boolean, { playId: number; playerId: number }>(fn)
+  return useApiCall<boolean, { stepId: number; playerId: number }>(fn)
+}
+
+export function useGetStrategyOpponentMarkers() {
+  const fn = useCallback(async (params: { stepId: number }) => {
+    const { data, error } = await supabase
+      .from('strategy_opponent_markers')
+      .select('id, label, x, y')
+      .eq('step_id', params.stepId)
+      .order('id')
+    if (error) throw new Error(error.message)
+    return (data ?? []) as StrategyOpponentMarker[]
+  }, [])
+  return useApiCall<StrategyOpponentMarker[], { stepId: number }>(fn)
+}
+
+export function useCreateStrategyOpponentMarker() {
+  const fn = useCallback(async (params: { stepId: number; label: string; x: number; y: number }) => {
+    const { data, error } = await supabase
+      .from('strategy_opponent_markers')
+      .insert({ step_id: params.stepId, label: params.label, x: params.x, y: params.y })
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0] as StrategyOpponentMarker
+  }, [])
+  return useApiCall<StrategyOpponentMarker, { stepId: number; label: string; x: number; y: number }>(fn)
+}
+
+export function useUpdateStrategyOpponentMarker() {
+  const fn = useCallback(async (params: { id: number; x: number; y: number }) => {
+    const { error } = await supabase
+      .from('strategy_opponent_markers')
+      .update({ x: params.x, y: params.y })
+      .eq('id', params.id)
+    if (error) throw new Error(error.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { id: number; x: number; y: number }>(fn)
+}
+
+export function useDeleteStrategyOpponentMarker() {
+  const fn = useCallback(async (params: { id: number }) => {
+    const { error } = await supabase
+      .from('strategy_opponent_markers')
+      .delete()
+      .eq('id', params.id)
+    if (error) throw new Error(error.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { id: number }>(fn)
+}
+
+export function useGetStrategyArrows() {
+  const fn = useCallback(async (params: { stepId: number }) => {
+    const { data, error } = await supabase
+      .from('strategy_arrows')
+      .select('id, x1, y1, x2, y2, cx, cy, arrow_type')
+      .eq('step_id', params.stepId)
+      .order('id')
+    if (error) throw new Error(error.message)
+    return (data ?? []) as StrategyArrow[]
+  }, [])
+  return useApiCall<StrategyArrow[], { stepId: number }>(fn)
+}
+
+export function useCreateStrategyArrow() {
+  const fn = useCallback(async (params: {
+    stepId: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'
+  }) => {
+    const { data, error } = await supabase
+      .from('strategy_arrows')
+      .insert({
+        step_id: params.stepId,
+        x1: params.x1, y1: params.y1, x2: params.x2, y2: params.y2, cx: params.cx, cy: params.cy,
+        arrow_type: params.arrow_type,
+      })
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0] as StrategyArrow
+  }, [])
+  return useApiCall<StrategyArrow, { stepId: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw' }>(fn)
+}
+
+export function useUpdateStrategyArrow() {
+  const fn = useCallback(async (params: { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number }) => {
+    const { id, ...body } = params
+    const { error } = await supabase
+      .from('strategy_arrows')
+      .update(body)
+      .eq('id', id)
+    if (error) throw new Error(error.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number }>(fn)
+}
+
+export function useDeleteStrategyArrow() {
+  const fn = useCallback(async (params: { id: number }) => {
+    const { error } = await supabase
+      .from('strategy_arrows')
+      .delete()
+      .eq('id', params.id)
+    if (error) throw new Error(error.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { id: number }>(fn)
 }

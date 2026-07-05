@@ -212,7 +212,7 @@ export default function QuickScore() {
 
   const handleAddPlayer = async (name: string) => {
     if (!selectedGameId) return
-    const result = await createPlayerForGame({ display_name: name, gameId: selectedGameId })
+    const result = await createPlayerForGame({ display_name: name, gameId: selectedGameId, seasonId: selectedGameSeasonId })
     if (result) {
       await refreshRoster()
       const newId = (result as { id: number }).id.toString()
@@ -222,7 +222,7 @@ export default function QuickScore() {
 
   const handleDeleteSub = async (playerId: string) => {
     if (!selectedGameId) return
-    await deleteSubPlayer({ playerId: parseInt(playerId), gameId: selectedGameId })
+    await deleteSubPlayer({ playerId: parseInt(playerId), gameId: selectedGameId, seasonId: selectedGameSeasonId })
     await refreshRoster()
     if (defaultScorerId === playerId) setDefaultScorerId('')
     if (defaultAssisterId === playerId) setDefaultAssisterId('')
@@ -232,7 +232,7 @@ export default function QuickScore() {
 
   const handleAddAssister = async (name: string) => {
     if (!selectedGameId) return
-    const result = await createPlayerForGame({ display_name: name, gameId: selectedGameId })
+    const result = await createPlayerForGame({ display_name: name, gameId: selectedGameId, seasonId: selectedGameSeasonId })
     if (result) {
       await refreshRoster()
       const newId = (result as { id: number }).id.toString()
@@ -242,28 +242,28 @@ export default function QuickScore() {
 
   const handleAddExistingScorer = async (playerId: string) => {
     if (!selectedGameId) return
-    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGameId })
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGameId, seasonId: selectedGameSeasonId })
     await refreshRoster()
     setDefaultScorerId(playerId)
   }
 
   const handleAddExistingAssister = async (playerId: string) => {
     if (!selectedGameId) return
-    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGameId })
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGameId, seasonId: selectedGameSeasonId })
     await refreshRoster()
     setDefaultAssisterId(playerId)
   }
 
   const handleAddPlayerToAttendance = async (name: string) => {
     if (!selectedGameId) return
-    await createPlayerForGame({ display_name: name, gameId: selectedGameId })
+    await createPlayerForGame({ display_name: name, gameId: selectedGameId, seasonId: selectedGameSeasonId })
     await refreshRoster()
     fetchAttendance({ gameId: selectedGameId })
   }
 
   const handleAddExistingPlayerToAttendance = async (playerId: string) => {
     if (!selectedGameId) return
-    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGameId })
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGameId, seasonId: selectedGameSeasonId })
     await refreshRoster()
     fetchAttendance({ gameId: selectedGameId })
   }
