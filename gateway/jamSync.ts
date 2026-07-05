@@ -72,22 +72,38 @@ function unescapeIcsText(value: string): string {
   return value.replace(/\\n/gi, '\n').replace(/\\,/g, ',').replace(/\\;/g, ';').replace(/\\\\/g, '\\')
 }
 
+// Feeds are inconsistent about timezone: Jam emits floating local time
+// (DTSTART;TZID=America/Toronto:...), RHUC emits UTC (DTSTART:...Z). Both are
+// normalized to America/Toronto local date/time so game_time stays
+// comparable to manually-entered games and across sources.
+function utcToToronto(y: string, mo: string, d: string, h: string, mi: string, s: string): { date: string; time: string } {
+  const utcDate = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s)))
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Toronto',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).formatToParts(utcDate)
+  const get = (type: string) => parts.find((p) => p.type === type)!.value
+  return { date: `${get('year')}-${get('month')}-${get('day')}`, time: `${get('hour')}:${get('minute')}:${get('second')}` }
+}
+
 function toJamEvent(fields: Record<string, string>): JamEvent | null {
   const uid = fields.UID
   const dtstart = fields.DTSTART
   if (!uid || !dtstart) return null
 
-  const match = dtstart.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/)
+  const match = dtstart.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z)?/)
   if (!match) return null
-  const [, y, mo, d, h, mi, s] = match
+  const [, y, mo, d, h, mi, s, isUtc] = match
+  const { date, time } = isUtc ? utcToToronto(y!, mo!, d!, h!, mi!, s!) : { date: `${y}-${mo}-${d}`, time: `${h}:${mi}:${s}` }
 
   const summary = fields.SUMMARY ? unescapeIcsText(fields.SUMMARY) : ''
   const vsMatch = summary.match(/\bvs\.?\s+(.+)$/i)
-  const opponent = vsMatch ? vsMatch[1]!.trim() : null
+  const opponent = vsMatch ? vsMatch[1]!.trim().replace(/\s*\((?:home|away)\)\s*$/i, '').trim() : null
 
   const location = fields.LOCATION ? unescapeIcsText(fields.LOCATION) : null
 
-  return { uid, opponent, date: `${y}-${mo}-${d}`, time: `${h}:${mi}:${s}`, location }
+  return { uid, opponent, date, time, location }
 }
 
 function parseJamCalendar(icsText: string): JamEvent[] {

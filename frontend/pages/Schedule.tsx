@@ -19,7 +19,7 @@ import PlayerCombobox from '../components/PlayerCombobox'
 import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
 import { useAuth } from '../contexts/AuthContext'
-import { Calendar, Plus, Trophy, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Target, TrendingUp, PlusCircle, Trash2, Edit2, Save, X, Users, LayoutList, CalendarDays, StickyNote, ClipboardCheck, AlertTriangle, RefreshCw } from 'lucide-react'
+import { Calendar, Plus, Minus, Trophy, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Target, TrendingUp, PlusCircle, Trash2, Edit2, Save, X, Users, LayoutList, CalendarDays, StickyNote, ClipboardCheck, AlertTriangle, RefreshCw } from 'lucide-react'
 
 function jamConflictReasonLabel(reason: string): string {
   switch (reason) {
@@ -108,6 +108,12 @@ export default function Schedule() {
   const [editScorerId, setEditScorerId] = useState<string>('')
   const [editAssisterId, setEditAssisterId] = useState<string>('')
 
+  // Add event
+  const [showAddEvent, setShowAddEvent] = useState(false)
+  const [newEventType, setNewEventType] = useState<string>('Goal')
+  const [newScorerId, setNewScorerId] = useState<string>('')
+  const [newAssisterId, setNewAssisterId] = useState<string>('')
+
   // Game notes editing
   const [editingNotes, setEditingNotes] = useState(false)
   const [notesValue, setNotesValue] = useState('')
@@ -178,6 +184,10 @@ export default function Schedule() {
     setEditingOutcome(false)
     setNotesValue(game.notes ?? '')
     setOutcomeValue(game.outcome_override ?? '')
+    setShowAddEvent(false)
+    setNewEventType('Goal')
+    setNewScorerId('')
+    setNewAssisterId('')
   }
 
   const handleBack = () => { setSelectedGame(null); setEditingEventId(null) }
@@ -278,6 +288,32 @@ export default function Schedule() {
     fetchEvents({ gameId: selectedGame.id })
   }
 
+  const resolveNewPlayerId = (id: string) => (id && id !== '__none__' && id !== '__opponent__') ? parseInt(id) : null
+
+  const handleAddEvent = async () => {
+    if (!selectedGame) return
+    // Picking "— Opponent —" as scorer on a goal means the other team scored
+    if (newEventType === 'Goal' && newScorerId === '__opponent__') {
+      await createOpponentGoal({ gameId: selectedGame.id })
+    } else {
+      await createGoal({
+        gameId: selectedGame.id,
+        playerId: resolveNewPlayerId(newScorerId),
+        relatedPlayerId: resolveNewPlayerId(newAssisterId),
+        eventType: newEventType,
+      })
+    }
+    setNewScorerId('')
+    setNewAssisterId('')
+    fetchEvents({ gameId: selectedGame.id })
+  }
+
+  const handleAddOpponentGoal = async () => {
+    if (!selectedGame) return
+    await createOpponentGoal({ gameId: selectedGame.id })
+    fetchEvents({ gameId: selectedGame.id })
+  }
+
   const handleAddToLineup = async () => {
     if (!selectedGame || !lineupPlayerSelect) return
     await addToLineup({ gameId: selectedGame.id, player_id: parseInt(lineupPlayerSelect), lineup_name: lineupName })
@@ -312,6 +348,8 @@ export default function Schedule() {
   const meta = seasonsMeta as SeasonMeta | undefined
 
   const playerOptions = (players as Player[] | undefined)?.map(p => ({ id: p.id.toString(), label: p.display_name })) ?? []
+  const newEventPlayerOptions = [{ id: '__opponent__', label: 'Opponent' }, ...playerOptions]
+  const isNewEventGoalLike = ['Goal', 'Caught OB'].includes(newEventType)
 
   // Calendar helpers
   const calYear = calendarDate.getFullYear()
@@ -477,6 +515,64 @@ export default function Schedule() {
             </button>
           ))}
         </div>
+
+        {/* Add Event */}
+        {activeTab === 'events' && allowed && (
+          <Card className="bg-card text-card-foreground border-border">
+            <button
+              className="w-full flex items-center justify-between px-6 py-4"
+              onClick={() => setShowAddEvent(v => !v)}
+            >
+              <span className="text-base font-semibold flex items-center gap-2"><PlusCircle className="w-4 h-4" />Add Event</span>
+              {showAddEvent ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+            </button>
+            {showAddEvent && (
+              <CardContent className="pt-0 space-y-3">
+                <div className="grid grid-cols-[70px_1fr] items-center gap-2">
+                  <Label className="text-xs text-muted-foreground text-right">Event</Label>
+                  <Select value={newEventType} onValueChange={setNewEventType}>
+                    <SelectTrigger className="h-9 text-sm bg-background text-foreground border-border"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {(eventTypes as { id: number; name: string }[] | undefined)?.map(et => (
+                        <SelectItem key={et.id} value={et.name}>{et.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-[70px_1fr] items-center gap-2">
+                  <Label className="text-xs text-muted-foreground text-right">{isNewEventGoalLike ? 'Scorer' : 'Player'}</Label>
+                  <PlayerCombobox
+                    players={newEventPlayerOptions}
+                    value={newScorerId || '__none__'}
+                    onValueChange={setNewScorerId}
+                    placeholder="None"
+                    className="w-full h-9 text-sm bg-background border-border"
+                  />
+                </div>
+                {isNewEventGoalLike && newScorerId !== '__opponent__' && (
+                  <div className="grid grid-cols-[70px_1fr] items-center gap-2">
+                    <Label className="text-xs text-muted-foreground text-right">Assister</Label>
+                    <PlayerCombobox
+                      players={playerOptions}
+                      value={newAssisterId || '__none__'}
+                      onValueChange={setNewAssisterId}
+                      placeholder="None"
+                      className="w-full h-9 text-sm bg-background border-border"
+                    />
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-2">
+                  <Button onClick={handleAddEvent} className="h-10 bg-primary text-primary-foreground hover:bg-primary/90 flex items-center justify-center gap-1.5">
+                    <Plus className="w-4 h-4" />Add {newEventType}
+                  </Button>
+                  <Button onClick={handleAddOpponentGoal} variant="outline" className="h-10 flex items-center justify-center gap-1.5">
+                    <Minus className="w-4 h-4" />They Score
+                  </Button>
+                </div>
+              </CardContent>
+            )}
+          </Card>
+        )}
 
         {/* Event Log */}
         {activeTab === 'events' && (
