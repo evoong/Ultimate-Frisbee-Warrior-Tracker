@@ -325,7 +325,7 @@ export default function Strategy() {
       <div className="space-y-4">
         <h1 className="text-2xl font-bold text-foreground">Strategy</h1>
         <Skeleton className="h-10 w-full rounded-md" />
-        <Skeleton className="w-full aspect-[100/37] max-lg:aspect-[37/100] max-lg:max-w-xl max-lg:max-h-[75vh] max-lg:mx-auto rounded-xl" />
+        <Skeleton className="w-full aspect-[100/37] max-lg:aspect-auto max-lg:max-w-xl max-lg:h-[88vh] max-lg:mx-auto rounded-xl" />
         <div className="flex flex-wrap gap-2 p-3">
           {Array.from({ length: 8 }).map((_, i) => (
             <Skeleton key={i} className="w-10 h-10 rounded-full" />
