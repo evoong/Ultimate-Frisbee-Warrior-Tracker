@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
-import { useGetPlayers, useGetSeasonRoster, useCreatePlayer } from '../hooks/backend/players'
+import { useGetPlayers, useGetSeasonRoster, useGetPlayersNotInSeason, useCreatePlayer, useCreatePlayerForGame, useAddPlayerToGame } from '../hooks/backend/players'
 import { useGetGames } from '../hooks/backend/games'
 import { useGetGameAttendance } from '../hooks/backend/attendance'
 import { sortGamesUpcomingFirst } from '../lib/gameOrder'
+import PlayerCombobox from '../components/PlayerCombobox'
 import {
   useGetStrategyPlays, useCreateStrategyPlay, useUpdateStrategyPlay, useDeleteStrategyPlay,
   useGetStrategySteps, useAddStrategyStep, useDeleteStrategyStep,
@@ -21,7 +22,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
 import { Label } from '../lib/shadcn/label'
 import { Skeleton } from '../lib/shadcn/skeleton'
-import { ClipboardList, Plus, Edit2, Trash2, UserPlus, ChevronLeft, ChevronRight, X } from 'lucide-react'
+import { ClipboardList, Plus, Edit2, Trash2, ChevronLeft, ChevronRight, X } from 'lucide-react'
 
 type Player = { id: number; display_name: string; photo_url: string | null; is_sub: boolean | null }
 type Game = { id: number; opponent: string; game_date: string; game_time: string | null; season_id: number | null }
@@ -32,9 +33,12 @@ export default function Strategy() {
   const { allowed } = useAuth()
   const { data: rawPlayers, loading: playersLoading, error: playersError, trigger: fetchPlayers } = useGetPlayers()
   const { trigger: createPlayer } = useCreatePlayer()
+  const { trigger: createPlayerForGame } = useCreatePlayerForGame()
+  const { trigger: addPlayerToGame } = useAddPlayerToGame()
   const { data: games, trigger: fetchGames } = useGetGames()
   const { data: attendanceRows, trigger: fetchAttendance } = useGetGameAttendance()
   const { data: seasonRoster, trigger: fetchSeasonRoster } = useGetSeasonRoster()
+  const { data: otherPlayers, trigger: fetchOtherPlayers } = useGetPlayersNotInSeason()
 
   const { data: plays, loading: playsLoading, error: playsError, trigger: fetchPlays } = useGetStrategyPlays()
   const { trigger: createPlay, loading: creating } = useCreateStrategyPlay()
@@ -70,10 +74,8 @@ export default function Strategy() {
   const [showCreate, setShowCreate] = useState(false)
   const [showRename, setShowRename] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
-  const [showAddPlayer, setShowAddPlayer] = useState(false)
   const [nameInput, setNameInput] = useState('')
   const [gameInput, setGameInput] = useState<string>(NO_GAME)
-  const [newPlayerName, setNewPlayerName] = useState('')
 
   useEffect(() => {
     fetchPlays()
@@ -119,7 +121,10 @@ export default function Strategy() {
   useEffect(() => {
     if (selectedPlay?.game_id) {
       fetchAttendance({ gameId: selectedPlay.game_id })
-      if (selectedGame?.season_id) fetchSeasonRoster({ seasonId: selectedGame.season_id })
+      if (selectedGame?.season_id) {
+        fetchSeasonRoster({ seasonId: selectedGame.season_id })
+        fetchOtherPlayers({ seasonId: selectedGame.season_id })
+      }
     }
   }, [selectedPlay?.game_id, selectedGame?.season_id])
 
@@ -153,6 +158,12 @@ export default function Strategy() {
         return row?.in ?? true
       })
     : (players ?? [])
+
+  // Players not already on the assigned game's season roster, offered in the
+  // "Add player" combobox's "From other seasons" group (empty, and so
+  // effectively hidden, when no game is assigned).
+  const otherPlayerOptions = ((otherPlayers as { id: number; display_name: string }[] | undefined) ?? [])
+    .map(p => ({ id: p.id.toString(), label: p.display_name }))
 
   const handlePlace = async (playerId: number, x: number, y: number) => {
     if (selectedStepId === null) return
@@ -252,17 +263,37 @@ export default function Strategy() {
     fetchPlays()
   }
 
-  const handleAddPlayer = async () => {
-    const name = newPlayerName.trim()
-    if (!name) return
-    // Join the assigned game's season roster (not just the global players
-    // table) so the sub isn't immediately filtered out by the attendance
-    // check below, same convention as QuickScore's mid-game sub creation.
-    await createPlayer({ display_name: name, is_sub: true, season_ids: selectedGame?.season_id ? [selectedGame.season_id] : undefined })
-    setNewPlayerName('')
-    setShowAddPlayer(false)
-    fetchPlayers()
-    if (selectedGame?.season_id) fetchSeasonRoster({ seasonId: selectedGame.season_id })
+  // Refresh every list the "add player" combobox depends on after a change:
+  // the global player list (for a brand new sub), the assigned game's
+  // season roster and attendance (who's visible on the board), and the
+  // "from other seasons" list (who's still offerable to add).
+  const refreshPlayerLists = async () => {
+    await fetchPlayers()
+    if (selectedGame?.season_id) {
+      await fetchSeasonRoster({ seasonId: selectedGame.season_id })
+      await fetchOtherPlayers({ seasonId: selectedGame.season_id })
+    }
+    if (selectedPlay?.game_id) fetchAttendance({ gameId: selectedPlay.game_id })
+  }
+
+  // Creates a brand new sub. When a game is assigned, reuses the same
+  // hook QuickScore uses so the sub also lands in that game's lineup and
+  // attendance, not just the season roster.
+  const handleAddNewSub = async (name: string) => {
+    if (selectedPlay?.game_id) {
+      await createPlayerForGame({ display_name: name, gameId: selectedPlay.game_id, seasonId: selectedGame?.season_id })
+    } else {
+      await createPlayer({ display_name: name, is_sub: true })
+    }
+    await refreshPlayerLists()
+  }
+
+  // Adds an existing player (e.g. from another season) onto this game's
+  // roster, same hook QuickScore uses for the equivalent flow.
+  const handleAddExistingPlayer = async (playerId: string) => {
+    if (!selectedPlay?.game_id) return
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedPlay.game_id, seasonId: selectedGame?.season_id })
+    await refreshPlayerLists()
   }
 
   const stepList = (steps as StrategyStep[] | undefined) ?? []
@@ -380,9 +411,16 @@ export default function Strategy() {
                   </SelectContent>
                 </Select>
                 {allowed && (
-                  <Button variant="outline" size="icon" aria-label="Add player or sub" onClick={() => { setNewPlayerName(''); setShowAddPlayer(true) }}>
-                    <UserPlus className="w-4 h-4" />
-                  </Button>
+                  <PlayerCombobox
+                    players={[]}
+                    otherPlayers={otherPlayerOptions}
+                    value="__none__"
+                    onValueChange={() => {}}
+                    onAddPlayer={handleAddNewSub}
+                    onAddExistingPlayer={handleAddExistingPlayer}
+                    placeholder="Add player..."
+                    className="h-8 text-sm bg-card border-border w-36 shrink-0"
+                  />
                 )}
               </div>
             )}
@@ -499,24 +537,6 @@ export default function Strategy() {
           <div className="flex gap-3 mt-2">
             <Button variant="outline" onClick={() => setShowRename(false)} className="flex-1">Cancel</Button>
             <Button onClick={handleRename} disabled={!nameInput.trim()} className="flex-1">Rename</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Add player/sub */}
-      <Dialog open={showAddPlayer} onOpenChange={setShowAddPlayer}>
-        <DialogContent className="bg-card text-card-foreground">
-          <DialogHeader><DialogTitle>Add Player / Sub</DialogTitle></DialogHeader>
-          <Input
-            placeholder="Player name"
-            value={newPlayerName}
-            onChange={e => setNewPlayerName(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') handleAddPlayer() }}
-            autoFocus
-          />
-          <div className="flex gap-3 mt-2">
-            <Button variant="outline" onClick={() => setShowAddPlayer(false)} className="flex-1">Cancel</Button>
-            <Button onClick={handleAddPlayer} disabled={!newPlayerName.trim()} className="flex-1">Add</Button>
           </div>
         </DialogContent>
       </Dialog>
