@@ -35,7 +35,8 @@ create table if not exists players (
   photo_url text,
   number text,
   first_name_edit text,
-  last_name_edit text
+  last_name_edit text,
+  preferred_throw text check (preferred_throw is null or preferred_throw in ('Backhand', 'Forehand'))
 );
 
 create table if not exists games (

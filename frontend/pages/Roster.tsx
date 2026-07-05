@@ -19,6 +19,7 @@ import { User, Phone, Search, ChevronLeft, ChevronRight, Users, TrendingUp, Trop
 type Player = {
   id: number; display_name: string; first_name: string | null; last_name: string | null
   gender_match: string | null; phone: string | null; is_sub: boolean; position: string | null; photo_url: string | null; number: number | null
+  preferred_throw: string | null
 }
 type GameStat = { game_id: number; opponent: string; game_date: string; game_type: string; season_id: number | null; in: boolean; goals: string; assists: string; turnovers: string }
 type Season = { id: number; name: string; year: number; organizer: string | null; start_date: string | null; end_date: string | null }
@@ -26,6 +27,7 @@ type PlayerSeason = { id: number; name: string; year: number; organizer: string 
 
 const POSITIONS = ['Handler', 'Cutter', 'Hybrid', 'Deep Cutter']
 const GENDERS = ['Man', 'Woman']
+const THROWS = ['Backhand', 'Forehand']
 
 function seasonLabel(s: { name: string; year: number; organizer: string | null }) {
   return [s.organizer, s.name, s.year].filter(Boolean).join(' ')
@@ -88,7 +90,7 @@ export default function Roster() {
 
   // Edit mode
   const [editing, setEditing] = useState(false)
-  const [editFields, setEditFields] = useState({ display_name: '', number: '', gender_match: '', phone: '', position: '' })
+  const [editFields, setEditFields] = useState({ display_name: '', number: '', gender_match: '', phone: '', position: '', preferred_throw: '' })
   const [editingSeasons, setEditingSeasons] = useState(false)
   const [selectedSeasonIds, setSelectedSeasonIds] = useState<number[]>([])
 
@@ -142,6 +144,7 @@ export default function Roster() {
       gender_match: selectedPlayer.gender_match ?? '',
       phone: selectedPlayer.phone ?? '',
       position: selectedPlayer.position ?? '',
+      preferred_throw: selectedPlayer.preferred_throw ?? '',
     })
     setEditing(true)
   }
@@ -155,6 +158,7 @@ export default function Roster() {
       phone: editFields.phone || undefined,
       number: editFields.number ? parseInt(editFields.number) : null,
       position: editFields.position || null,
+      preferred_throw: editFields.preferred_throw || null,
     }) as Player | undefined
     if (updated) {
       setSelectedPlayer(updated)
@@ -300,6 +304,7 @@ export default function Roster() {
             <div className="flex items-center gap-3 mt-1 flex-wrap">
               {selectedPlayer.gender_match && <span className="text-sm text-muted-foreground">{selectedPlayer.gender_match}</span>}
               {selectedPlayer.position && <span className="text-sm text-muted-foreground">{selectedPlayer.position}</span>}
+              {selectedPlayer.preferred_throw && <span className="text-sm text-muted-foreground">{selectedPlayer.preferred_throw}</span>}
               {selectedPlayer.phone && (
                 <div className="flex items-center gap-1 text-sm text-muted-foreground">
                   <Phone className="w-3 h-3" />{selectedPlayer.phone}
@@ -347,6 +352,16 @@ export default function Roster() {
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Preferred Throw</Label>
+                <Select value={editFields.preferred_throw || '__none__'} onValueChange={v => setEditFields(f => ({ ...f, preferred_throw: v === '__none__' ? '' : v }))}>
+                  <SelectTrigger className="h-8 text-sm bg-background border-border text-foreground"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Not set</SelectItem>
+                    {THROWS.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Phone</Label>
