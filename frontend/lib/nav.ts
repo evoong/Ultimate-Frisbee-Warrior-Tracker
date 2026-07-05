@@ -4,6 +4,7 @@ import {
   Users,
   Award,
   BarChart3,
+  ClipboardList,
   MessageCircle,
   type LucideIcon,
 } from "lucide-react"
@@ -14,6 +15,7 @@ export type Tab =
   | "roster"
   | "ranking"
   | "stats"
+  | "strategy"
   | "chat"
 
 export const NAV_ITEMS: { key: Tab; label: string; icon: LucideIcon }[] = [
@@ -22,5 +24,6 @@ export const NAV_ITEMS: { key: Tab; label: string; icon: LucideIcon }[] = [
   { key: "roster", label: "Roster", icon: Users },
   { key: "ranking", label: "Ranking", icon: Award },
   { key: "stats", label: "Stats", icon: BarChart3 },
+  { key: "strategy", label: "Plays", icon: ClipboardList },
   { key: "chat", label: "AI", icon: MessageCircle },
 ]
