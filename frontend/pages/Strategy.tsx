@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { useGetPlayers, useGetSeasonRoster, useGetPlayersNotInSeason, useCreatePlayer, useCreatePlayerForGame, useAddPlayerToGame } from '../hooks/backend/players'
 import { useGetGames } from '../hooks/backend/games'
@@ -28,6 +28,20 @@ type Player = { id: number; display_name: string; photo_url: string | null; is_s
 type Game = { id: number; opponent: string; game_date: string; game_time: string | null; season_id: number | null }
 
 const NO_GAME = '__none__'
+
+// A full snapshot of one step's board, used for per-step undo/redo.
+type Board = {
+  positions: Map<number, { x: number; y: number }>
+  opponents: StrategyOpponentMarker[]
+  arrows: StrategyArrow[]
+}
+// A relative move applied to a multi-selection: circles carry x/y, arrows
+// carry all six curve coordinates (the whole shape is translated).
+type EntityMove =
+  | { kind: 'player'; id: number; x: number; y: number }
+  | { kind: 'opponent'; id: number; x: number; y: number }
+  | { kind: 'arrow'; id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number }
+type BoardItem = { kind: 'player' | 'opponent' | 'arrow'; id: number }
 
 export default function Strategy() {
   const { allowed } = useAuth()
@@ -169,6 +183,7 @@ export default function Strategy() {
 
   const handlePlace = async (playerId: number, x: number, y: number) => {
     if (selectedStepId === null) return
+    pushHistory()
     setPositions(prev => new Map(prev).set(playerId, { x, y }))
     const ok = await upsertPosition({ stepId: selectedStepId, playerId, x, y })
     if (!ok) loadStepData(selectedStepId)
@@ -176,6 +191,7 @@ export default function Strategy() {
 
   const handleRemove = async (playerId: number) => {
     if (selectedStepId === null) return
+    pushHistory()
     setPositions(prev => {
       const next = new Map(prev)
       next.delete(playerId)
@@ -187,6 +203,7 @@ export default function Strategy() {
 
   const handleAddOpponent = async () => {
     if (selectedStepId === null) return
+    pushHistory()
     const label = `Opp ${opponents.length + 1}`
     const x = 0.5
     const y = Math.min(0.9, 0.15 + (opponents.length % 6) * 0.12)
@@ -198,12 +215,14 @@ export default function Strategy() {
   }
 
   const handleMoveOpponent = async (id: number, x: number, y: number) => {
+    pushHistory()
     setOpponents(prev => prev.map(o => (o.id === id ? { ...o, x, y } : o)))
     const ok = await updateOpponent({ id, x, y })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
   }
 
   const handleRemoveOpponent = async (id: number) => {
+    pushHistory()
     setOpponents(prev => prev.filter(o => o.id !== id))
     const ok = await removeOpponent({ id })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
@@ -222,6 +241,7 @@ export default function Strategy() {
 
   const handleCreateArrow = async (arrow: { x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id: number | null }) => {
     if (selectedStepId === null) return
+    pushHistory()
     const tempId = -Date.now()
     setArrows(prev => [...prev, { id: tempId, ...arrow }])
     const created = await createArrow({ stepId: selectedStepId, ...arrow })
@@ -234,6 +254,7 @@ export default function Strategy() {
   }
 
   const handleUpdateArrow = async (arrow: { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id?: number | null }) => {
+    pushHistory()
     setArrows(prev => prev.map(a => (a.id === arrow.id ? { ...a, ...arrow } : a)))
     const ok = await updateArrow(arrow)
     if (!ok && selectedStepId !== null) {
@@ -248,9 +269,175 @@ export default function Strategy() {
   }
 
   const handleDeleteArrow = async (id: number) => {
+    pushHistory()
     setArrows(prev => prev.filter(a => a.id !== id))
     const ok = await removeArrow({ id })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
+  }
+
+  // ── Undo / redo ─────────────────────────────────────────────────────────
+  // Per-step history of board snapshots. A change snapshots the board before
+  // applying (in the handlers above and the batch handlers below); undo/redo
+  // restore a snapshot and reconcile the database to match. Scoped to board
+  // elements only — step/play/game structural changes are not undoable.
+  const boardRef = useRef<Board>({ positions, opponents, arrows })
+  boardRef.current = { positions, opponents, arrows }
+  const cloneBoard = (b: Board): Board => ({
+    positions: new Map(b.positions),
+    opponents: b.opponents.map(o => ({ ...o })),
+    arrows: b.arrows.map(a => ({ ...a })),
+  })
+  const historyRef = useRef<Map<number, { past: Board[]; future: Board[] }>>(new Map())
+  function pushHistory(before: Board = boardRef.current) {
+    if (selectedStepId === null) return
+    const h = historyRef.current.get(selectedStepId) ?? { past: [], future: [] }
+    h.past.push(cloneBoard(before))
+    h.future = []
+    historyRef.current.set(selectedStepId, h)
+  }
+
+  // Make the live board (local state + database) equal `target`, issuing the
+  // minimal set of writes. Positions key on player_id (stable); opponents and
+  // arrows key on id — a recreated row gets a fresh id, patched into local
+  // state once the insert returns. The visual result always matches `target`.
+  const reconcileBoard = async (target: Board) => {
+    if (selectedStepId === null) return
+    const stepId = selectedStepId
+    const cur = boardRef.current
+    const ops: Promise<unknown>[] = []
+
+    setPositions(new Map(target.positions))
+    for (const [pid, pos] of target.positions) {
+      const c = cur.positions.get(pid)
+      if (!c || c.x !== pos.x || c.y !== pos.y) ops.push(upsertPosition({ stepId, playerId: pid, x: pos.x, y: pos.y }))
+    }
+    for (const [pid] of cur.positions) if (!target.positions.has(pid)) ops.push(deletePosition({ stepId, playerId: pid }))
+
+    setOpponents(target.opponents.map(o => ({ ...o })))
+    const curOpp = new Map(cur.opponents.map(o => [o.id, o]))
+    const targetOppIds = new Set(target.opponents.map(o => o.id))
+    for (const o of target.opponents) {
+      const c = curOpp.get(o.id)
+      if (!c) {
+        const oldId = o.id
+        ops.push(createOpponent({ stepId, label: o.label, x: o.x, y: o.y }).then(created => {
+          if (created) setOpponents(prev => prev.map(p => (p.id === oldId ? created : p)))
+          return !!created
+        }))
+      } else if (c.x !== o.x || c.y !== o.y) {
+        ops.push(updateOpponent({ id: o.id, x: o.x, y: o.y }))
+      }
+    }
+    for (const o of cur.opponents) if (!targetOppIds.has(o.id)) ops.push(removeOpponent({ id: o.id }))
+
+    setArrows(target.arrows.map(a => ({ ...a })))
+    const curArr = new Map(cur.arrows.map(a => [a.id, a]))
+    const targetArrIds = new Set(target.arrows.map(a => a.id))
+    for (const a of target.arrows) {
+      const c = curArr.get(a.id)
+      if (!c) {
+        const oldId = a.id
+        ops.push(createArrow({ stepId, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2, cx: a.cx, cy: a.cy, arrow_type: a.arrow_type, start_player_id: a.start_player_id }).then(created => {
+          if (created) setArrows(prev => prev.map(p => (p.id === oldId ? created : p)))
+          return !!created
+        }))
+      } else if (c.x1 !== a.x1 || c.y1 !== a.y1 || c.x2 !== a.x2 || c.y2 !== a.y2 || c.cx !== a.cx || c.cy !== a.cy || c.start_player_id !== a.start_player_id) {
+        ops.push(updateArrow({ id: a.id, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2, cx: a.cx, cy: a.cy, start_player_id: a.start_player_id }))
+      }
+    }
+    for (const a of cur.arrows) if (!targetArrIds.has(a.id)) ops.push(removeArrow({ id: a.id }))
+
+    const results = await Promise.all(ops)
+    if (results.some(r => r === false || r === undefined)) loadStepData(stepId)
+  }
+
+  const undo = () => {
+    if (!allowed || selectedStepId === null) return
+    const h = historyRef.current.get(selectedStepId)
+    if (!h || h.past.length === 0) return
+    const prev = h.past.pop()!
+    h.future.push(cloneBoard(boardRef.current))
+    reconcileBoard(prev)
+  }
+  const redo = () => {
+    if (!allowed || selectedStepId === null) return
+    const h = historyRef.current.get(selectedStepId)
+    if (!h || h.future.length === 0) return
+    const next = h.future.pop()!
+    h.past.push(cloneBoard(boardRef.current))
+    reconcileBoard(next)
+  }
+  const undoRef = useRef(undo); undoRef.current = undo
+  const redoRef = useRef(redo); redoRef.current = redo
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return
+      const el = e.target as HTMLElement | null
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
+      const k = e.key.toLowerCase()
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); undoRef.current() }
+      else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redoRef.current() }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // Delete every item in a multi-selection as one undoable action.
+  const handleDeleteMany = async (items: BoardItem[]) => {
+    if (selectedStepId === null || items.length === 0) return
+    pushHistory()
+    const stepId = selectedStepId
+    const playerIds = items.filter(i => i.kind === 'player').map(i => i.id)
+    const oppIds = items.filter(i => i.kind === 'opponent').map(i => i.id)
+    const arrowIds = items.filter(i => i.kind === 'arrow').map(i => i.id)
+    if (playerIds.length) setPositions(prev => { const m = new Map(prev); playerIds.forEach(id => m.delete(id)); return m })
+    if (oppIds.length) setOpponents(prev => prev.filter(o => !oppIds.includes(o.id)))
+    if (arrowIds.length) setArrows(prev => prev.filter(a => !arrowIds.includes(a.id)))
+    const results = await Promise.all([
+      ...playerIds.map(id => deletePosition({ stepId, playerId: id })),
+      ...oppIds.map(id => removeOpponent({ id })),
+      ...arrowIds.map(id => removeArrow({ id })),
+    ])
+    if (results.some(r => !r)) loadStepData(stepId)
+  }
+
+  // Live group move of a multi-selection. `start` captures the pre-move board
+  // (so the whole drag is one undo), `preview` updates local state only as the
+  // pointer moves, `commit` persists and records history, `cancel` reverts.
+  const groupBeforeRef = useRef<Board | null>(null)
+  const handleGroupMove = (moves: EntityMove[], phase: 'start' | 'preview' | 'commit' | 'cancel') => {
+    if (selectedStepId === null) return
+    const stepId = selectedStepId
+    if (phase === 'start') { groupBeforeRef.current = cloneBoard(boardRef.current); return }
+    if (phase === 'cancel') {
+      const before = groupBeforeRef.current
+      groupBeforeRef.current = null
+      if (before) { setPositions(new Map(before.positions)); setOpponents(before.opponents.map(o => ({ ...o }))); setArrows(before.arrows.map(a => ({ ...a }))) }
+      return
+    }
+    const playerMoves = moves.filter((m): m is Extract<EntityMove, { kind: 'player' }> => m.kind === 'player')
+    const oppMoves = moves.filter((m): m is Extract<EntityMove, { kind: 'opponent' }> => m.kind === 'opponent')
+    const arrowMoves = moves.filter((m): m is Extract<EntityMove, { kind: 'arrow' }> => m.kind === 'arrow')
+    if (playerMoves.length) setPositions(prev => { const m = new Map(prev); playerMoves.forEach(mv => m.set(mv.id, { x: mv.x, y: mv.y })); return m })
+    if (oppMoves.length) setOpponents(prev => prev.map(o => { const mv = oppMoves.find(m => m.id === o.id); return mv ? { ...o, x: mv.x, y: mv.y } : o }))
+    if (arrowMoves.length) setArrows(prev => prev.map(a => { const mv = arrowMoves.find(m => m.id === a.id); return mv ? { ...a, x1: mv.x1, y1: mv.y1, x2: mv.x2, y2: mv.y2, cx: mv.cx, cy: mv.cy } : a }))
+    if (phase === 'commit') {
+      const before = groupBeforeRef.current
+      groupBeforeRef.current = null
+      if (before) pushHistory(before)
+      Promise.all([
+        ...playerMoves.map(mv => upsertPosition({ stepId, playerId: mv.id, x: mv.x, y: mv.y })),
+        ...oppMoves.map(mv => updateOpponent({ id: mv.id, x: mv.x, y: mv.y })),
+        ...arrowMoves.map(mv => updateArrow({ id: mv.id, x1: mv.x1, y1: mv.y1, x2: mv.x2, y2: mv.y2, cx: mv.cx, cy: mv.cy })),
+      ]).then(results => { if (results.some(r => !r)) loadStepData(stepId) })
+      for (const mv of arrowMoves) {
+        const a = boardRef.current.arrows.find(ar => ar.id === mv.id)
+        if (a && a.arrow_type === 'run' && a.start_player_id != null) {
+          propagateRunArrowToNextStep({ arrow_type: 'run', start_player_id: a.start_player_id, x2: mv.x2, y2: mv.y2 })
+        }
+      }
+    }
   }
 
   const handleCreate = async () => {
@@ -515,6 +702,8 @@ export default function Strategy() {
               onCreateArrow={handleCreateArrow}
               onUpdateArrow={handleUpdateArrow}
               onDeleteArrow={handleDeleteArrow}
+              onGroupMove={handleGroupMove}
+              onDeleteMany={handleDeleteMany}
             />
             {allowed && (
               <p className="text-xs text-muted-foreground">
