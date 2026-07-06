@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useGetGames, useCreateGame, useUpdateGame, useDeleteGame, useGetLineups, useAddToLineup, useRemoveFromLineup } from '../hooks/backend/games'
 import { useGetGameEvents, useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useGetEventTypes } from '../hooks/backend/events'
-import { useGetPlayers } from '../hooks/backend/players'
+import { useGetSeasonRoster, useGetPlayersNotInSeason, useCreatePlayerForGame, useDeleteSubPlayer, useAddPlayerToGame } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons, useCreateSeason, useGetSeasonsMeta } from '../hooks/backend/stats'
 import { useGetGameAttendance, useSetAttendance, useSetAllAttendance } from '../hooks/backend/attendance'
 import { useGetJamSyncConflicts, useSyncJamNow, useCreateGameFromConflict, useLinkConflictToGame, useDismissConflict, type JamSyncConflict } from '../hooks/backend/jamSync'
@@ -22,7 +22,11 @@ import { GenderRatio } from '../components/GenderTag'
 import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
 import { useAuth } from '../contexts/AuthContext'
-import { Calendar, Plus, Minus, Trophy, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Target, TrendingUp, PlusCircle, Trash2, Edit2, Save, X, Users, LayoutList, CalendarDays, StickyNote, ClipboardCheck, AlertTriangle, RefreshCw } from 'lucide-react'
+import { Calendar, Plus, Minus, Trophy, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Target, TrendingUp, PlusCircle, Trash2, Edit2, Save, X, Users, LayoutList, CalendarDays, StickyNote, ClipboardCheck, AlertTriangle, RefreshCw, ArrowLeftRight, Undo2 } from 'lucide-react'
+
+// A game counts as "imminent" from 30 minutes before its start time to 30
+// minutes after, the window where you're about to score it or already are.
+const IMMINENT_WINDOW_MS = 30 * 60 * 1000
 
 function jamConflictReasonLabel(reason: string): string {
   switch (reason) {
@@ -49,13 +53,35 @@ function seasonLabel(s: { name: string; year: number; organizer: string | null }
   return [s.organizer, s.name, s.year].filter(Boolean).join(' ')
 }
 
+// A game counts as "upcoming" until its actual start time passes, not just
+// its calendar date, so a game later today still shows as upcoming.
+function gameStartsAt(g: { game_date: string; game_time: string | null }): Date {
+  return new Date(`${g.game_date}T${g.game_time || '00:00:00'}`)
+}
+
+function dateBadgeParts(dateStr: string) {
+  const d = new Date(dateStr + 'T00:00:00')
+  return {
+    month: d.toLocaleDateString('en-US', { month: 'short' }).toUpperCase(),
+    day: d.getDate(),
+  }
+}
+
+function formatWeekday(dateStr: string) {
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' })
+}
+
 const OUTCOME_OPTIONS = ['Win', 'Loss', 'Tie', 'Default Win', 'Default Loss', 'Forfeit']
 
 export default function Schedule() {
   const { allowed } = useAuth()
   const { data: games, loading, error, trigger: fetchGames } = useGetGames()
   const { data: events, loading: eventsLoading, trigger: fetchEvents } = useGetGameEvents()
-  const { data: players, trigger: fetchPlayers } = useGetPlayers()
+  const { data: players, trigger: fetchPlayers } = useGetSeasonRoster()
+  const { data: otherPlayers, trigger: fetchOtherPlayers } = useGetPlayersNotInSeason()
+  const { trigger: createPlayerForGame } = useCreatePlayerForGame()
+  const { trigger: deleteSubPlayer } = useDeleteSubPlayer()
+  const { trigger: addPlayerToGame } = useAddPlayerToGame()
   const { trigger: createGame } = useCreateGame()
   const { trigger: updateGame } = useUpdateGame()
   const { trigger: deleteGame } = useDeleteGame()
@@ -111,11 +137,15 @@ export default function Schedule() {
   const [editScorerId, setEditScorerId] = useState<string>('')
   const [editAssisterId, setEditAssisterId] = useState<string>('')
 
-  // Add event
+  // Add event. Scorer/assister persist across successive adds (rather than
+  // clearing after each one) so scoring several points in a row for the same
+  // player doesn't require re-picking them every time.
   const [showAddEvent, setShowAddEvent] = useState(false)
   const [newEventType, setNewEventType] = useState<string>('Goal')
   const [newScorerId, setNewScorerId] = useState<string>('')
   const [newAssisterId, setNewAssisterId] = useState<string>('')
+  const [showAttendance, setShowAttendance] = useState(false)
+  const autoOpenedRef = useRef(false)
 
   // Game notes editing
   const [editingNotes, setEditingNotes] = useState(false)
@@ -130,8 +160,8 @@ export default function Schedule() {
   const [lineupPlayerSelect, setLineupPlayerSelect] = useState<string>('')
 
   useEffect(() => {
-    // fetchGames happens in the scheduleSeasonIds effect below (fires on mount too)
-    fetchPlayers()
+    // fetchGames happens in the scheduleSeasonIds effect below (fires on mount too).
+    // Player roster fetches happen in handleSelectGame, scoped to that game's season.
     fetchSeasons()
     fetchSeasonsMeta()
     fetchEventTypes()
@@ -177,20 +207,56 @@ export default function Schedule() {
     fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined })
   }, [scheduleSeasonIds])
 
-  const handleSelectGame = (game: Game) => {
+  // If a game is imminent (starting within 30 minutes, or already underway
+  // and less than 30 minutes in), jump straight into it ready to score
+  // instead of making you find it in the list. Only does this once per page
+  // load so navigating back to the list afterward doesn't re-trigger it.
+  useEffect(() => {
+    if (autoOpenedRef.current || selectedGame) return
+    const g = (games as Game[] | undefined) ?? []
+    if (g.length === 0) return
+    const now = Date.now()
+    const imminent = g.find(gm => Math.abs(gameStartsAt(gm).getTime() - now) <= IMMINENT_WINDOW_MS)
+    if (imminent) {
+      autoOpenedRef.current = true
+      handleSelectGame(imminent, { openForScoring: true })
+    }
+  }, [games])
+
+  const handleSelectGame = (game: Game, opts?: { openForScoring?: boolean }) => {
     setSelectedGame(game)
     fetchEvents({ gameId: game.id })
     fetchLineups({ gameId: game.id })
     fetchAttendance({ gameId: game.id })
+    if (game.season_id) {
+      fetchPlayers({ seasonId: game.season_id })
+      fetchOtherPlayers({ seasonId: game.season_id })
+    } else {
+      fetchOtherPlayers({})
+    }
     setActiveTab('events')
     setEditingNotes(false)
     setEditingOutcome(false)
     setNotesValue(game.notes ?? '')
     setOutcomeValue(game.outcome_override ?? '')
-    setShowAddEvent(false)
+    // A game opened because its start time is imminent (see the auto-select
+    // effect below) starts ready to score; one opened by browsing the list
+    // starts collapsed so glancing at past events doesn't require a scroll.
+    setShowAddEvent(!!opts?.openForScoring)
     setNewEventType('Goal')
     setNewScorerId('')
     setNewAssisterId('')
+  }
+
+  // Season roster refetch needs the game's season id, not the game id.
+  const selectedGameSeasonId = selectedGame?.season_id ?? null
+  const refreshRoster = async () => {
+    if (selectedGameSeasonId) {
+      await fetchPlayers({ seasonId: selectedGameSeasonId })
+      await fetchOtherPlayers({ seasonId: selectedGameSeasonId })
+    } else {
+      await fetchOtherPlayers({})
+    }
   }
 
   const handleBack = () => { setSelectedGame(null); setEditingEventId(null) }
@@ -306,8 +372,6 @@ export default function Schedule() {
         eventType: newEventType,
       })
     }
-    setNewScorerId('')
-    setNewAssisterId('')
     fetchEvents({ gameId: selectedGame.id })
   }
 
@@ -315,6 +379,69 @@ export default function Schedule() {
     if (!selectedGame) return
     await createOpponentGoal({ gameId: selectedGame.id })
     fetchEvents({ gameId: selectedGame.id })
+  }
+
+  const handleUndo = async () => {
+    const gameEvents = events as GameEvent[] | undefined
+    if (!selectedGame || !gameEvents || gameEvents.length === 0) return
+    await deleteEvent({ eventId: gameEvents[0]!.id })
+    fetchEvents({ gameId: selectedGame.id })
+  }
+
+  const handleAddPlayer = async (name: string) => {
+    if (!selectedGame) return
+    const result = await createPlayerForGame({ display_name: name, gameId: selectedGame.id, seasonId: selectedGameSeasonId })
+    if (result) {
+      await refreshRoster()
+      setNewScorerId((result as { id: number }).id.toString())
+    }
+  }
+
+  const handleAddAssister = async (name: string) => {
+    if (!selectedGame) return
+    const result = await createPlayerForGame({ display_name: name, gameId: selectedGame.id, seasonId: selectedGameSeasonId })
+    if (result) {
+      await refreshRoster()
+      setNewAssisterId((result as { id: number }).id.toString())
+    }
+  }
+
+  const handleAddExistingScorer = async (playerId: string) => {
+    if (!selectedGame) return
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGame.id, seasonId: selectedGameSeasonId })
+    await refreshRoster()
+    setNewScorerId(playerId)
+  }
+
+  const handleAddExistingAssister = async (playerId: string) => {
+    if (!selectedGame) return
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGame.id, seasonId: selectedGameSeasonId })
+    await refreshRoster()
+    setNewAssisterId(playerId)
+  }
+
+  const handleDeleteSub = async (playerId: string) => {
+    if (!selectedGame) return
+    await deleteSubPlayer({ playerId: parseInt(playerId), gameId: selectedGame.id, seasonId: selectedGameSeasonId })
+    await refreshRoster()
+    if (newScorerId === playerId) setNewScorerId('')
+    if (newAssisterId === playerId) setNewAssisterId('')
+    if (editScorerId === playerId) setEditScorerId('')
+    if (editAssisterId === playerId) setEditAssisterId('')
+  }
+
+  const handleAddPlayerToAttendance = async (name: string) => {
+    if (!selectedGame) return
+    await createPlayerForGame({ display_name: name, gameId: selectedGame.id, seasonId: selectedGameSeasonId })
+    await refreshRoster()
+    fetchAttendance({ gameId: selectedGame.id })
+  }
+
+  const handleAddExistingPlayerToAttendance = async (playerId: string) => {
+    if (!selectedGame) return
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGame.id, seasonId: selectedGameSeasonId })
+    await refreshRoster()
+    fetchAttendance({ gameId: selectedGame.id })
   }
 
   const handleAddToLineup = async () => {
@@ -350,9 +477,29 @@ export default function Schedule() {
 
   const meta = seasonsMeta as SeasonMeta | undefined
 
-  const playerOptions = (players as Player[] | undefined)?.map(p => ({ id: p.id.toString(), label: p.display_name })) ?? []
+  const playerOptions = ((players as Player[] | undefined) ?? []).map(p => ({ id: p.id.toString(), label: p.display_name, isSub: !!p.is_sub }))
   const newEventPlayerOptions = [{ id: '__opponent__', label: 'Opponent' }, ...playerOptions]
   const isNewEventGoalLike = ['Goal', 'Caught OB'].includes(newEventType)
+
+  // Scorer/assister quick-select should only offer players marked present for
+  // this game (matches the Attendance tab's own default: no row yet means
+  // attending). The Edit Event dialog still uses the full roster so past
+  // events referencing a player who's since been marked absent stay editable.
+  const attendingPlayerIds = new Set(
+    ((players as Player[] | undefined) ?? [])
+      .filter(p => {
+        const row = (attendanceRows as { player_id: number; in: boolean }[] | undefined)?.find(r => r.player_id === p.id)
+        return row?.in ?? true
+      })
+      .map(p => p.id)
+  )
+  const attendingPlayerOptions = [
+    { id: '__opponent__', label: 'Opponent' },
+    ...playerOptions.filter(p => attendingPlayerIds.has(parseInt(p.id))),
+  ]
+
+  const otherPlayerOptions = ((otherPlayers as { id: number; display_name: string }[] | undefined) ?? [])
+    .map(p => ({ id: p.id.toString(), label: p.display_name }))
 
   // Calendar helpers
   const calYear = calendarDate.getFullYear()
@@ -417,29 +564,29 @@ export default function Schedule() {
         </div>
 
         {/* Game header */}
+        <FadeIn>
         <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
-          <CardContent className="pt-6 pb-4">
-            <div className="text-center mb-4">
-              <div className="text-lg text-muted-foreground">vs {selectedGame.opponent}</div>
-              <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground mt-1">
-                <Calendar className="w-4 h-4" />
-                <span>{formatDate(selectedGame.game_date)}</span>
-                <span>•</span>
-                <span>{formatTime(selectedGame.game_time)}</span>
+          <CardContent className="p-5">
+            <div className="text-center">
+              <div className="text-lg font-bold text-foreground leading-snug break-words">vs {selectedGame.opponent}</div>
+              <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground mt-1">
+                <Calendar className="w-3 h-3 flex-shrink-0" />
+                <span>
+                  {formatDate(selectedGame.game_date)} · {formatTime(selectedGame.game_time)}
+                  {selectedGame.season_id && getSeasonLabel(selectedGame.season_id) ? ` · ${getSeasonLabel(selectedGame.season_id)}` : ''}
+                </span>
               </div>
-              {selectedGame.season_id && (
-                <div className="mt-1 text-xs text-muted-foreground">{getSeasonLabel(selectedGame.season_id)}</div>
-              )}
             </div>
-            <div className="flex items-center justify-center gap-8">
+
+            <div className="flex items-center justify-center gap-3 mt-4">
               <div className="text-center">
-                <div className="text-6xl font-bold text-primary tabular-nums">{ourGoals}</div>
-                <div className="text-sm text-muted-foreground mt-1">Us</div>
+                <div className="text-8xl sm:text-[10rem] font-bold text-primary tabular-nums leading-none">{ourGoals}</div>
+                <div className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground mt-2">Us</div>
               </div>
-              <div className="text-3xl font-light text-muted-foreground">-</div>
+              <div className="text-5xl sm:text-6xl font-light text-muted-foreground/50">-</div>
               <div className="text-center">
-                <div className="text-6xl font-bold text-muted-foreground tabular-nums">{theirGoals}</div>
-                <div className="text-sm text-muted-foreground mt-1">Them</div>
+                <div className="text-8xl sm:text-[10rem] font-bold text-muted-foreground tabular-nums leading-none">{theirGoals}</div>
+                <div className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground mt-2">Them</div>
               </div>
             </div>
 
@@ -477,6 +624,7 @@ export default function Schedule() {
             </div>
           </CardContent>
         </Card>
+        </FadeIn>
 
         {/* Box score */}
         {playerStats.length > 0 && (
@@ -531,8 +679,8 @@ export default function Schedule() {
             </button>
             {showAddEvent && (
               <CardContent className="pt-0 space-y-3">
-                <div className="grid grid-cols-[70px_1fr] items-center gap-2">
-                  <Label className="text-xs text-muted-foreground text-right">Event</Label>
+                <div className="grid grid-cols-[60px_1fr] items-center gap-2">
+                  <span className="text-xs font-medium text-muted-foreground text-right">Event</span>
                   <Select value={newEventType} onValueChange={setNewEventType}>
                     <SelectTrigger className="h-9 text-sm bg-background text-foreground border-border"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -542,47 +690,101 @@ export default function Schedule() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="grid grid-cols-[70px_1fr] items-center gap-2">
-                  <Label className="text-xs text-muted-foreground text-right">{isNewEventGoalLike ? 'Scorer' : 'Player'}</Label>
+
+                <div className="grid grid-cols-[60px_1fr] items-center gap-2">
+                  <span className="text-xs font-medium text-muted-foreground text-right">{isNewEventGoalLike ? 'Scorer' : 'Player'}</span>
                   <PlayerCombobox
-                    players={newEventPlayerOptions}
+                    players={attendingPlayerOptions}
+                    otherPlayers={otherPlayerOptions}
                     value={newScorerId || '__none__'}
                     onValueChange={setNewScorerId}
+                    onAddPlayer={handleAddPlayer}
+                    onAddExistingPlayer={handleAddExistingScorer}
+                    onDeletePlayer={handleDeleteSub}
                     placeholder="None"
                     className="w-full h-9 text-sm bg-background border-border"
                   />
                 </div>
+
                 {isNewEventGoalLike && newScorerId !== '__opponent__' && (
-                  <div className="grid grid-cols-[70px_1fr] items-center gap-2">
-                    <Label className="text-xs text-muted-foreground text-right">Assister</Label>
-                    <PlayerCombobox
-                      players={playerOptions}
-                      value={newAssisterId || '__none__'}
-                      onValueChange={setNewAssisterId}
-                      placeholder="None"
-                      className="w-full h-9 text-sm bg-background border-border"
-                    />
-                  </div>
+                  <>
+                    <div className="flex items-center justify-center">
+                      <button
+                        onClick={() => { const tmp = newScorerId; setNewScorerId(newAssisterId); setNewAssisterId(tmp) }}
+                        title="Swap Scorer ↔ Assister"
+                        aria-label="Swap scorer and assister"
+                        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-0.5 rounded hover:bg-accent"
+                      >
+                        <ArrowLeftRight className="w-3 h-3" />
+                        <span>swap</span>
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-[60px_1fr] items-center gap-2">
+                      <span className="text-xs font-medium text-muted-foreground text-right">Assister</span>
+                      <PlayerCombobox
+                        players={attendingPlayerOptions}
+                        otherPlayers={otherPlayerOptions}
+                        value={newAssisterId || '__none__'}
+                        onValueChange={setNewAssisterId}
+                        onAddPlayer={handleAddAssister}
+                        onAddExistingPlayer={handleAddExistingAssister}
+                        onDeletePlayer={handleDeleteSub}
+                        placeholder="None"
+                        className="w-full h-9 text-sm bg-background border-border"
+                      />
+                    </div>
+                  </>
                 )}
+
+                <div className="border-t border-border" />
+
                 <div className="grid grid-cols-2 gap-2">
-                  <Button onClick={handleAddEvent} className="h-10 bg-primary text-primary-foreground hover:bg-primary/90 flex items-center justify-center gap-1.5">
-                    <Plus className="w-4 h-4" />Add {newEventType}
+                  <Button
+                    onClick={handleAddEvent}
+                    className="h-14 font-bold bg-green-600 hover:bg-green-700 text-white dark:bg-green-700 dark:hover:bg-green-600 flex flex-col items-center justify-center gap-0.5"
+                  >
+                    <div className="flex items-center gap-1">
+                      <Plus className="w-4 h-4" />
+                      <span className="text-sm">{newEventType}</span>
+                    </div>
+                    {newScorerId && newScorerId !== '__none__' && (
+                      <span className="text-xs font-normal opacity-90 truncate max-w-full px-2">
+                        {newEventPlayerOptions.find(p => p.id === newScorerId)?.label ?? 'Opponent'}
+                      </span>
+                    )}
                   </Button>
-                  <Button onClick={handleAddOpponentGoal} variant="outline" className="h-10 flex items-center justify-center gap-1.5">
-                    <Minus className="w-4 h-4" />They Score
+
+                  <Button
+                    onClick={handleAddOpponentGoal}
+                    className="h-14 font-bold bg-red-600 hover:bg-red-700 text-white dark:bg-red-700 dark:hover:bg-red-600 flex flex-col items-center justify-center gap-0.5"
+                  >
+                    <div className="flex items-center gap-1">
+                      <Minus className="w-4 h-4" />
+                      <span className="text-sm">They Score</span>
+                    </div>
                   </Button>
                 </div>
+
+                <Button
+                  onClick={handleUndo}
+                  disabled={!events || (events as GameEvent[]).length === 0}
+                  variant="outline"
+                  className="w-full h-8 text-xs font-medium text-muted-foreground hover:text-foreground flex items-center justify-center gap-1.5 disabled:opacity-40"
+                >
+                  <Undo2 className="w-3.5 h-3.5" />
+                  Undo last event
+                </Button>
               </CardContent>
             )}
           </Card>
         )}
 
-        {/* Event Log */}
+        {/* Recent Activity */}
         {activeTab === 'events' && (
           <Card className="bg-card text-card-foreground border-border">
             <CardHeader>
               <CardTitle className="text-base flex items-center justify-between">
-                <span>Event Log</span>
+                <span>Recent Activity</span>
                 <span className="text-sm font-normal text-muted-foreground">{gameEvents.length} events</span>
               </CardTitle>
             </CardHeader>
@@ -590,7 +792,7 @@ export default function Schedule() {
               {eventsLoading ? (
                 <div className="text-center py-8 text-muted-foreground text-sm">Loading events...</div>
               ) : gameEvents.length ? (
-                <div className="space-y-0">
+                <div className="space-y-2">
                   {gameEvents.map((event, i) => {
                     const scorer = getPlayerName(event.player_id)
                     const assister = getPlayerName(event.related_player_id)
@@ -599,9 +801,9 @@ export default function Schedule() {
                     const isTurnover = isTurnoverEvent(event.event_type)
                     const isEditing = editingEventId === event.id
 
-                    return (
-                      <div key={event.id} className="py-2.5 border-b border-border last:border-0">
-                        {isEditing ? (
+                    if (isEditing) {
+                      return (
+                        <div key={event.id} className="py-2.5 border-b border-border last:border-0">
                           <div className="space-y-2 bg-background rounded-lg p-3">
                             <div className="space-y-1">
                               <Label className="text-xs">Scorer / Player</Label>
@@ -616,36 +818,39 @@ export default function Schedule() {
                               <Button size="sm" variant="outline" onClick={() => setEditingEventId(null)} className="h-8 text-xs"><X className="w-3 h-3" /></Button>
                             </div>
                           </div>
-                        ) : (
-                          <div className="flex items-center gap-3">
-                            <div className="w-6 text-xs text-muted-foreground text-center tabular-nums">{i + 1}</div>
-                            <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${isGoal ? 'bg-green-100 dark:bg-green-950' : isOpponentGoal ? 'bg-red-100 dark:bg-red-950' : 'bg-orange-100 dark:bg-orange-950'}`}>
-                              {isGoal && <Target className="w-4 h-4 text-green-600 dark:text-green-400" />}
-                              {isOpponentGoal && <Target className="w-4 h-4 text-red-600 dark:text-red-400" />}
-                              {isTurnover && <TrendingUp className="w-4 h-4 text-orange-600 dark:text-orange-400" />}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-sm font-medium text-foreground">
-                                {isGoal && (<>{scorer ?? 'Unknown'} scored{assister && <span className="text-muted-foreground font-normal"> (from {assister})</span>}</>)}
-                                {isOpponentGoal && 'Opponent goal'}
-                                {isTurnover && <>{scorer ?? 'Unknown'} turned it over</>}
-                                {!isGoal && !isOpponentGoal && !isTurnover && event.event_type}
-                              </div>
-                              <div className="text-xs text-muted-foreground">{formatTimestamp(event.event_timestamp)}</div>
-                            </div>
-                            {allowed && (
-                              <div className="flex items-center gap-1 shrink-0">
-                                <button onClick={() => handleEditEvent(event)} className="p-1.5 rounded hover:bg-accent transition-colors">
-                                  <Edit2 className="w-3.5 h-3.5 text-muted-foreground hover:text-foreground" />
-                                </button>
-                                <button onClick={() => handleDeleteEvent(event.id)} className="p-1.5 rounded hover:bg-destructive/10 transition-colors">
-                                  <Trash2 className="w-3.5 h-3.5 text-muted-foreground hover:text-destructive" />
-                                </button>
-                              </div>
-                            )}
+                        </div>
+                      )
+                    }
+                    return (
+                      <FadeIn key={event.id} delay={i * 40} className="flex items-center gap-3 py-2 border-b border-border last:border-0">
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${isGoal ? 'bg-green-100 dark:bg-green-950' : isOpponentGoal ? 'bg-red-100 dark:bg-red-950' : 'bg-orange-100 dark:bg-orange-950'}`}>
+                          {isGoal && <Target className="w-5 h-5 text-green-600 dark:text-green-400" />}
+                          {isOpponentGoal && <Target className="w-5 h-5 text-red-600 dark:text-red-400" />}
+                          {isTurnover && <TrendingUp className="w-5 h-5 text-orange-600 dark:text-orange-400" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-foreground text-sm">
+                            {isGoal && (<>{scorer ?? 'Our Goal'}{assister && <span className="text-xs text-muted-foreground ml-1">(from {assister})</span>}</>)}
+                            {isOpponentGoal && 'Opponent Goal'}
+                            {isTurnover && <>{scorer ?? 'Unknown'} turned it over</>}
+                            {!isGoal && !isOpponentGoal && !isTurnover && event.event_type}
+                          </div>
+                          <div className="text-xs text-muted-foreground">{formatTimestamp(event.event_timestamp)}</div>
+                        </div>
+                        {allowed && (
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button onClick={() => handleEditEvent(event)} className="p-1.5 rounded hover:bg-accent transition-colors" aria-label="Edit event">
+                              <Edit2 className="w-4 h-4 text-muted-foreground hover:text-foreground" />
+                            </button>
+                            <button onClick={() => handleDeleteEvent(event.id)} className="p-1.5 rounded hover:bg-destructive/10 transition-colors" aria-label="Delete event">
+                              <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive" />
+                            </button>
                           </div>
                         )}
-                      </div>
+                        {(isGoal || isOpponentGoal) && (
+                          <div className={`text-lg font-bold tabular-nums ml-1 ${isGoal ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>+1</div>
+                        )}
+                      </FadeIn>
                     )
                   })}
                 </div>
@@ -760,6 +965,21 @@ export default function Schedule() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
+                {allowed && (
+                  <div className="flex items-center gap-2 pb-1">
+                    <span className="text-xs text-muted-foreground shrink-0">Add player</span>
+                    <PlayerCombobox
+                      players={[]}
+                      otherPlayers={otherPlayerOptions}
+                      value="__none__"
+                      onValueChange={() => {}}
+                      onAddPlayer={handleAddPlayerToAttendance}
+                      onAddExistingPlayer={handleAddExistingPlayerToAttendance}
+                      placeholder="Add player..."
+                      className="flex-1 h-8 text-sm bg-background border-border"
+                    />
+                  </div>
+                )}
                 {nonSubRows.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-4">No roster data for this game.</p>
                 ) : (
@@ -887,7 +1107,6 @@ export default function Schedule() {
   // chronologically; a separate "Played" section below runs most-recent-first
   // so the last result is always the first thing you see in that group.
   const now = new Date()
-  const gameStartsAt = (g: Game) => new Date(`${g.game_date}T${g.game_time || '00:00:00'}`)
   const upcomingGames = filteredGames.filter(g => gameStartsAt(g) >= now).sort((a, b) => gameStartsAt(a).getTime() - gameStartsAt(b).getTime())
   const pastGames = filteredGames.filter(g => gameStartsAt(g) < now).sort((a, b) => gameStartsAt(b).getTime() - gameStartsAt(a).getTime())
   const sortedGames = sortGamesUpcomingFirst(filteredGames, now)
@@ -901,45 +1120,54 @@ export default function Schedule() {
     return null
   }
 
-  const renderGameCard = (game: Game, index: number, isNext: boolean, isPlayed: boolean) => {
+  const renderGameCard = (game: Game, index: number, isPlayed: boolean) => {
     const displayResult = game.outcome_override ?? game.result
-    const relativeDay = isNext ? formatRelativeDay(game.game_date) : null
     // Redundant once a single season is already the active filter; only earns
     // its place in the meta line when the list is mixing seasons together.
     const showSeasonLabel = game.season_id && scheduleSeasonIds.length !== 1
+    const badge = dateBadgeParts(game.game_date)
     return (
       <FadeIn key={game.id} delay={index * 40}>
         <Card
           onClick={() => handleSelectGame(game)}
-          className={`bg-card text-card-foreground cursor-pointer hover:bg-accent/50 active:scale-[0.99] transition-all ${isNext ? 'border-primary/50 ring-1 ring-primary/20' : 'border-border'}`}
+          className="bg-card text-card-foreground border-border cursor-pointer hover:bg-accent/50 active:scale-[0.99] transition-all"
         >
           <CardContent className="py-3.5">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                {isNext && (
-                  <div className="text-xs font-semibold uppercase tracking-wide text-primary mb-0.5">
-                    Next Up{relativeDay ? ` · ${relativeDay}` : ''}
-                  </div>
-                )}
                 <div className="flex items-center gap-1.5">
                   <span className="text-base font-bold text-foreground truncate">vs {game.opponent}</span>
                   {game.game_type === 'Playoff' && <Trophy className="w-4 h-4 text-yellow-500 shrink-0" />}
                 </div>
-                <div className="flex items-center gap-1.5 mt-0.5 text-sm text-muted-foreground truncate">
-                  <Calendar className="w-3.5 h-3.5 shrink-0" />
-                  <span>{formatDate(game.game_date)}</span>
-                  <span>•</span>
-                  <span>{formatTime(game.game_time)}</span>
-                  {showSeasonLabel && (
-                    <>
-                      <span>•</span>
-                      <span className="truncate">{getSeasonLabel(game.season_id!)}</span>
-                    </>
-                  )}
-                </div>
+                {isPlayed ? (
+                  <div className="flex items-center gap-1.5 mt-0.5 text-sm text-muted-foreground truncate">
+                    <Calendar className="w-3.5 h-3.5 shrink-0" />
+                    <span>{formatDate(game.game_date)}</span>
+                    <span>•</span>
+                    <span>{formatTime(game.game_time)}</span>
+                    {showSeasonLabel && (
+                      <>
+                        <span>•</span>
+                        <span className="truncate">{getSeasonLabel(game.season_id!)}</span>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 mt-0.5 text-sm text-muted-foreground truncate">
+                    <span>{formatWeekday(game.game_date)}</span>
+                    <span>•</span>
+                    <span>{formatTime(game.game_time)}</span>
+                    {showSeasonLabel && (
+                      <>
+                        <span>•</span>
+                        <span className="truncate">{getSeasonLabel(game.season_id!)}</span>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {isPlayed && (
+              <div className="flex items-center gap-3 shrink-0">
+                {isPlayed ? (
                   <div className="text-right">
                     <div className="text-2xl font-bold leading-none">
                       <span className="text-primary">{game.our_score}</span>
@@ -953,9 +1181,55 @@ export default function Schedule() {
                       </div>
                     )}
                   </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center shrink-0 rounded-lg w-14 h-14 bg-muted">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{badge.month}</span>
+                    <span className="text-xl font-bold leading-none mt-0.5">{badge.day}</span>
+                  </div>
                 )}
-                <ChevronRight className="w-4 h-4 text-muted-foreground" />
               </div>
+            </div>
+          </CardContent>
+        </Card>
+      </FadeIn>
+    )
+  }
+
+  // Spotlight card for the very next upcoming game: bigger, with a month/day
+  // badge, so the game you're most likely opening next stands out from the
+  // rest of the upcoming list rather than blending in as a uniform row.
+  const renderSpotlightCard = (game: Game) => {
+    const relativeDay = formatRelativeDay(game.game_date)
+    const badge = dateBadgeParts(game.game_date)
+    const showSeasonLabel = game.season_id && scheduleSeasonIds.length !== 1
+    return (
+      <FadeIn key={game.id}>
+        <Card
+          onClick={() => handleSelectGame(game)}
+          className="bg-card border-primary/40 ring-1 ring-primary/20 cursor-pointer hover:border-primary/70 active:scale-[0.99] transition-all"
+        >
+          <CardContent className="p-4 flex items-center gap-4">
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-semibold uppercase tracking-wide mb-1 flex items-center gap-1.5 text-primary">
+                <Target className="w-3.5 h-3.5" />
+                Up Next{relativeDay ? ` · ${relativeDay}` : ''}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xl font-bold truncate">vs {game.opponent}</span>
+                {game.game_type === 'Playoff' && <Trophy className="w-4 h-4 text-yellow-500 shrink-0" />}
+              </div>
+              <div className="flex items-center gap-1.5 mt-1 text-sm truncate text-muted-foreground">
+                <span>{formatWeekday(game.game_date)}</span>
+                <span>•</span>
+                <span>{formatTime(game.game_time)}</span>
+                {showSeasonLabel && (
+                  <><span>•</span><span className="truncate">{getSeasonLabel(game.season_id!)}</span></>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-col items-center justify-center shrink-0 rounded-lg w-14 h-14 bg-primary/10">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-primary">{badge.month}</span>
+              <span className="text-xl font-bold leading-none mt-0.5">{badge.day}</span>
             </div>
           </CardContent>
         </Card>
@@ -1275,7 +1549,12 @@ export default function Schedule() {
                     <span>Upcoming ({upcomingGames.length})</span>
                     {showUpcoming ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                   </button>
-                  {showUpcoming && upcomingGames.map((game, index) => renderGameCard(game, index, index === 0, false))}
+                  {showUpcoming && (
+                    <div className="space-y-2">
+                      {renderSpotlightCard(upcomingGames[0]!)}
+                      {upcomingGames.slice(1).map((game, index) => renderGameCard(game, index, false))}
+                    </div>
+                  )}
                 </>
               )}
               {pastGames.length > 0 && (
@@ -1287,7 +1566,11 @@ export default function Schedule() {
                     <span>Played ({pastGames.length})</span>
                     {showPlayed ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                   </button>
-                  {showPlayed && pastGames.map((game, index) => renderGameCard(game, upcomingGames.length + index, false, true))}
+                  {showPlayed && (
+                    <div className="space-y-2">
+                      {pastGames.map((game, index) => renderGameCard(game, index, true))}
+                    </div>
+                  )}
                 </>
               )}
             </>

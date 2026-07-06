@@ -167,7 +167,7 @@ export function useGetPlayersNotInSeason() {
 
 export function useCreatePlayerForGame() {
   const fn = useCallback(async (params: { gameId: number; seasonId?: number | null; display_name: string; position?: string; gender_match?: string }) => {
-    // Players created mid-game from QuickScore are subs
+    // Players created mid-game from Schedule/live scoring are subs
     const { data: playerData, error: playerError } = await supabase
       .from('players')
       .insert({ display_name: params.display_name, position: params.position, gender_match: params.gender_match, is_sub: true })
@@ -185,7 +185,7 @@ export function useCreatePlayerForGame() {
 
     // Also join the game's season roster (not just game_lineups) so the sub
     // shows up anywhere a season-scoped roster or attendance filter is
-    // applied (QuickScore, Strategy, ...), instead of being invisible
+    // applied (Schedule, Strategy, ...), instead of being invisible
     // everywhere except this one game's lineup tab.
     if (params.seasonId) {
       const { error: spError } = await supabase.from('season_players').insert({ player_id: playerId, season_id: params.seasonId, is_sub: true })
