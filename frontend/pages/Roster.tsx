@@ -78,7 +78,7 @@ export default function Roster() {
 
   // Edit mode
   const [editing, setEditing] = useState(false)
-  const [editFields, setEditFields] = useState({ display_name: '', number: '', gender_match: '', phone: '', position: '' })
+  const [editFields, setEditFields] = useState({ display_name: '', number: '', gender_match: '', phone: '', position: '', is_sub: false })
   const [editingSeasons, setEditingSeasons] = useState(false)
   const [selectedSeasonIds, setSelectedSeasonIds] = useState<number[]>([])
 
@@ -132,6 +132,7 @@ export default function Roster() {
       gender_match: selectedPlayer.gender_match ?? '',
       phone: selectedPlayer.phone ?? '',
       position: selectedPlayer.position ?? '',
+      is_sub: selectedPlayer.is_sub,
     })
     setEditing(true)
   }
@@ -145,6 +146,7 @@ export default function Roster() {
       phone: editFields.phone || undefined,
       number: editFields.number ? parseInt(editFields.number) : null,
       position: editFields.position || null,
+      is_sub: editFields.is_sub,
     }) as Player | undefined
     if (updated) {
       setSelectedPlayer(updated)
@@ -341,6 +343,29 @@ export default function Roster() {
               <div className="space-y-1">
                 <Label className="text-xs">Phone</Label>
                 <Input value={editFields.phone} onChange={e => setEditFields(f => ({ ...f, phone: e.target.value }))} placeholder="Optional" className="h-8 text-sm bg-background border-border" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Roster Status</Label>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={editFields.is_sub ? 'outline' : 'default'}
+                    onClick={() => setEditFields(f => ({ ...f, is_sub: false }))}
+                    className={`flex-1 h-8 text-sm ${!editFields.is_sub ? 'bg-primary text-primary-foreground hover:bg-primary/90' : ''}`}
+                  >
+                    Player
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={editFields.is_sub ? 'default' : 'outline'}
+                    onClick={() => setEditFields(f => ({ ...f, is_sub: true }))}
+                    className={`flex-1 h-8 text-sm ${editFields.is_sub ? 'bg-primary text-primary-foreground hover:bg-primary/90' : ''}`}
+                  >
+                    Sub
+                  </Button>
+                </div>
               </div>
               <div className="flex gap-2">
                 <Button onClick={handleSaveEdit} size="sm" className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90 h-9">

@@ -19,11 +19,49 @@ import FadeIn from '../components/FadeIn'
 import { Target, Plus, Minus, TrendingUp, Undo2, Edit2, ChevronLeft, Trash2, Calendar, ArrowLeftRight, Users, ChevronDown, ChevronUp } from 'lucide-react'
 
 type Season = { id: number; name: string; year: number; organizer: string | null; start_date: string | null; end_date: string | null }
-type Game = { id: number; opponent: string; game_date: string; season_id: number | null }
+type Game = { id: number; opponent: string; game_date: string; game_time: string | null; season_id: number | null }
 
 function seasonLabel(s: Season) {
   const parts = [s.organizer, s.name, s.year].filter(Boolean)
   return parts.join(' ')
+}
+
+// A game counts as "upcoming" until its actual start time passes, not just
+// its calendar date, so a game later today still shows.
+function gameStartsAt(g: Game): Date {
+  return new Date(`${g.game_date}T${g.game_time || '00:00:00'}`)
+}
+
+function formatGameDate(dateStr: string) {
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+}
+
+function formatWeekday(dateStr: string) {
+  return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' })
+}
+
+function formatGameTime(timeStr: string | null) {
+  if (!timeStr) return null
+  const [h, m] = timeStr.split(':').map(Number)
+  const d = new Date(2000, 0, 1, h, m)
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+}
+
+function dateBadgeParts(dateStr: string) {
+  const d = new Date(dateStr + 'T00:00:00')
+  return {
+    month: d.toLocaleDateString('en-US', { month: 'short' }).toUpperCase(),
+    day: d.getDate(),
+  }
+}
+
+function formatRelativeDay(dateStr: string, now: Date) {
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  const days = Math.round((startOfDay(new Date(dateStr + 'T00:00:00')).getTime() - startOfDay(now).getTime()) / 86_400_000)
+  if (days === 0) return 'Today'
+  if (days === 1) return 'Tomorrow'
+  if (days > 1 && days <= 6) return `In ${days} days`
+  return null
 }
 
 export default function QuickScore() {
@@ -103,6 +141,14 @@ export default function QuickScore() {
   const filteredGames = selectedSeasonIds.length > 0
     ? allGames.filter(g => g.season_id != null && selectedSeasonIds.includes(g.season_id))
     : allGames
+
+  const now = new Date()
+  const upcomingGames = filteredGames
+    .filter(g => gameStartsAt(g) >= now)
+    .sort((a, b) => gameStartsAt(a).getTime() - gameStartsAt(b).getTime())
+  const [nextGame, ...laterGames] = upcomingGames
+  // Redundant once a single season is already the active filter.
+  const showSeasonLabel = selectedSeasonIds.length !== 1
 
   const selectedGame = (games as Game[] | undefined)?.find(g => g.id === selectedGameId)
   const ourGoals = events?.filter((e: { event_type: string }) => e.event_type === 'Goal').length || 0
@@ -349,25 +395,100 @@ export default function QuickScore() {
           {/* Game Selection */}
           <div>
             <h2 className="text-lg font-semibold text-foreground mb-3">Select Game</h2>
-            <div className="grid grid-cols-1 gap-2 max-h-96 overflow-y-auto">
-              {filteredGames.map((game) => (
-                <button
-                  key={game.id}
-                  onClick={() => setSelectedGameId(game.id)}
-                  className={`p-3 rounded-lg border transition-all text-left ${
-                    selectedGameId === game.id
-                      ? 'bg-primary text-primary-foreground border-primary'
-                      : 'bg-card border-border hover:bg-accent hover:border-primary/50'
-                  }`}
-                >
-                  <div className="font-medium">vs {game.opponent}</div>
-                  <div className="text-sm text-muted-foreground mt-1">
-                    {new Date(game.game_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-                    {game.season_id && getSeasonLabel(game.season_id) ? ` • ${getSeasonLabel(game.season_id)}` : ''}
+
+            {upcomingGames.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+                No upcoming games. Add one from Schedule.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {nextGame && (() => {
+                  const relativeDay = formatRelativeDay(nextGame.game_date, now)
+                  const time = formatGameTime(nextGame.game_time)
+                  const badge = dateBadgeParts(nextGame.game_date)
+                  const isSelected = selectedGameId === nextGame.id
+                  return (
+                    <button
+                      key={nextGame.id}
+                      onClick={() => setSelectedGameId(nextGame.id)}
+                      className={`w-full text-left rounded-xl border p-4 transition-all relative overflow-hidden flex items-center gap-4 ${
+                        isSelected
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'bg-card border-primary/40 ring-1 ring-primary/20 hover:border-primary/70'
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className={`text-xs font-semibold uppercase tracking-wide mb-1 flex items-center gap-1.5 ${
+                          isSelected ? 'text-primary-foreground/80' : 'text-primary'
+                        }`}>
+                          <Target className="w-3.5 h-3.5" />
+                          Up Next{relativeDay ? ` · ${relativeDay}` : ''}
+                        </div>
+                        <div className="text-xl font-bold truncate">vs {nextGame.opponent}</div>
+                        <div className={`flex items-center gap-1.5 mt-1 text-sm truncate ${
+                          isSelected ? 'text-primary-foreground/80' : 'text-muted-foreground'
+                        }`}>
+                          <span>{formatWeekday(nextGame.game_date)}</span>
+                          {time && <><span>•</span><span>{time}</span></>}
+                          {showSeasonLabel && nextGame.season_id && getSeasonLabel(nextGame.season_id) && (
+                            <><span>•</span><span className="truncate">{getSeasonLabel(nextGame.season_id)}</span></>
+                          )}
+                        </div>
+                      </div>
+                      <div className={`flex flex-col items-center justify-center shrink-0 rounded-lg w-14 h-14 ${
+                        isSelected ? 'bg-primary-foreground/15' : 'bg-primary/10'
+                      }`}>
+                        <span className={`text-[10px] font-semibold uppercase tracking-wide ${
+                          isSelected ? 'text-primary-foreground/80' : 'text-primary'
+                        }`}>{badge.month}</span>
+                        <span className="text-xl font-bold leading-none mt-0.5">{badge.day}</span>
+                      </div>
+                    </button>
+                  )
+                })()}
+
+                {laterGames.length > 0 && (
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Later</div>
+                    <div className="grid grid-cols-1 gap-2">
+                      {laterGames.map((game) => {
+                        const badge = dateBadgeParts(game.game_date)
+                        const isSelected = selectedGameId === game.id
+                        const time = formatGameTime(game.game_time)
+                        return (
+                          <button
+                            key={game.id}
+                            onClick={() => setSelectedGameId(game.id)}
+                            className={`p-3 rounded-lg border transition-all text-left flex items-center gap-3 ${
+                              isSelected
+                                ? 'bg-primary text-primary-foreground border-primary'
+                                : 'bg-card border-border hover:bg-accent hover:border-primary/50'
+                            }`}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="font-medium truncate">vs {game.opponent}</div>
+                              <div className={`text-sm mt-0.5 truncate ${isSelected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>
+                                {formatWeekday(game.game_date)}
+                                {time && ` • ${time}`}
+                                {showSeasonLabel && game.season_id && getSeasonLabel(game.season_id) ? ` • ${getSeasonLabel(game.season_id)}` : ''}
+                              </div>
+                            </div>
+                            <div className={`flex flex-col items-center justify-center shrink-0 rounded-lg w-11 h-11 ${
+                              isSelected ? 'bg-primary-foreground/15' : 'bg-muted'
+                            }`}>
+                              <span className={`text-[9px] font-semibold uppercase tracking-wide ${
+                                isSelected ? 'text-primary-foreground/80' : 'text-muted-foreground'
+                              }`}>{badge.month}</span>
+                              <span className="text-base font-bold leading-none mt-0.5">{badge.day}</span>
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
                   </div>
-                </button>
-              ))}
-            </div>
+                )}
+              </div>
+            )}
           </div>
         </>
       ) : (
@@ -596,7 +717,7 @@ export default function QuickScore() {
             <CardContent>
               <div className="space-y-2 max-h-48 overflow-y-auto">
                 {events && events.length > 0 ? (
-                  events.slice(0, 8).map((event: { id: number; event_type: string; event_timestamp: string; player_id: number | null; related_player_id: number | null }, index: number) => {
+                  events.map((event: { id: number; event_type: string; event_timestamp: string; player_id: number | null; related_player_id: number | null }, index: number) => {
                     const player = players?.find((p: { id: number }) => p.id === event.player_id)
                     const assister = players?.find((p: { id: number }) => p.id === event.related_player_id)
                     const isGoal = event.event_type === 'Goal'
