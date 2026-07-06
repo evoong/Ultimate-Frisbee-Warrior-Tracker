@@ -17,6 +17,8 @@ import { Label } from '../lib/shadcn/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
 import { Badge } from '../lib/shadcn/badge'
 import PlayerCombobox from '../components/PlayerCombobox'
+import PlayerAvatar from '../components/PlayerAvatar'
+import { GenderRatio } from '../components/GenderTag'
 import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
 import { useAuth } from '../contexts/AuthContext'
@@ -38,10 +40,10 @@ type Game = {
   our_score: number; their_score: number; result: string; outcome_override: string | null; notes: string | null; season_id: number | null
 }
 type GameEvent = { id: number; event_type: string; event_timestamp: string; player_id: number | null; related_player_id: number | null; notes: string | null }
-type Player = { id: number; display_name: string; position: string | null; gender_match: string | null; is_sub: boolean | null }
+type Player = { id: number; display_name: string; position: string | null; gender_match: string | null; is_sub: boolean | null; photo_url: string | null }
 type Season = { id: number; name: string; year: number; organizer: string | null; default_game_time: string | null; start_date: string | null; end_date: string | null }
 type SeasonMeta = { organizers: string[]; names: string[]; years: number[]; locations: string[] }
-type LineupEntry = { id: number; player_id: number; lineup_name: string; display_name: string; position: string | null; gender_match: string | null }
+type LineupEntry = { id: number; player_id: number; lineup_name: string; display_name: string; position: string | null; gender_match: string | null; photo_url: string | null }
 
 function seasonLabel(s: { name: string; year: number; organizer: string | null }) {
   return [s.organizer, s.name, s.year].filter(Boolean).join(' ')
@@ -702,13 +704,17 @@ export default function Schedule() {
                     <div className="flex items-center gap-2 mb-2">
                       <Badge variant="secondary" className="text-xs">{group}</Badge>
                       <span className="text-xs text-muted-foreground">{entries.length} players</span>
+                      <GenderRatio entries={entries} className="ml-auto" />
                     </div>
                     <div className="space-y-1.5">
                       {entries.map(e => (
                         <div key={e.player_id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-background">
-                          <div className="flex-1">
-                            <span className="text-sm font-medium text-foreground">{e.display_name}</span>
-                            {e.position && <span className="text-xs text-muted-foreground ml-2">{e.position}</span>}
+                          <div className="flex-1 flex items-center gap-2">
+                            <PlayerAvatar photoUrl={e.photo_url} name={e.display_name} genderMatch={e.gender_match} size="sm" />
+                            <div>
+                              <span className="text-sm font-medium text-foreground">{e.display_name}</span>
+                              {e.position && <span className="text-xs text-muted-foreground ml-1">{e.position}</span>}
+                            </div>
                           </div>
                           {allowed && (
                             <button onClick={() => handleRemoveFromLineup(e.player_id, e.lineup_name)} className="p-1 rounded hover:bg-destructive/10">
@@ -741,12 +747,16 @@ export default function Schedule() {
             return pa.localeCompare(pb)
           })
           const inCount = nonSubRows.filter(r => r.in).length
+          const attendingEntries = nonSubRows.filter(r => r.in).map(r => ({ gender_match: allPlayers?.find(p => p.id === r.player_id)?.gender_match ?? null }))
           return (
             <Card className="bg-card text-card-foreground border-border">
               <CardHeader>
                 <CardTitle className="text-base flex items-center justify-between">
                   <span className="flex items-center gap-2"><ClipboardCheck className="w-4 h-4" />Attendance</span>
-                  <span className="text-sm font-normal text-muted-foreground">{rows ? `${inCount} / ${nonSubRows.length}` : '…'}</span>
+                  <span className="flex items-center gap-2 text-sm font-normal text-muted-foreground">
+                    <GenderRatio entries={attendingEntries} />
+                    {rows ? `${inCount} / ${nonSubRows.length}` : '…'}
+                  </span>
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
@@ -782,8 +792,9 @@ export default function Schedule() {
                               }}
                               className="accent-primary w-4 h-4 rounded cursor-pointer disabled:cursor-default"
                             />
-                            <span className={`text-sm ${row.in ? 'text-foreground' : 'text-muted-foreground line-through'}`}>
-                              {player?.display_name ?? `Player ${row.player_id}`}
+                            <span className={`flex items-center gap-2 text-sm text-foreground ${row.in ? '' : 'opacity-50'}`}>
+                              <PlayerAvatar photoUrl={player?.photo_url ?? null} name={player?.display_name ?? ''} genderMatch={player?.gender_match ?? null} size="sm" />
+                              <span className={row.in ? '' : 'line-through'}>{player?.display_name ?? `Player ${row.player_id}`}</span>
                             </span>
                           </label>
                         )

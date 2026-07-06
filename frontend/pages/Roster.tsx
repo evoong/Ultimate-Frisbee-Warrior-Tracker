@@ -267,7 +267,7 @@ export default function Roster() {
         {/* Player Header */}
         <div className="flex items-center gap-4">
           <div className="relative group">
-            <PlayerAvatar photoUrl={selectedPlayer.photo_url} name={selectedPlayer.display_name} size="lg" />
+            <PlayerAvatar photoUrl={selectedPlayer.photo_url} name={selectedPlayer.display_name} genderMatch={selectedPlayer.gender_match} size="lg" />
             {allowed && (
               <button onClick={handlePhotoClick} disabled={uploadingPhoto}
                 className="absolute inset-0 rounded-full flex items-center justify-center bg-black/0 group-hover:bg-black/40 transition-colors cursor-pointer"
@@ -290,7 +290,11 @@ export default function Roster() {
               )}
             </div>
             <div className="flex items-center gap-3 mt-1 flex-wrap">
-              {selectedPlayer.gender_match && <span className="text-sm text-muted-foreground">{selectedPlayer.gender_match}</span>}
+              {selectedPlayer.gender_match && (
+                <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                  <GenderTag value={selectedPlayer.gender_match} />{selectedPlayer.gender_match}
+                </span>
+              )}
               {selectedPlayer.position && <span className="text-sm text-muted-foreground">{selectedPlayer.position}</span>}
               {selectedPlayer.phone && (
                 <div className="flex items-center gap-1 text-sm text-muted-foreground">
@@ -637,7 +641,7 @@ export default function Roster() {
             >
               <CardContent className="p-4">
                 <div className="flex items-center gap-4">
-                  <PlayerAvatar photoUrl={player.photo_url} name={player.display_name} size="md" />
+                  <PlayerAvatar photoUrl={player.photo_url} name={player.display_name} genderMatch={player.gender_match} size="md" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="font-semibold text-foreground text-lg truncate">{player.display_name}</span>

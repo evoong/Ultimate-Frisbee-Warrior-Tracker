@@ -30,6 +30,8 @@ export default {
           DEFAULT: "hsl(var(--destructive))",
           foreground: "hsl(var(--destructive-foreground))",
         },
+        "gender-man": "hsl(var(--gender-man))",
+        "gender-woman": "hsl(var(--gender-woman))",
         muted: {
           DEFAULT: "hsl(var(--muted))",
           foreground: "hsl(var(--muted-foreground))",
