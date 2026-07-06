@@ -14,6 +14,16 @@ export type StrategyArrow = {
   start_player_id: number | null
 }
 
+// A board element that can be selected (player, opponent marker, or arrow).
+export type StrategySelectedItem = { kind: 'player' | 'opponent' | 'arrow'; id: number }
+// A relative move applied to a multi-selection during a group drag. Arrows
+// carry all six curve coordinates plus start_player_id (a group move detaches
+// an anchored arrow so the whole shape translates rigidly).
+export type StrategyEntityMove =
+  | { kind: 'player'; id: number; x: number; y: number }
+  | { kind: 'opponent'; id: number; x: number; y: number }
+  | { kind: 'arrow'; id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id: number | null }
+
 type HookResult<T, P = void> = {
   data: T | undefined
   loading: boolean
