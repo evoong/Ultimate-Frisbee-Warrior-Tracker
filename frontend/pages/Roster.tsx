@@ -24,7 +24,7 @@ type Player = {
 }
 type GameStat = { game_id: number; opponent: string; game_date: string; game_type: string; season_id: number | null; in: boolean; goals: string; assists: string; turnovers: string }
 type Season = { id: number; name: string; year: number; organizer: string | null; start_date: string | null; end_date: string | null }
-type PlayerSeason = { id: number; name: string; year: number; organizer: string | null; active: boolean }
+type PlayerSeason = { id: number; name: string; year: number; organizer: string | null; active: boolean; is_sub: boolean }
 
 const POSITIONS = ['Handler', 'Cutter', 'Hybrid', 'Deep Cutter']
 const GENDERS = ['Man', 'Woman']
@@ -79,9 +79,10 @@ export default function Roster() {
 
   // Edit mode
   const [editing, setEditing] = useState(false)
-  const [editFields, setEditFields] = useState({ display_name: '', number: '', gender_match: '', phone: '', position: '', is_sub: false })
+  const [editFields, setEditFields] = useState({ display_name: '', number: '', gender_match: '', phone: '', position: '' })
   const [editingSeasons, setEditingSeasons] = useState(false)
   const [selectedSeasonIds, setSelectedSeasonIds] = useState<number[]>([])
+  const [selectedSeasonSubs, setSelectedSeasonSubs] = useState<Record<number, boolean>>({})
 
   // New player dialog
   const [showNewPlayer, setShowNewPlayer] = useState(false)
@@ -133,7 +134,6 @@ export default function Roster() {
       gender_match: selectedPlayer.gender_match ?? '',
       phone: selectedPlayer.phone ?? '',
       position: selectedPlayer.position ?? '',
-      is_sub: selectedPlayer.is_sub,
     })
     setEditing(true)
   }
@@ -147,7 +147,6 @@ export default function Roster() {
       phone: editFields.phone || undefined,
       number: editFields.number ? parseInt(editFields.number) : null,
       position: editFields.position || null,
-      is_sub: editFields.is_sub,
     }) as Player | undefined
     if (updated) {
       setSelectedPlayer(updated)
@@ -158,15 +157,19 @@ export default function Roster() {
 
   const handleStartEditSeasons = () => {
     // Pre-select every membership (not just active) so saving doesn't silently drop inactive rows
-    const ps = playerSeasons as PlayerSeason[] | undefined
-    setSelectedSeasonIds((ps ?? []).map(s => s.id))
+    const ps = (playerSeasons as PlayerSeason[] | undefined) ?? []
+    setSelectedSeasonIds(ps.map(s => s.id))
+    setSelectedSeasonSubs(Object.fromEntries(ps.map(s => [s.id, s.is_sub])))
     setEditingSeasons(true)
   }
 
   const handleSaveSeasons = async () => {
     if (!selectedPlayer) return
-    await updatePlayerSeasons({ playerId: selectedPlayer.id, seasonIds: selectedSeasonIds })
+    await updatePlayerSeasons({ playerId: selectedPlayer.id, seasonIds: selectedSeasonIds, subsBySeasonId: selectedSeasonSubs })
     await fetchPlayerSeasons({ playerId: selectedPlayer.id })
+    const refreshed = await fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined })
+    const updated = (refreshed as Player[] | undefined)?.find(p => p.id === selectedPlayer.id)
+    if (updated) setSelectedPlayer(updated)
     setEditingSeasons(false)
   }
 
@@ -349,29 +352,6 @@ export default function Roster() {
                 <Label className="text-xs">Phone</Label>
                 <Input value={editFields.phone} onChange={e => setEditFields(f => ({ ...f, phone: e.target.value }))} placeholder="Optional" className="h-8 text-sm bg-background border-border" />
               </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Roster Status</Label>
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={editFields.is_sub ? 'outline' : 'default'}
-                    onClick={() => setEditFields(f => ({ ...f, is_sub: false }))}
-                    className={`flex-1 h-8 text-sm ${!editFields.is_sub ? 'bg-primary text-primary-foreground hover:bg-primary/90' : ''}`}
-                  >
-                    Player
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={editFields.is_sub ? 'default' : 'outline'}
-                    onClick={() => setEditFields(f => ({ ...f, is_sub: true }))}
-                    className={`flex-1 h-8 text-sm ${editFields.is_sub ? 'bg-primary text-primary-foreground hover:bg-primary/90' : ''}`}
-                  >
-                    Sub
-                  </Button>
-                </div>
-              </div>
               <div className="flex gap-2">
                 <Button onClick={handleSaveEdit} size="sm" className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90 h-9">
                   <Save className="w-3.5 h-3.5 mr-1.5" />Save
@@ -419,19 +399,47 @@ export default function Roster() {
           <CardContent>
             {editingSeasons ? (
               <div className="space-y-2">
-                {allSeasonsArr.map(s => (
-                  <label key={s.id} className="flex items-center gap-3 cursor-pointer hover:bg-accent rounded px-2 py-1.5 transition-colors">
-                    <input
-                      type="checkbox"
-                      checked={selectedSeasonIds.includes(s.id)}
-                      onChange={() => setSelectedSeasonIds(prev =>
-                        prev.includes(s.id) ? prev.filter(id => id !== s.id) : [...prev, s.id]
+                {allSeasonsArr.map(s => {
+                  const checked = selectedSeasonIds.includes(s.id)
+                  const isSub = selectedSeasonSubs[s.id] ?? false
+                  return (
+                    <div key={s.id} className="flex items-center gap-3 rounded px-2 py-1.5 hover:bg-accent transition-colors">
+                      <label className="flex items-center gap-3 cursor-pointer flex-1 min-w-0">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => setSelectedSeasonIds(prev =>
+                            prev.includes(s.id) ? prev.filter(id => id !== s.id) : [...prev, s.id]
+                          )}
+                          className="w-4 h-4 rounded border-border shrink-0"
+                        />
+                        <span className="text-sm text-foreground truncate">{seasonLabel(s)}</span>
+                      </label>
+                      {checked && (
+                        <div className="flex gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedSeasonSubs(prev => ({ ...prev, [s.id]: false }))}
+                            className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                              !isSub ? 'bg-primary text-primary-foreground border-primary' : 'text-muted-foreground border-border hover:border-primary/50'
+                            }`}
+                          >
+                            Player
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedSeasonSubs(prev => ({ ...prev, [s.id]: true }))}
+                            className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${
+                              isSub ? 'bg-primary text-primary-foreground border-primary' : 'text-muted-foreground border-border hover:border-primary/50'
+                            }`}
+                          >
+                            Sub
+                          </button>
+                        </div>
                       )}
-                      className="w-4 h-4 rounded border-border"
-                    />
-                    <span className="text-sm text-foreground">{seasonLabel(s)}</span>
-                  </label>
-                ))}
+                    </div>
+                  )
+                })}
               </div>
             ) : (
               <div className="space-y-2">
@@ -446,7 +454,7 @@ export default function Roster() {
                           prev.includes(s.id.toString()) ? prev.filter(id => id !== s.id.toString()) : [...prev, s.id.toString()]
                         )}
                       >
-                        {seasonLabel(s)}
+                        {seasonLabel(s)}{s.is_sub && ' · Sub'}
                       </Badge>
                     ))
                     : <span className="text-sm text-muted-foreground">No seasons assigned</span>
