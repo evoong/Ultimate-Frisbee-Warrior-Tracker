@@ -39,7 +39,7 @@ function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P
 export function useGetPlayers() {
   const fn = useCallback(async (params?: { seasonIds?: number[] }) => {
     if (!params?.seasonIds || params.seasonIds.length === 0) {
-      // No season filter - return all players
+      // No season filter - return all players, is_sub is the global default
       const { data, error } = await supabase
         .from('players')
         .select('*')
@@ -51,7 +51,7 @@ export function useGetPlayers() {
     // Get players for specific seasons through season_players table
     const { data: seasonPlayers, error: spError } = await supabase
       .from('season_players')
-      .select('player_id')
+      .select('player_id, is_sub')
       .in('season_id', params.seasonIds)
 
     if (spError) throw new Error(spError.message)
@@ -60,7 +60,13 @@ export function useGetPlayers() {
       return []
     }
 
-    const playerIds = seasonPlayers.map(sp => (sp as any).player_id)
+    // Player/Sub status is per-season, so with more than one season selected
+    // a player counts as a sub here only if they're a sub in every one of them.
+    const subByPlayer = new Map<number, boolean>()
+    for (const sp of seasonPlayers as any[]) {
+      subByPlayer.set(sp.player_id, (subByPlayer.get(sp.player_id) ?? true) && sp.is_sub)
+    }
+    const playerIds = [...subByPlayer.keys()]
 
     // Get full player details
     const { data, error } = await supabase
@@ -70,7 +76,7 @@ export function useGetPlayers() {
       .order('display_name')
 
     if (error) throw new Error(error.message)
-    return data as any[]
+    return (data as any[]).map(p => ({ ...p, is_sub: subByPlayer.get(p.id) ?? p.is_sub }))
   }, [])
   return useApiCall<any[], { seasonIds?: number[] }>(fn)
 }
@@ -79,19 +85,21 @@ export function useGetSeasonRoster() {
   const fn = useCallback(async (params: { seasonId: number }) => {
     const { data: seasonPlayers, error: spError } = await supabase
       .from('season_players')
-      .select('player_id')
+      .select('player_id, is_sub')
       .eq('season_id', params.seasonId)
     if (spError) throw new Error(spError.message)
     if (!seasonPlayers || seasonPlayers.length === 0) return []
 
-    const playerIds = (seasonPlayers as any[]).map((sp: any) => sp.player_id)
+    const subByPlayer = new Map((seasonPlayers as any[]).map((sp: any) => [sp.player_id, sp.is_sub]))
+    const playerIds = [...subByPlayer.keys()]
     const { data: playersData, error: playersError } = await supabase
       .from('players')
       .select('*')
       .in('id', playerIds)
       .order('display_name')
     if (playersError) throw new Error(playersError.message)
-    return playersData as any[]
+    // is_sub here reflects this specific season, not the player's global default
+    return (playersData as any[]).map(p => ({ ...p, is_sub: subByPlayer.get(p.id) ?? p.is_sub }))
   }, [])
   return useApiCall<any[], { seasonId: number }>(fn)
 }
@@ -180,7 +188,7 @@ export function useCreatePlayerForGame() {
     // applied (QuickScore, Strategy, ...), instead of being invisible
     // everywhere except this one game's lineup tab.
     if (params.seasonId) {
-      const { error: spError } = await supabase.from('season_players').insert({ player_id: playerId, season_id: params.seasonId })
+      const { error: spError } = await supabase.from('season_players').insert({ player_id: playerId, season_id: params.seasonId, is_sub: true })
       if (spError) throw new Error(spError.message)
     }
     // A new game backfills game_attendance for the season roster at that
@@ -237,11 +245,14 @@ export function useAddPlayerToGame() {
     // this may be an existing player from a *different* season, and without
     // a season_players row here they'd be invisible to this season's
     // attendance/roster filters. ignoreDuplicates since they may already be
-    // a member of this season.
+    // a member of this season (in which case their existing Player/Sub
+    // status is left alone) — a brand-new membership defaults to sub, since
+    // this is someone being pulled in for a season they aren't normally
+    // part of (Player/Sub is per-season: see season_players.is_sub).
     if (params.seasonId) {
       const { error: spError } = await supabase
         .from('season_players')
-        .upsert({ player_id: params.playerId, season_id: params.seasonId }, { onConflict: 'season_id,player_id', ignoreDuplicates: true })
+        .upsert({ player_id: params.playerId, season_id: params.seasonId, is_sub: true }, { onConflict: 'season_id,player_id', ignoreDuplicates: true })
       if (spError) throw new Error(spError.message)
     }
     // See useCreatePlayerForGame: a row for this specific game so the
@@ -297,8 +308,8 @@ export function useUpdatePlayerPosition() {
 }
 
 export function useUpdatePlayerSeasons() {
-  const fn = useCallback(async (params: { playerId: number; seasonIds: number[] }) => {
-    // Diff against existing memberships so jersey_number/role/active on kept rows survive
+  const fn = useCallback(async (params: { playerId: number; seasonIds: number[]; subsBySeasonId?: Record<number, boolean> }) => {
+    // Diff against existing memberships so jersey_number/active on removed rows are dropped
     const { data: existing, error: fetchError } = await supabase
       .from('season_players')
       .select('season_id')
@@ -307,7 +318,6 @@ export function useUpdatePlayerSeasons() {
 
     const current = new Set(((existing ?? []) as any[]).map((r: any) => r.season_id as number))
     const wanted = new Set(params.seasonIds)
-    const toAdd = params.seasonIds.filter(sid => !current.has(sid))
     const toRemove = [...current].filter(sid => !wanted.has(sid))
 
     if (toRemove.length > 0) {
@@ -318,10 +328,17 @@ export function useUpdatePlayerSeasons() {
         .in('season_id', toRemove)
       if (deleteError) throw new Error(deleteError.message)
     }
-    if (toAdd.length > 0) {
-      const rows = toAdd.map(sid => ({ player_id: params.playerId, season_id: sid }))
-      const { error: insertError } = await supabase.from('season_players').insert(rows)
-      if (insertError) throw new Error(insertError.message)
+    if (params.seasonIds.length > 0) {
+      // Upsert every kept/added season in one go: only touches is_sub (and
+      // inserts player_id/season_id for new rows), leaving jersey_number/
+      // active on already-existing rows untouched.
+      const rows = params.seasonIds.map(sid => ({
+        player_id: params.playerId, season_id: sid, is_sub: params.subsBySeasonId?.[sid] ?? false,
+      }))
+      const { error: upsertError } = await supabase
+        .from('season_players')
+        .upsert(rows, { onConflict: 'season_id,player_id' })
+      if (upsertError) throw new Error(upsertError.message)
     }
   }, [])
   return useApiCall(fn)
@@ -431,13 +448,14 @@ export function useGetPlayerSeasons() {
   const fn = useCallback(async (params: { playerId: number }) => {
     const { data, error } = await supabase
       .from('season_players')
-      .select('season_id, active, seasons(id, name, year, organizer)')
+      .select('season_id, active, is_sub, seasons(id, name, year, organizer)')
       .eq('player_id', params.playerId)
     if (error) throw new Error(error.message)
-    // Flatten: return array of season objects with active flag
+    // Flatten: return array of season objects with active/is_sub flags
     return (data ?? []).map((row: any) => ({
       ...(row.seasons as object),
       active: row.active,
+      is_sub: row.is_sub,
     })) as any[]
   }, [])
   return useApiCall<any[], { playerId: number }>(fn)
