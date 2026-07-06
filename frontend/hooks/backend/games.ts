@@ -113,7 +113,7 @@ export function useGetLineups() {
     // Join players so the UI can render names/positions directly
     const { data, error } = await supabase
       .from('game_lineups')
-      .select('*, players(display_name, position, gender_match)')
+      .select('*, players(display_name, position, gender_match, photo_url)')
       .eq('game_id', params.gameId)
     if (error) throw new Error(error.message)
     return ((data ?? []) as any[]).map((row: any) => ({
@@ -121,6 +121,7 @@ export function useGetLineups() {
       display_name: row.players?.display_name ?? null,
       position: row.players?.position ?? null,
       gender_match: row.players?.gender_match ?? null,
+      photo_url: row.players?.photo_url ?? null,
     }))
   }, [])
   return useApiCall<any[], { gameId: number }>(fn)
