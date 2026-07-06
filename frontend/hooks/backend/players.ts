@@ -270,7 +270,7 @@ export function useDeletePlayer() {
 }
 
 export function useUpdatePlayer() {
-  const fn = useCallback(async (params: { playerId: number; display_name?: string; phone?: string; number?: number | null; gender_match?: string; position?: string | null }) => {
+  const fn = useCallback(async (params: { playerId: number; display_name?: string; phone?: string; number?: number | null; gender_match?: string; position?: string | null; is_sub?: boolean }) => {
     const { playerId, ...body } = params
     const { data, error } = await supabase
       .from('players')

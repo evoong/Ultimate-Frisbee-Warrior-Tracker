@@ -17,6 +17,14 @@ import type { StrategyArrow, StrategyOpponentMarker } from '../../hooks/backend/
 // scoreboard, so there's no per-play side-flip.
 
 type BoardPlayer = { id: number; display_name: string; photo_url: string | null }
+
+// "Danny Nguyen" -> "Danny N." — keeps player labels short enough to fit
+// on the field without truncating into an unreadable ellipsis.
+function shortName(name: string) {
+  const parts = name.trim().split(/\s+/)
+  if (parts.length < 2) return name
+  return `${parts[0]} ${parts[parts.length - 1].charAt(0)}.`
+}
 type Entity = { kind: 'player'; id: number } | { kind: 'opponent'; id: number }
 
 type DragState = {
@@ -524,7 +532,7 @@ export default function StrategyBoard({
             >
               <PlayerAvatar photoUrl={player.photo_url} name={player.display_name} size="sm" />
               <span className="text-[9px] font-medium text-foreground bg-background/70 rounded px-1 mt-0.5 max-w-16 truncate">
-                {player.display_name}
+                {shortName(player.display_name)}
               </span>
             </div>
           )
@@ -571,7 +579,7 @@ export default function StrategyBoard({
             >
               <PlayerAvatar photoUrl={player.photo_url} name={player.display_name} size="sm" />
               <span className="text-[9px] text-muted-foreground mt-0.5 max-w-full truncate">
-                {player.display_name}
+                {shortName(player.display_name)}
               </span>
             </div>
           )
