@@ -335,10 +335,10 @@ export default function StrategyBoard({
   // colored to match the Us(green)/Them(red) convention used on Schedule and
   // Quick Score.
   const endZonePct = `${END_ZONE_FRACTION * 100}%`
-  const oursClass = 'absolute bg-emerald-600/25 dark:bg-emerald-500/15 border-emerald-700/40 dark:border-emerald-400/30 flex items-center justify-center pointer-events-none'
-  const theirsClass = 'absolute bg-red-600/20 dark:bg-red-500/15 border-red-700/40 dark:border-red-400/30 flex items-center justify-center pointer-events-none'
-  const oursLabel = <span className="text-[9px] font-semibold uppercase tracking-widest text-emerald-800/60 dark:text-emerald-300/50 select-none">Our End Zone</span>
-  const theirsLabel = <span className="text-[9px] font-semibold uppercase tracking-widest text-red-800/60 dark:text-red-300/50 select-none">Opponent End Zone</span>
+  const oursClass = 'absolute bg-emerald-500/25 dark:bg-emerald-500/15 border-emerald-600/45 dark:border-white/20 flex items-center justify-center pointer-events-none'
+  const theirsClass = 'absolute bg-red-500/25 dark:bg-red-500/15 border-red-600/45 dark:border-white/20 flex items-center justify-center pointer-events-none'
+  const oursLabel = <span className="text-[10px] font-semibold uppercase tracking-widest text-emerald-800/80 dark:text-emerald-200/60 select-none">Our End Zone</span>
+  const theirsLabel = <span className="text-[10px] font-semibold uppercase tracking-widest text-red-800/80 dark:text-red-200/60 select-none">Opponent End Zone</span>
   const endZones = isDesktop ? (
     <>
       <div className={`${oursClass} inset-y-0 left-0 border-r-2`} style={{ width: endZonePct }}>{oursLabel}</div>
@@ -420,7 +420,7 @@ export default function StrategyBoard({
       <div
         ref={fieldRef}
         onPointerDown={handleFieldPointerDown}
-        className={`relative overflow-hidden rounded-xl border border-border bg-emerald-600/20 dark:bg-emerald-500/10 touch-none ${
+        className={`relative overflow-hidden rounded-xl border border-border bg-emerald-500/15 dark:bg-emerald-500/10 touch-none ${
           isDesktop ? 'w-full aspect-[100/37]' : 'mx-auto w-full max-w-xl h-[88vh]'
         } ${drawArmed ? 'cursor-crosshair' : ''}`}
       >
