@@ -12,6 +12,7 @@ import {
   useGetStrategyOpponentMarkers, useCreateStrategyOpponentMarker, useUpdateStrategyOpponentMarker, useDeleteStrategyOpponentMarker,
   useGetStrategyArrows, useCreateStrategyArrow, useUpdateStrategyArrow, useDeleteStrategyArrow,
   type StrategyPlay, type StrategyStep, type StrategyOpponentMarker, type StrategyArrow,
+  type StrategySelectedItem as BoardItem, type StrategyEntityMove as EntityMove,
 } from '../hooks/backend/strategy'
 import StrategyBoard from '../components/strategy/StrategyBoard'
 import FadeIn from '../components/FadeIn'
@@ -35,13 +36,6 @@ type Board = {
   opponents: StrategyOpponentMarker[]
   arrows: StrategyArrow[]
 }
-// A relative move applied to a multi-selection: circles carry x/y, arrows
-// carry all six curve coordinates (the whole shape is translated).
-type EntityMove =
-  | { kind: 'player'; id: number; x: number; y: number }
-  | { kind: 'opponent'; id: number; x: number; y: number }
-  | { kind: 'arrow'; id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number }
-type BoardItem = { kind: 'player' | 'opponent' | 'arrow'; id: number }
 
 export default function Strategy() {
   const { allowed } = useAuth()
@@ -209,7 +203,7 @@ export default function Strategy() {
     const y = Math.min(0.9, 0.15 + (opponents.length % 6) * 0.12)
     const tempId = -Date.now()
     setOpponents(prev => [...prev, { id: tempId, label, x, y }])
-    const created = await createOpponent({ stepId: selectedStepId, label, x, y })
+    const created = await trackCreate(createOpponent({ stepId: selectedStepId, label, x, y }))
     if (created) setOpponents(prev => prev.map(o => (o.id === tempId ? created : o)))
     else loadStepData(selectedStepId)
   }
@@ -244,7 +238,7 @@ export default function Strategy() {
     pushHistory()
     const tempId = -Date.now()
     setArrows(prev => [...prev, { id: tempId, ...arrow }])
-    const created = await createArrow({ stepId: selectedStepId, ...arrow })
+    const created = await trackCreate(createArrow({ stepId: selectedStepId, ...arrow }))
     if (created) {
       setArrows(prev => prev.map(a => (a.id === tempId ? created : a)))
       await propagateRunArrowToNextStep(created)
@@ -288,6 +282,16 @@ export default function Strategy() {
     arrows: b.arrows.map(a => ({ ...a })),
   })
   const historyRef = useRef<Map<number, { past: Board[]; future: Board[] }>>(new Map())
+  // Guards against undo/redo firing while an optimistic insert is still in
+  // flight. Reconcile matches items by id, so deleting or recreating one whose
+  // real server id has not yet replaced its negative temp id would miss the DB
+  // row and orphan it. Undo/redo no-op until creates settle and reconcile is idle.
+  const pendingCreatesRef = useRef(0)
+  const reconcilingRef = useRef(false)
+  const trackCreate = <T,>(p: Promise<T>): Promise<T> => {
+    pendingCreatesRef.current++
+    return p.finally(() => { pendingCreatesRef.current-- })
+  }
   function pushHistory(before: Board = boardRef.current) {
     if (selectedStepId === null) return
     const h = historyRef.current.get(selectedStepId) ?? { past: [], future: [] }
@@ -305,6 +309,7 @@ export default function Strategy() {
     const stepId = selectedStepId
     const cur = boardRef.current
     const ops: Promise<unknown>[] = []
+    reconcilingRef.current = true
 
     setPositions(new Map(target.positions))
     for (const [pid, pos] of target.positions) {
@@ -320,7 +325,7 @@ export default function Strategy() {
       const c = curOpp.get(o.id)
       if (!c) {
         const oldId = o.id
-        ops.push(createOpponent({ stepId, label: o.label, x: o.x, y: o.y }).then(created => {
+        ops.push(trackCreate(createOpponent({ stepId, label: o.label, x: o.x, y: o.y })).then(created => {
           if (created) setOpponents(prev => prev.map(p => (p.id === oldId ? created : p)))
           return !!created
         }))
@@ -337,7 +342,7 @@ export default function Strategy() {
       const c = curArr.get(a.id)
       if (!c) {
         const oldId = a.id
-        ops.push(createArrow({ stepId, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2, cx: a.cx, cy: a.cy, arrow_type: a.arrow_type, start_player_id: a.start_player_id }).then(created => {
+        ops.push(trackCreate(createArrow({ stepId, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2, cx: a.cx, cy: a.cy, arrow_type: a.arrow_type, start_player_id: a.start_player_id })).then(created => {
           if (created) setArrows(prev => prev.map(p => (p.id === oldId ? created : p)))
           return !!created
         }))
@@ -348,11 +353,16 @@ export default function Strategy() {
     for (const a of cur.arrows) if (!targetArrIds.has(a.id)) ops.push(removeArrow({ id: a.id }))
 
     const results = await Promise.all(ops)
+    reconcilingRef.current = false
     if (results.some(r => r === false || r === undefined)) loadStepData(stepId)
   }
 
+  // Ignore undo/redo while a create is in flight or a reconcile is running, so
+  // reconcile never matches against an id that is about to change.
+  const historyBusy = () => reconcilingRef.current || pendingCreatesRef.current > 0
+
   const undo = () => {
-    if (!allowed || selectedStepId === null) return
+    if (!allowed || selectedStepId === null || historyBusy()) return
     const h = historyRef.current.get(selectedStepId)
     if (!h || h.past.length === 0) return
     const prev = h.past.pop()!
@@ -360,7 +370,7 @@ export default function Strategy() {
     reconcileBoard(prev)
   }
   const redo = () => {
-    if (!allowed || selectedStepId === null) return
+    if (!allowed || selectedStepId === null || historyBusy()) return
     const h = historyRef.current.get(selectedStepId)
     if (!h || h.future.length === 0) return
     const next = h.future.pop()!
@@ -372,7 +382,7 @@ export default function Strategy() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return
+      if (!(e.metaKey || e.ctrlKey) || e.repeat) return
       const el = e.target as HTMLElement | null
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
       const k = e.key.toLowerCase()
@@ -421,22 +431,18 @@ export default function Strategy() {
     const arrowMoves = moves.filter((m): m is Extract<EntityMove, { kind: 'arrow' }> => m.kind === 'arrow')
     if (playerMoves.length) setPositions(prev => { const m = new Map(prev); playerMoves.forEach(mv => m.set(mv.id, { x: mv.x, y: mv.y })); return m })
     if (oppMoves.length) setOpponents(prev => prev.map(o => { const mv = oppMoves.find(m => m.id === o.id); return mv ? { ...o, x: mv.x, y: mv.y } : o }))
-    if (arrowMoves.length) setArrows(prev => prev.map(a => { const mv = arrowMoves.find(m => m.id === a.id); return mv ? { ...a, x1: mv.x1, y1: mv.y1, x2: mv.x2, y2: mv.y2, cx: mv.cx, cy: mv.cy } : a }))
+    if (arrowMoves.length) setArrows(prev => prev.map(a => { const mv = arrowMoves.find(m => m.id === a.id); return mv ? { ...a, x1: mv.x1, y1: mv.y1, x2: mv.x2, y2: mv.y2, cx: mv.cx, cy: mv.cy, start_player_id: mv.start_player_id } : a }))
     if (phase === 'commit') {
       const before = groupBeforeRef.current
       groupBeforeRef.current = null
       if (before) pushHistory(before)
+      // Group-moved arrows detach (start_player_id: null), so there is no
+      // anchored run arrow left to propagate into the next step.
       Promise.all([
         ...playerMoves.map(mv => upsertPosition({ stepId, playerId: mv.id, x: mv.x, y: mv.y })),
         ...oppMoves.map(mv => updateOpponent({ id: mv.id, x: mv.x, y: mv.y })),
-        ...arrowMoves.map(mv => updateArrow({ id: mv.id, x1: mv.x1, y1: mv.y1, x2: mv.x2, y2: mv.y2, cx: mv.cx, cy: mv.cy })),
+        ...arrowMoves.map(mv => updateArrow({ id: mv.id, x1: mv.x1, y1: mv.y1, x2: mv.x2, y2: mv.y2, cx: mv.cx, cy: mv.cy, start_player_id: mv.start_player_id })),
       ]).then(results => { if (results.some(r => !r)) loadStepData(stepId) })
-      for (const mv of arrowMoves) {
-        const a = boardRef.current.arrows.find(ar => ar.id === mv.id)
-        if (a && a.arrow_type === 'run' && a.start_player_id != null) {
-          propagateRunArrowToNextStep({ arrow_type: 'run', start_player_id: a.start_player_id, x2: mv.x2, y2: mv.y2 })
-        }
-      }
     }
   }
 
