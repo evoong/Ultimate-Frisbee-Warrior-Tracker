@@ -4,7 +4,7 @@ import PlayerAvatar from '../PlayerAvatar'
 import { Button } from '../../lib/shadcn/button'
 import { useMediaQuery } from '../../lib/shadcn/use-media-query'
 import { Pencil, UserPlus, Trash2, Disc } from 'lucide-react'
-import type { StrategyArrow, StrategyOpponentMarker } from '../../hooks/backend/strategy'
+import type { StrategyArrow, StrategyOpponentMarker, StrategySelectedItem as SelectedItem, StrategyEntityMove as EntityMove } from '../../hooks/backend/strategy'
 
 // Canonical coordinates are fractions in [0, 1] of a LANDSCAPE field:
 // x along the 100m length (0 = left back line), y across the 37m width
@@ -18,12 +18,6 @@ import type { StrategyArrow, StrategyOpponentMarker } from '../../hooks/backend/
 
 type BoardPlayer = { id: number; display_name: string; photo_url: string | null }
 type Entity = { kind: 'player'; id: number } | { kind: 'opponent'; id: number }
-type SelectedItem = Entity | { kind: 'arrow'; id: number }
-// A relative move applied to a multi-selection during a group drag.
-type EntityMove =
-  | { kind: 'player'; id: number; x: number; y: number }
-  | { kind: 'opponent'; id: number; x: number; y: number }
-  | { kind: 'arrow'; id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number }
 
 type DragState = {
   entity: Entity
@@ -170,6 +164,12 @@ export default function StrategyBoard({
   // handles from flickering out as the pointer crosses from the line onto a
   // handle sitting on top of it.
   const [hoveredArrowId, setHoveredArrowId] = useState<number | null>(null)
+  // An arrow selected by a touch/pen tap (not a mouse) shows its handles from
+  // the selection alone, since a tap leaves no sustained hover. Gating on the
+  // selecting pointer's type — not the device's hover capability — is what
+  // lets a hybrid touchscreen laptop (which reports hover:hover) still edit
+  // arrows by finger.
+  const [touchArrowId, setTouchArrowId] = useState<number | null>(null)
   const hoverClearRef = useRef<number | null>(null)
   const keepArrowHover = (id: number) => {
     if (hoverClearRef.current !== null) { clearTimeout(hoverClearRef.current); hoverClearRef.current = null }
@@ -330,11 +330,26 @@ export default function StrategyBoard({
     const origArrows = selected.filter(s => s.kind === 'arrow')
       .map(s => arrows.find(a => a.id === s.id))
       .filter((a): a is StrategyArrow => !!a)
-    const computeMoves = (dx: number, dy: number): EntityMove[] => [
-      ...origPlayers.map(p => ({ kind: 'player' as const, id: p.id, x: clamp01(p.pos.x + dx), y: clamp01(p.pos.y + dy) })),
-      ...origOpps.map(o => ({ kind: 'opponent' as const, id: o.id, x: clamp01(o.x + dx), y: clamp01(o.y + dy) })),
-      ...origArrows.map(a => ({ kind: 'arrow' as const, id: a.id, x1: clamp01(a.x1 + dx), y1: clamp01(a.y1 + dy), x2: clamp01(a.x2 + dx), y2: clamp01(a.y2 + dy), cx: clamp01(a.cx + dx), cy: clamp01(a.cy + dy) })),
-    ]
+    // Clamp the shared delta (not each coordinate) so the whole group stays
+    // rigid at the field edges instead of deforming. Arrows detach from any
+    // anchored player on a group move so all six coordinates translate and
+    // render as-is (an anchored tail would otherwise be re-pinned to its
+    // player and ignore the move).
+    const allX = [...origPlayers.map(p => p.pos.x), ...origOpps.map(o => o.x), ...origArrows.flatMap(a => [a.x1, a.x2, a.cx])]
+    const allY = [...origPlayers.map(p => p.pos.y), ...origOpps.map(o => o.y), ...origArrows.flatMap(a => [a.y1, a.y2, a.cy])]
+    const minDx = allX.length ? -Math.min(...allX) : 0
+    const maxDx = allX.length ? 1 - Math.max(...allX) : 0
+    const minDy = allY.length ? -Math.min(...allY) : 0
+    const maxDy = allY.length ? 1 - Math.max(...allY) : 0
+    const computeMoves = (dxRaw: number, dyRaw: number): EntityMove[] => {
+      const dx = Math.min(maxDx, Math.max(minDx, dxRaw))
+      const dy = Math.min(maxDy, Math.max(minDy, dyRaw))
+      return [
+        ...origPlayers.map(p => ({ kind: 'player' as const, id: p.id, x: p.pos.x + dx, y: p.pos.y + dy })),
+        ...origOpps.map(o => ({ kind: 'opponent' as const, id: o.id, x: o.x + dx, y: o.y + dy })),
+        ...origArrows.map(a => ({ kind: 'arrow' as const, id: a.id, x1: a.x1 + dx, y1: a.y1 + dy, x2: a.x2 + dx, y2: a.y2 + dy, cx: a.cx + dx, cy: a.cy + dy, start_player_id: null })),
+      ]
+    }
     let moved = false
     onGroupMove([], 'start')
     const deltaFrom = (ev: PointerEvent) => {
@@ -536,7 +551,9 @@ export default function StrategyBoard({
   // tap-selected one (touch, which has no hover). A handle drag in progress
   // (liveArrowEdit) pins its arrow so the handles don't vanish mid-drag if the
   // pointer strays off the line.
-  const handleArrowId = liveArrowEdit?.id ?? (hasHover ? hoveredArrowId : selectedArrowId)
+  const handleArrowId = liveArrowEdit?.id
+    ?? hoveredArrowId
+    ?? (selectedArrowId !== null && selectedArrowId === touchArrowId ? selectedArrowId : null)
   const handleArrow = renderedArrows.find(a => a.id === handleArrowId) ?? null
 
   return (
@@ -610,7 +627,14 @@ export default function StrategyBoard({
               <g key={a.id}>
                 {/* wide, invisible hit path so thin arrows stay easy to tap */}
                 <path d={d} stroke="transparent" strokeWidth={3} fill="none" style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
-                  onPointerDown={(e) => { e.stopPropagation(); const item = { kind: 'arrow' as const, id: a.id }; (e.metaKey || e.ctrlKey) ? toggleSelected(item) : setSelected([item]) }}
+                  onPointerDown={(e) => {
+                    e.stopPropagation()
+                    const item = { kind: 'arrow' as const, id: a.id }
+                    if (e.metaKey || e.ctrlKey) { toggleSelected(item); return }
+                    setSelected([item])
+                    // A touch/pen tap reveals the handles from selection; a mouse relies on hover.
+                    setTouchArrowId(e.pointerType === 'mouse' ? null : a.id)
+                  }}
                   onPointerEnter={hasHover ? () => keepArrowHover(a.id) : undefined}
                   onPointerLeave={hasHover ? scheduleArrowHoverClear : undefined} />
                 <path
@@ -620,7 +644,7 @@ export default function StrategyBoard({
                   strokeDasharray={a.arrow_type === 'throw' ? '1.6 1.2' : undefined}
                   fill="none"
                   markerEnd="url(#strategy-arrowhead)"
-                  opacity={selectedArrowId === a.id || hoveredArrowId === a.id ? 1 : 0.9}
+                  opacity={isSel('arrow', a.id) || hoveredArrowId === a.id ? 1 : 0.9}
                 />
                 {a.arrow_type === 'throw' && (
                   <foreignObject x={mid.vx - 1.5} y={mid.vy - 1.5} width={3} height={3} style={{ pointerEvents: 'none' }}>
