@@ -26,6 +26,12 @@ function shortName(name: string) {
   return `${parts[0]} ${parts[parts.length - 1].charAt(0)}.`
 }
 type Entity = { kind: 'player'; id: number } | { kind: 'opponent'; id: number }
+type SelectedItem = Entity | { kind: 'arrow'; id: number }
+// A relative move applied to a multi-selection during a group drag.
+type EntityMove =
+  | { kind: 'player'; id: number; x: number; y: number }
+  | { kind: 'opponent'; id: number; x: number; y: number }
+  | { kind: 'arrow'; id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number }
 
 type DragState = {
   entity: Entity
@@ -33,8 +39,6 @@ type DragState = {
   origin: 'bench' | 'field'
   startX: number
   startY: number
-  clientX: number
-  clientY: number
   moved: boolean
 }
 
@@ -83,6 +87,7 @@ export default function StrategyBoard({
   players, positions, opponents, arrows, allowed,
   onPlace, onRemove, onAddOpponent, onMoveOpponent, onRemoveOpponent,
   onCreateArrow, onUpdateArrow, onDeleteArrow,
+  onGroupMove, onDeleteMany,
 }: {
   players: BoardPlayer[]
   positions: Map<number, { x: number; y: number }>
@@ -97,8 +102,11 @@ export default function StrategyBoard({
   onCreateArrow: (arrow: { x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id: number | null }) => void
   onUpdateArrow: (arrow: { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id?: number | null }) => void
   onDeleteArrow: (id: number) => void
+  onGroupMove: (moves: EntityMove[], phase: 'start' | 'preview' | 'commit' | 'cancel') => void
+  onDeleteMany: (items: SelectedItem[]) => void
 }) {
   const isDesktop = useMediaQuery('(min-width: 1024px)')
+  const hasHover = useMediaQuery('(hover: hover)')
   const fieldRef = useRef<HTMLDivElement>(null)
   // The ref is the authoritative drag state, updated synchronously inside the
   // event handlers; the state is only a render mirror for the ghost and the
@@ -107,6 +115,11 @@ export default function StrategyBoard({
   // frame would read a stale moved=false from state and skip the drop.
   const dragRef = useRef<DragState | null>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
+  // The ghost that follows the pointer is positioned imperatively (below) so it
+  // tracks the cursor at pointer-event rate, with no per-move React render. The
+  // ref holds the latest pointer position for the ghost's initial mount frame.
+  const pointerPosRef = useRef({ x: 0, y: 0 })
+  const ghostRef = useRef<HTMLDivElement>(null)
   // The last placed circle the user grabbed; it renders above the others so
   // overlapping circles stay individually reachable. Keyed by "kind-id" since
   // players and opponents have independent id spaces.
@@ -124,7 +137,57 @@ export default function StrategyBoard({
   const [mode, setMode] = useState<'move' | 'draw'>('move')
   const [arrowType, setArrowType] = useState<'run' | 'throw'>('run')
   const [aArmed, setAArmed] = useState(false)
-  const [selectedArrowId, setSelectedArrowId] = useState<number | null>(null)
+  // A multi-selection shared by players, opponents, and arrows. Click selects
+  // one (replacing); Cmd/Ctrl+click toggles membership. Delete/Backspace
+  // removes everything selected (benching players, deleting opponents/arrows);
+  // dragging a member moves the whole set. Escape, or a click on empty field,
+  // clears it.
+  const [selected, setSelected] = useState<SelectedItem[]>([])
+  const isSel = (kind: SelectedItem['kind'], id: number) => selected.some(s => s.kind === kind && s.id === id)
+  const toggleSelected = (item: SelectedItem) =>
+    setSelected(prev => prev.some(s => s.kind === item.kind && s.id === item.id)
+      ? prev.filter(s => !(s.kind === item.kind && s.id === item.id))
+      : [...prev, item])
+  // Handles (the tap-to-edit affordance) show only when a single arrow is
+  // selected; a multi-selection is for delete/move, not per-handle editing.
+  const selectedArrowId = selected.length === 1 && selected[0].kind === 'arrow' ? selected[0].id : null
+  // Refs so the window keydown listener (registered once) always sees the
+  // latest selection and delete action without re-subscribing every render.
+  const selectedRef = useRef<SelectedItem[]>(selected)
+  selectedRef.current = selected
+  const deleteSelectedRef = useRef<() => void>(() => {})
+  deleteSelectedRef.current = () => {
+    if (!allowed || selectedRef.current.length === 0) return
+    onDeleteMany(selectedRef.current)
+    setSelected([])
+  }
+  // Drop from the selection anything the board no longer contains (after a
+  // delete, undo, or a teammate's change) so stale ids never linger selected.
+  useEffect(() => {
+    setSelected(prev => {
+      const next = prev.filter(s =>
+        s.kind === 'player' ? positions.has(s.id)
+          : s.kind === 'opponent' ? opponents.some(o => o.id === s.id)
+            : arrows.some(a => a.id === s.id))
+      return next.length === prev.length ? prev : next
+    })
+  }, [positions, opponents, arrows])
+  // On hover-capable devices the edit handles reveal only while the pointer is
+  // over the arrow (arrows stay clean otherwise); touch has no hover, so the
+  // tap-selected arrow shows them instead. The short clear-delay keeps the
+  // handles from flickering out as the pointer crosses from the line onto a
+  // handle sitting on top of it.
+  const [hoveredArrowId, setHoveredArrowId] = useState<number | null>(null)
+  const hoverClearRef = useRef<number | null>(null)
+  const keepArrowHover = (id: number) => {
+    if (hoverClearRef.current !== null) { clearTimeout(hoverClearRef.current); hoverClearRef.current = null }
+    setHoveredArrowId(id)
+  }
+  const scheduleArrowHoverClear = () => {
+    if (hoverClearRef.current !== null) clearTimeout(hoverClearRef.current)
+    hoverClearRef.current = window.setTimeout(() => { setHoveredArrowId(null); hoverClearRef.current = null }, 80)
+  }
+  useEffect(() => () => { if (hoverClearRef.current !== null) clearTimeout(hoverClearRef.current) }, [])
   const [drawingArrow, setDrawingArrow] = useState<ArrowDraft | null>(null)
   const drawArrowRef = useRef<ArrowDraft | null>(null)
   // While a selected arrow's handle is being dragged, this overrides its
@@ -137,8 +200,13 @@ export default function StrategyBoard({
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setSelectedArrowId(null); return }
-      if (e.repeat || e.key.toLowerCase() !== 'a' || isTypingTarget(e.target)) return
+      if (e.key === 'Escape') { setSelected([]); return }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedRef.current.length > 0 && !isTypingTarget(e.target)) {
+        e.preventDefault()
+        deleteSelectedRef.current()
+        return
+      }
+      if (e.repeat || e.key.toLowerCase() !== 'a' || e.metaKey || e.ctrlKey || isTypingTarget(e.target)) return
       setAArmed(true)
     }
     const onKeyUp = (e: KeyboardEvent) => {
@@ -172,24 +240,48 @@ export default function StrategyBoard({
         if (start) beginArrowDraw(e.pointerId, start.x, start.y, entity.kind === 'player' ? entity.id : undefined)
         return
       }
+      // Cmd/Ctrl+click a field entity toggles its membership in the selection
+      // (no drag). On the bench there's nothing to gather, so ignore it.
+      if (e.metaKey || e.ctrlKey) {
+        if (origin === 'field') toggleSelected(entity)
+        return
+      }
+      // Dragging an entity that's part of a multi-selection moves the whole
+      // set together; otherwise plain-clicking it selects just it.
+      if (origin === 'field') {
+        if (selected.length > 1 && isSel(entity.kind, entity.id)) {
+          beginGroupDrag(e, entity)
+          return
+        }
+        setSelected([entity])
+      }
       teardownRef.current() // defensively end any drag still in flight
       if (origin === 'field') setLastActiveKey(`${entity.kind}-${entity.id}`)
-      updateDrag({ entity, pointerId: e.pointerId, origin, startX: e.clientX, startY: e.clientY, clientX: e.clientX, clientY: e.clientY, moved: false })
+      pointerPosRef.current = { x: e.clientX, y: e.clientY }
+      updateDrag({ entity, pointerId: e.pointerId, origin, startX: e.clientX, startY: e.clientY, moved: false })
 
       const onMove = (ev: PointerEvent) => {
         const d = dragRef.current
         if (!d || ev.pointerId !== d.pointerId) return
+        pointerPosRef.current = { x: ev.clientX, y: ev.clientY }
+        // Track the cursor imperatively — no React render per pointer event.
+        const g = ghostRef.current
+        if (g) { g.style.left = `${ev.clientX}px`; g.style.top = `${ev.clientY}px` }
         const moved = d.moved
           || Math.abs(ev.clientX - d.startX) > DRAG_THRESHOLD_PX
           || Math.abs(ev.clientY - d.startY) > DRAG_THRESHOLD_PX
         if (!moved) return
-        updateDrag({ ...d, clientX: ev.clientX, clientY: ev.clientY, moved: true })
+        // One render on the first threshold cross to mount the ghost and dim the
+        // source; the ghost's position is imperative from here on.
+        if (!d.moved) updateDrag({ ...d, moved: true })
       }
       const onUp = (ev: PointerEvent) => {
         const d = dragRef.current
         if (!d || ev.pointerId !== d.pointerId) return
         teardown()
         updateDrag(null)
+        // A tap (no drag) just leaves the selection set on pointer-down in
+        // place; only an actual drag places/benches the entity.
         if (!d.moved) return
         const rect = fieldRef.current?.getBoundingClientRect()
         if (!rect) return
@@ -226,6 +318,70 @@ export default function StrategyBoard({
       window.addEventListener('pointercancel', onCancel)
       teardownRef.current = teardown
     }
+
+  // Live group move: translate every selected item by the pointer delta and
+  // stream previews to the page, committing once on release. Arrows translate
+  // all six curve coordinates so the whole shape shifts. A release without
+  // movement collapses the selection down to the grabbed item.
+  const beginGroupDrag = (e: React.PointerEvent, grabbed: Entity) => {
+    const pointerId = e.pointerId
+    const rect0 = fieldRef.current?.getBoundingClientRect()
+    if (!rect0) return
+    teardownRef.current()
+    const startCanon = toCanonical((e.clientX - rect0.left) / rect0.width, (e.clientY - rect0.top) / rect0.height, isDesktop)
+    const origPlayers = selected.filter(s => s.kind === 'player')
+      .map(s => ({ id: s.id, pos: positions.get(s.id) }))
+      .filter((p): p is { id: number; pos: { x: number; y: number } } => !!p.pos)
+    const origOpps = selected.filter(s => s.kind === 'opponent')
+      .map(s => opponents.find(o => o.id === s.id))
+      .filter((o): o is StrategyOpponentMarker => !!o)
+    const origArrows = selected.filter(s => s.kind === 'arrow')
+      .map(s => arrows.find(a => a.id === s.id))
+      .filter((a): a is StrategyArrow => !!a)
+    const computeMoves = (dx: number, dy: number): EntityMove[] => [
+      ...origPlayers.map(p => ({ kind: 'player' as const, id: p.id, x: clamp01(p.pos.x + dx), y: clamp01(p.pos.y + dy) })),
+      ...origOpps.map(o => ({ kind: 'opponent' as const, id: o.id, x: clamp01(o.x + dx), y: clamp01(o.y + dy) })),
+      ...origArrows.map(a => ({ kind: 'arrow' as const, id: a.id, x1: clamp01(a.x1 + dx), y1: clamp01(a.y1 + dy), x2: clamp01(a.x2 + dx), y2: clamp01(a.y2 + dy), cx: clamp01(a.cx + dx), cy: clamp01(a.cy + dy) })),
+    ]
+    let moved = false
+    onGroupMove([], 'start')
+    const deltaFrom = (ev: PointerEvent) => {
+      const rect = fieldRef.current?.getBoundingClientRect()
+      if (!rect) return null
+      const canon = toCanonical((ev.clientX - rect.left) / rect.width, (ev.clientY - rect.top) / rect.height, isDesktop)
+      return { dx: canon.x - startCanon.x, dy: canon.y - startCanon.y }
+    }
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return
+      if (!moved && Math.abs(ev.clientX - e.clientX) <= DRAG_THRESHOLD_PX && Math.abs(ev.clientY - e.clientY) <= DRAG_THRESHOLD_PX) return
+      moved = true
+      const d = deltaFrom(ev)
+      if (d) onGroupMove(computeMoves(d.dx, d.dy), 'preview')
+    }
+    const onUp = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return
+      teardown()
+      if (!moved) { setSelected([grabbed]); onGroupMove([], 'cancel'); return }
+      const d = deltaFrom(ev)
+      if (d) onGroupMove(computeMoves(d.dx, d.dy), 'commit')
+      else onGroupMove([], 'cancel')
+    }
+    const onCancel = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return
+      teardown()
+      onGroupMove([], 'cancel')
+    }
+    const teardown = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+      teardownRef.current = () => {}
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
+    teardownRef.current = teardown
+  }
 
   // ── Arrow drawing ──────────────────────────────────────────────────────────
   // startPlayerId is set only when the drag began on a player avatar (not
@@ -280,7 +436,7 @@ export default function StrategyBoard({
 
   const handleFieldPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!drawArmed) {
-      if (selectedArrowId !== null) setSelectedArrowId(null)
+      if (selected.length) setSelected([])
       return
     }
     const rect = fieldRef.current?.getBoundingClientRect()
@@ -384,7 +540,12 @@ export default function StrategyBoard({
     const eff = getEffectiveArrow(a)
     return liveArrowEdit?.id === a.id ? { ...eff, ...liveArrowEdit } : eff
   })
-  const selectedArrow = renderedArrows.find(a => a.id === selectedArrowId) ?? null
+  // Which arrow shows its edit handles: the hovered one (desktop) or the
+  // tap-selected one (touch, which has no hover). A handle drag in progress
+  // (liveArrowEdit) pins its arrow so the handles don't vanish mid-drag if the
+  // pointer strays off the line.
+  const handleArrowId = liveArrowEdit?.id ?? (hasHover ? hoveredArrowId : selectedArrowId)
+  const handleArrow = renderedArrows.find(a => a.id === handleArrowId) ?? null
 
   return (
     <div className="space-y-3">
@@ -457,7 +618,9 @@ export default function StrategyBoard({
               <g key={a.id}>
                 {/* wide, invisible hit path so thin arrows stay easy to tap */}
                 <path d={d} stroke="transparent" strokeWidth={3} fill="none" style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
-                  onPointerDown={(e) => { e.stopPropagation(); setSelectedArrowId(a.id) }} />
+                  onPointerDown={(e) => { e.stopPropagation(); const item = { kind: 'arrow' as const, id: a.id }; (e.metaKey || e.ctrlKey) ? toggleSelected(item) : setSelected([item]) }}
+                  onPointerEnter={hasHover ? () => keepArrowHover(a.id) : undefined}
+                  onPointerLeave={hasHover ? scheduleArrowHoverClear : undefined} />
                 <path
                   d={d}
                   stroke={ARROW_COLOR}
@@ -465,7 +628,7 @@ export default function StrategyBoard({
                   strokeDasharray={a.arrow_type === 'throw' ? '1.6 1.2' : undefined}
                   fill="none"
                   markerEnd="url(#strategy-arrowhead)"
-                  opacity={selectedArrowId === a.id ? 1 : 0.9}
+                  opacity={selectedArrowId === a.id || hoveredArrowId === a.id ? 1 : 0.9}
                 />
                 {a.arrow_type === 'throw' && (
                   <foreignObject x={mid.vx - 1.5} y={mid.vy - 1.5} width={3} height={3} style={{ pointerEvents: 'none' }}>
@@ -483,29 +646,36 @@ export default function StrategyBoard({
         </svg>
 
         {/* Selected arrow's handles + delete button (HTML, positioned by percentage). */}
-        {selectedArrow && (() => {
-          const start = toRendered(selectedArrow.x1, selectedArrow.y1, isDesktop)
-          const end = toRendered(selectedArrow.x2, selectedArrow.y2, isDesktop)
-          const mid = onCurveMidpoint(selectedArrow)
+        {handleArrow && (() => {
+          const start = toRendered(handleArrow.x1, handleArrow.y1, isDesktop)
+          const end = toRendered(handleArrow.x2, handleArrow.y2, isDesktop)
+          const mid = onCurveMidpoint(handleArrow)
           const midRendered = toRendered(mid.x, mid.y, isDesktop)
           const handleClass = 'absolute w-4 h-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-background border-2 touch-none cursor-grab'
-          const startAnchored = selectedArrow.start_player_id != null
+          const startAnchored = handleArrow.start_player_id != null
+          // Keep the handles alive while the pointer is on them, so crossing
+          // from the arrow line onto a handle doesn't dismiss the set.
+          const hoverProps = hasHover
+            ? { onPointerEnter: () => keepArrowHover(handleArrow.id), onPointerLeave: scheduleArrowHoverClear }
+            : {}
           return (
             <>
               <div
+                {...hoverProps}
                 className={`${handleClass} ${startAnchored ? 'border-sky-400' : 'border-amber-500'}`}
                 title={startAnchored ? 'Anchored to a player — drag to detach' : undefined}
                 style={{ left: `${start.left}%`, top: `${start.top}%` }}
-                onPointerDown={beginHandleDrag(selectedArrow, 'start')}
+                onPointerDown={beginHandleDrag(handleArrow, 'start')}
               />
-              <div className={`${handleClass} border-amber-500`} style={{ left: `${end.left}%`, top: `${end.top}%` }} onPointerDown={beginHandleDrag(selectedArrow, 'end')} />
-              <div className={`${handleClass} border-amber-300`} style={{ left: `${midRendered.left}%`, top: `${midRendered.top}%` }} onPointerDown={beginHandleDrag(selectedArrow, 'bend')} />
+              <div {...hoverProps} className={`${handleClass} border-amber-500`} style={{ left: `${end.left}%`, top: `${end.top}%` }} onPointerDown={beginHandleDrag(handleArrow, 'end')} />
+              <div {...hoverProps} className={`${handleClass} border-amber-300`} style={{ left: `${midRendered.left}%`, top: `${midRendered.top}%` }} onPointerDown={beginHandleDrag(handleArrow, 'bend')} />
               <button
+                {...hoverProps}
                 type="button"
                 className="absolute w-6 h-6 -translate-x-1/2 -translate-y-1/2 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center shadow"
                 style={{ left: `${midRendered.left}%`, top: `calc(${midRendered.top}% + 18px)` }}
                 onPointerDown={(e) => e.stopPropagation()}
-                onClick={() => { onDeleteArrow(selectedArrow.id); setSelectedArrowId(null) }}
+                onClick={() => { onDeleteArrow(handleArrow.id); setSelected([]) }}
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
@@ -521,6 +691,7 @@ export default function StrategyBoard({
           // circles can be peeled apart: whatever you touch comes forward and
           // stays there, letting you re-grab it instead of the one beneath.
           const onTop = lastActiveKey === `player-${player.id}`
+          const isSelected = isSel('player', player.id)
           return (
             <div
               key={player.id}
@@ -530,7 +701,9 @@ export default function StrategyBoard({
               } ${isDragSource ? 'opacity-40' : 'transition-[left,top] duration-300 ease-out'}`}
               style={{ left: `${left}%`, top: `${top}%`, zIndex: onTop ? 20 : 10 }}
             >
-              <PlayerAvatar photoUrl={player.photo_url} name={player.display_name} size="sm" />
+              <div className={`rounded-full ${isSelected ? 'ring-2 ring-primary ring-offset-2 ring-offset-background' : ''}`}>
+                <PlayerAvatar photoUrl={player.photo_url} name={player.display_name} size="sm" />
+              </div>
               <span className="text-[9px] font-medium text-foreground bg-background/70 rounded px-1 mt-0.5 max-w-16 truncate">
                 {shortName(player.display_name)}
               </span>
@@ -542,6 +715,7 @@ export default function StrategyBoard({
           const { left, top } = toRendered(opp.x, opp.y, isDesktop)
           const isDragSource = drag?.moved && drag.entity.kind === 'opponent' && drag.entity.id === opp.id
           const onTop = lastActiveKey === `opponent-${opp.id}`
+          const isSelected = isSel('opponent', opp.id)
           return (
             <div
               key={opp.id}
@@ -551,7 +725,7 @@ export default function StrategyBoard({
               } ${isDragSource ? 'opacity-40' : 'transition-[left,top] duration-300 ease-out'}`}
               style={{ left: `${left}%`, top: `${top}%`, zIndex: onTop ? 20 : 10 }}
             >
-              <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-950 border-2 border-red-400 dark:border-red-700 flex items-center justify-center shrink-0 select-none">
+              <div className={`w-10 h-10 rounded-full bg-red-100 dark:bg-red-950 border-2 border-red-400 dark:border-red-700 flex items-center justify-center shrink-0 select-none ${isSelected ? 'ring-2 ring-primary ring-offset-2 ring-offset-background' : ''}`}>
                 <span className="text-[10px] font-bold text-red-700 dark:text-red-400">{opp.label.replace(/^Opp\s*/i, '')}</span>
               </div>
               <span className="text-[9px] font-medium text-foreground bg-background/70 rounded px-1 mt-0.5 max-w-16 truncate">
@@ -593,8 +767,9 @@ export default function StrategyBoard({
           would offset the ghost from the pointer by the wrapper's position. */}
       {drag?.moved && drag.entity.kind === 'player' && dragPlayer && createPortal(
         <div
+          ref={ghostRef}
           className="fixed z-50 -translate-x-1/2 -translate-y-1/2 pointer-events-none scale-110 drop-shadow-lg"
-          style={{ left: drag.clientX, top: drag.clientY }}
+          style={{ left: pointerPosRef.current.x, top: pointerPosRef.current.y }}
         >
           <PlayerAvatar photoUrl={dragPlayer.photo_url} name={dragPlayer.display_name} size="sm" />
         </div>,
@@ -602,8 +777,9 @@ export default function StrategyBoard({
       )}
       {drag?.moved && drag.entity.kind === 'opponent' && createPortal(
         <div
+          ref={ghostRef}
           className="fixed z-50 -translate-x-1/2 -translate-y-1/2 pointer-events-none scale-110 drop-shadow-lg"
-          style={{ left: drag.clientX, top: drag.clientY }}
+          style={{ left: pointerPosRef.current.x, top: pointerPosRef.current.y }}
         >
           <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-950 border-2 border-red-400 dark:border-red-700" />
         </div>,
