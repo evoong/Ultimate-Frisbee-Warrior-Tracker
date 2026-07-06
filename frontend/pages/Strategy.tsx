@@ -96,6 +96,8 @@ export default function Strategy() {
   const selectedGame = (games as Game[] | undefined)?.find(g => g.id === selectedPlay?.game_id) ?? null
   // Same upcoming-first, then most-recent-first ordering as the Schedule page.
   const sortedGames = sortGamesUpcomingFirst((games as Game[] | undefined) ?? [])
+  const stepList = (steps as StrategyStep[] | undefined) ?? []
+  const stepIndex = stepList.findIndex(s => s.id === selectedStepId)
 
   // Load this play's steps whenever it changes, defaulting to the first step.
   // Clearing the board here (not on every step change below) keeps a stale
@@ -207,19 +209,42 @@ export default function Strategy() {
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
   }
 
-  const handleCreateArrow = async (arrow: { x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw' }) => {
+  // A 'run' arrow anchored to a player drives that player's position in the
+  // next step (if one already exists) — its head is where they end up.
+  // Dragging them there afterward just overwrites it like any other
+  // position, no different from a player with no arrow at all.
+  const propagateRunArrowToNextStep = async (arrow: { arrow_type: 'run' | 'throw'; start_player_id: number | null | undefined; x2: number; y2: number }) => {
+    if (arrow.arrow_type !== 'run' || arrow.start_player_id == null) return
+    const nextStep = stepList[stepIndex + 1]
+    if (!nextStep) return
+    await upsertPosition({ stepId: nextStep.id, playerId: arrow.start_player_id, x: arrow.x2, y: arrow.y2 })
+  }
+
+  const handleCreateArrow = async (arrow: { x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id: number | null }) => {
     if (selectedStepId === null) return
     const tempId = -Date.now()
     setArrows(prev => [...prev, { id: tempId, ...arrow }])
     const created = await createArrow({ stepId: selectedStepId, ...arrow })
-    if (created) setArrows(prev => prev.map(a => (a.id === tempId ? created : a)))
-    else loadStepData(selectedStepId)
+    if (created) {
+      setArrows(prev => prev.map(a => (a.id === tempId ? created : a)))
+      await propagateRunArrowToNextStep(created)
+    } else {
+      loadStepData(selectedStepId)
+    }
   }
 
-  const handleUpdateArrow = async (arrow: { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number }) => {
+  const handleUpdateArrow = async (arrow: { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id?: number | null }) => {
     setArrows(prev => prev.map(a => (a.id === arrow.id ? { ...a, ...arrow } : a)))
     const ok = await updateArrow(arrow)
-    if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
+    if (!ok && selectedStepId !== null) {
+      loadStepData(selectedStepId)
+      return
+    }
+    const updated = arrows.find(a => a.id === arrow.id)
+    if (updated) {
+      const startPlayerId = arrow.start_player_id !== undefined ? arrow.start_player_id : updated.start_player_id
+      await propagateRunArrowToNextStep({ arrow_type: updated.arrow_type, start_player_id: startPlayerId, x2: arrow.x2, y2: arrow.y2 })
+    }
   }
 
   const handleDeleteArrow = async (id: number) => {
@@ -296,13 +321,24 @@ export default function Strategy() {
     await refreshPlayerLists()
   }
 
-  const stepList = (steps as StrategyStep[] | undefined) ?? []
-  const stepIndex = stepList.findIndex(s => s.id === selectedStepId)
-
   const handleAddStep = async () => {
     if (selectedPlayId === null) return
     const step = await addStep({ playId: selectedPlayId })
     if (step) {
+      // Seed the new step from the current one instead of starting empty:
+      // a placed player keeps their position unless they have an outgoing
+      // 'run' arrow anchored to them, in which case the arrow's head becomes
+      // their starting position here. Opponent markers just carry over.
+      const seeds: Promise<unknown>[] = []
+      for (const [playerId, pos] of positions.entries()) {
+        const runArrow = arrows.find(a => a.arrow_type === 'run' && a.start_player_id === playerId)
+        const target = runArrow ? { x: runArrow.x2, y: runArrow.y2 } : pos
+        seeds.push(upsertPosition({ stepId: step.id, playerId, x: target.x, y: target.y }))
+      }
+      for (const opp of opponents) {
+        seeds.push(createOpponent({ stepId: step.id, label: opp.label, x: opp.x, y: opp.y }))
+      }
+      await Promise.all(seeds)
       await fetchSteps({ playId: selectedPlayId })
       setSelectedStepId(step.id)
     }

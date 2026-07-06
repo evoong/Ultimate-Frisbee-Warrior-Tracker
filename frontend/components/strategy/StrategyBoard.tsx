@@ -30,7 +30,7 @@ type DragState = {
   moved: boolean
 }
 
-type ArrowDraft = { x1: number; y1: number; x2: number; y2: number; pointerId: number }
+type ArrowDraft = { x1: number; y1: number; x2: number; y2: number; pointerId: number; startPlayerId?: number }
 type ArrowLive = { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number }
 
 const DRAG_THRESHOLD_PX = 4
@@ -86,8 +86,8 @@ export default function StrategyBoard({
   onAddOpponent: () => void
   onMoveOpponent: (id: number, x: number, y: number) => void
   onRemoveOpponent: (id: number) => void
-  onCreateArrow: (arrow: { x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw' }) => void
-  onUpdateArrow: (arrow: { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number }) => void
+  onCreateArrow: (arrow: { x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id: number | null }) => void
+  onUpdateArrow: (arrow: { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id?: number | null }) => void
   onDeleteArrow: (id: number) => void
 }) {
   const isDesktop = useMediaQuery('(min-width: 1024px)')
@@ -161,7 +161,7 @@ export default function StrategyBoard({
       e.stopPropagation() // don't let the field's own handler also start an arrow draw
       if (drawArmed) {
         const start = entity.kind === 'player' ? positions.get(entity.id) : opponents.find(o => o.id === entity.id)
-        if (start) beginArrowDraw(e.pointerId, start.x, start.y)
+        if (start) beginArrowDraw(e.pointerId, start.x, start.y, entity.kind === 'player' ? entity.id : undefined)
         return
       }
       teardownRef.current() // defensively end any drag still in flight
@@ -220,9 +220,13 @@ export default function StrategyBoard({
     }
 
   // ── Arrow drawing ──────────────────────────────────────────────────────────
-  const beginArrowDraw = (pointerId: number, x1: number, y1: number) => {
+  // startPlayerId is set only when the drag began on a player avatar (not
+  // empty field or an opponent marker): the arrow's tail is then anchored to
+  // that player — tracking them live if dragged within the step, and (for
+  // 'run' arrows) its head drives their position in the next step.
+  const beginArrowDraw = (pointerId: number, x1: number, y1: number, startPlayerId?: number) => {
     arrowDragTeardownRef.current() // defensively end any handle-drag still in flight
-    const initial: ArrowDraft = { x1, y1, x2: x1, y2: y1, pointerId }
+    const initial: ArrowDraft = { x1, y1, x2: x1, y2: y1, pointerId, startPlayerId }
     drawArrowRef.current = initial
     setDrawingArrow(initial)
 
@@ -245,7 +249,10 @@ export default function StrategyBoard({
       drawArrowRef.current = null
       setDrawingArrow(null)
       if (Math.hypot(d.x2 - d.x1, d.y2 - d.y1) < MIN_ARROW_LENGTH) return // treat as a tap, not a draw
-      onCreateArrow({ x1: d.x1, y1: d.y1, x2: d.x2, y2: d.y2, cx: (d.x1 + d.x2) / 2, cy: (d.y1 + d.y2) / 2, arrow_type: arrowType })
+      onCreateArrow({
+        x1: d.x1, y1: d.y1, x2: d.x2, y2: d.y2, cx: (d.x1 + d.x2) / 2, cy: (d.y1 + d.y2) / 2,
+        arrow_type: arrowType, start_player_id: d.startPlayerId ?? null,
+      })
     }
     const onCancel = (ev: PointerEvent) => {
       if (drawArrowRef.current?.pointerId !== ev.pointerId) return
@@ -301,7 +308,10 @@ export default function StrategyBoard({
         if (ev.pointerId !== pointerId) return
         teardown()
         setLiveArrowEdit(null)
-        onUpdateArrow(current)
+        // Manually dragging an anchored tail detaches it: it stops tracking
+        // the player and freezes at the coordinate it was dropped at.
+        const detach = handle === 'start' && arrow.start_player_id != null
+        onUpdateArrow(detach ? { ...current, start_player_id: null } : current)
       }
       const onCancel = (ev: PointerEvent) => {
         if (ev.pointerId !== pointerId) return
@@ -354,7 +364,18 @@ export default function StrategyBoard({
   }
   const ARROW_COLOR = '#f59e0b' // amber-500: reads on the emerald field in both themes
 
-  const renderedArrows = arrows.map(a => (liveArrowEdit?.id === a.id ? { ...a, ...liveArrowEdit } : a))
+  // An anchored arrow's stored x1/y1 is just its position when last saved;
+  // render it tracking the player's current position instead so dragging the
+  // player within this step visibly drags the arrow's tail along with them.
+  const getEffectiveArrow = (a: StrategyArrow) => {
+    if (a.start_player_id == null) return a
+    const pos = positions.get(a.start_player_id)
+    return pos ? { ...a, x1: pos.x, y1: pos.y } : a
+  }
+  const renderedArrows = arrows.map(a => {
+    const eff = getEffectiveArrow(a)
+    return liveArrowEdit?.id === a.id ? { ...eff, ...liveArrowEdit } : eff
+  })
   const selectedArrow = renderedArrows.find(a => a.id === selectedArrowId) ?? null
 
   return (
@@ -460,9 +481,15 @@ export default function StrategyBoard({
           const mid = onCurveMidpoint(selectedArrow)
           const midRendered = toRendered(mid.x, mid.y, isDesktop)
           const handleClass = 'absolute w-4 h-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-background border-2 touch-none cursor-grab'
+          const startAnchored = selectedArrow.start_player_id != null
           return (
             <>
-              <div className={`${handleClass} border-amber-500`} style={{ left: `${start.left}%`, top: `${start.top}%` }} onPointerDown={beginHandleDrag(selectedArrow, 'start')} />
+              <div
+                className={`${handleClass} ${startAnchored ? 'border-sky-400' : 'border-amber-500'}`}
+                title={startAnchored ? 'Anchored to a player — drag to detach' : undefined}
+                style={{ left: `${start.left}%`, top: `${start.top}%` }}
+                onPointerDown={beginHandleDrag(selectedArrow, 'start')}
+              />
               <div className={`${handleClass} border-amber-500`} style={{ left: `${end.left}%`, top: `${end.top}%` }} onPointerDown={beginHandleDrag(selectedArrow, 'end')} />
               <div className={`${handleClass} border-amber-300`} style={{ left: `${midRendered.left}%`, top: `${midRendered.top}%` }} onPointerDown={beginHandleDrag(selectedArrow, 'bend')} />
               <button
