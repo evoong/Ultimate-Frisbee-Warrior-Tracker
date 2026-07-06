@@ -11,6 +11,7 @@ export type StrategyArrow = {
   x2: number; y2: number
   cx: number; cy: number
   arrow_type: 'run' | 'throw'
+  start_player_id: number | null
 }
 
 type HookResult<T, P = void> = {
@@ -246,7 +247,7 @@ export function useGetStrategyArrows() {
   const fn = useCallback(async (params: { stepId: number }) => {
     const { data, error } = await supabase
       .from('strategy_arrows')
-      .select('id, x1, y1, x2, y2, cx, cy, arrow_type')
+      .select('id, x1, y1, x2, y2, cx, cy, arrow_type, start_player_id')
       .eq('step_id', params.stepId)
       .order('id')
     if (error) throw new Error(error.message)
@@ -257,7 +258,7 @@ export function useGetStrategyArrows() {
 
 export function useCreateStrategyArrow() {
   const fn = useCallback(async (params: {
-    stepId: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'
+    stepId: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id?: number | null
   }) => {
     const { data, error } = await supabase
       .from('strategy_arrows')
@@ -265,16 +266,20 @@ export function useCreateStrategyArrow() {
         step_id: params.stepId,
         x1: params.x1, y1: params.y1, x2: params.x2, y2: params.y2, cx: params.cx, cy: params.cy,
         arrow_type: params.arrow_type,
+        start_player_id: params.start_player_id ?? null,
       })
       .select()
     if (error) throw new Error(error.message)
     return data?.[0] as StrategyArrow
   }, [])
-  return useApiCall<StrategyArrow, { stepId: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw' }>(fn)
+  return useApiCall<StrategyArrow, { stepId: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id?: number | null }>(fn)
 }
 
+// start_player_id is included so dragging an anchored arrow's start handle
+// can detach it (caller passes null) instead of leaving it pointing at a
+// stale, no-longer-tracked coordinate.
 export function useUpdateStrategyArrow() {
-  const fn = useCallback(async (params: { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number }) => {
+  const fn = useCallback(async (params: { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id?: number | null }) => {
     const { id, ...body } = params
     const { error } = await supabase
       .from('strategy_arrows')
@@ -283,7 +288,7 @@ export function useUpdateStrategyArrow() {
     if (error) throw new Error(error.message)
     return true
   }, [])
-  return useApiCall<boolean, { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number }>(fn)
+  return useApiCall<boolean, { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id?: number | null }>(fn)
 }
 
 export function useDeleteStrategyArrow() {
