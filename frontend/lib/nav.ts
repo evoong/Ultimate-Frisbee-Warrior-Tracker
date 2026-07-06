@@ -1,5 +1,4 @@
 import {
-  Zap,
   Calendar,
   Users,
   Award,
@@ -10,7 +9,6 @@ import {
 } from "lucide-react"
 
 export type Tab =
-  | "quickscore"
   | "schedule"
   | "roster"
   | "ranking"
@@ -19,7 +17,6 @@ export type Tab =
   | "chat"
 
 export const NAV_ITEMS: { key: Tab; label: string; icon: LucideIcon }[] = [
-  { key: "quickscore", label: "Quick", icon: Zap },
   { key: "schedule", label: "Schedule", icon: Calendar },
   { key: "roster", label: "Roster", icon: Users },
   { key: "ranking", label: "Ranking", icon: Award },

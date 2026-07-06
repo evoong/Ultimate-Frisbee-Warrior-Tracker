@@ -166,7 +166,7 @@ export default function Strategy() {
   }, [selectedStepId])
 
   // When a game is assigned, scope down to that game's season roster first
-  // (matching the QuickScore convention), then filter by attendance on top
+  // (matching the Schedule live-scoring convention), then filter by attendance on top
   // of that roster; missing attendance row still defaults to "attending".
   const boardPlayers = selectedPlay?.game_id
     ? ((selectedGame?.season_id ? (seasonRoster as Player[] | undefined) : players) ?? []).filter(p => {
@@ -489,7 +489,7 @@ export default function Strategy() {
   }
 
   // Creates a brand new sub. When a game is assigned, reuses the same
-  // hook QuickScore uses so the sub also lands in that game's lineup and
+  // hook Schedule uses so the sub also lands in that game's lineup and
   // attendance, not just the season roster.
   const handleAddNewSub = async (name: string) => {
     if (selectedPlay?.game_id) {
@@ -501,7 +501,7 @@ export default function Strategy() {
   }
 
   // Adds an existing player (e.g. from another season) onto this game's
-  // roster, same hook QuickScore uses for the equivalent flow.
+  // roster, same hook Schedule uses for the equivalent flow.
   const handleAddExistingPlayer = async (playerId: string) => {
     if (!selectedPlay?.game_id) return
     await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedPlay.game_id, seasonId: selectedGame?.season_id })
