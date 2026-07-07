@@ -69,6 +69,11 @@ export function useGetGames() {
   return useApiCall<any[], { seasonIds?: number[] }>(fn)
 }
 
+// Every game we play is also a matchup in the league schedule. Database
+// triggers (010_league_tracking.sql) resolve games.opponent text to a
+// league_teams row and maintain the paired league_games row on every
+// insert/update/delete, so all creation paths (this hook, Jam calendar
+// sync, conflict resolution) stay consistent without app plumbing.
 export function useCreateGame() {
   const fn = useCallback(async (params: { opponent: string; game_date: string; game_time: string; game_type: string; season_id?: number | null; notes?: string }) => {
     const { data, error } = await supabase

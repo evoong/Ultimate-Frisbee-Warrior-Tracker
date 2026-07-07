@@ -5,6 +5,7 @@ import { useGetSeasonRoster, useGetPlayersNotInSeason, useCreatePlayerForGame, u
 import { useGetAllSeasons, useGetSeasons, useCreateSeason, useGetSeasonsMeta } from '../hooks/backend/stats'
 import { useGetGameAttendance, useSetAttendance, useSetAllAttendance } from '../hooks/backend/attendance'
 import { useGetJamSyncConflicts, useSyncJamNow, useCreateGameFromConflict, useLinkConflictToGame, useDismissConflict, type JamSyncConflict } from '../hooks/backend/jamSync'
+import { useGetLeagueTeams } from '../hooks/backend/league'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
 import { isTurnoverEvent } from '../lib/eventUtils'
 import { sortGamesUpcomingFirst } from '../lib/gameOrder'
@@ -97,6 +98,7 @@ export default function Schedule() {
   const { trigger: deleteEvent } = useDeleteEvent()
   const { trigger: updateEvent } = useUpdateEvent()
   const { data: eventTypes, trigger: fetchEventTypes } = useGetEventTypes()
+  const { data: leagueTeams, trigger: fetchLeagueTeams } = useGetLeagueTeams()
 
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const { data: attendanceRows, trigger: fetchAttendance } = useGetGameAttendance()
@@ -296,6 +298,14 @@ export default function Schedule() {
     const s = (seasons as Season[] | undefined)?.find(s => String(s.id) === value)
     if (s?.default_game_time) setFormData(f => ({ ...f, game_time: s.default_game_time! }))
   }
+
+  // Known league teams for the selected season feed the opponent field's
+  // suggestions, so repeat opponents keep one consistent spelling (the DB
+  // trigger resolves the text to a league_teams row on save).
+  useEffect(() => {
+    const id = parseInt(formData.season_id)
+    if (!isNaN(id)) fetchLeagueTeams({ seasonId: id })
+  }, [formData.season_id])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -1271,7 +1281,12 @@ export default function Schedule() {
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="opponent">Opponent</Label>
-                  <Input id="opponent" value={formData.opponent} onChange={e => setFormData({ ...formData, opponent: e.target.value })} required className="bg-background text-foreground" />
+                  <Input id="opponent" list="opponent-suggestions" value={formData.opponent} onChange={e => setFormData({ ...formData, opponent: e.target.value })} required className="bg-background text-foreground" />
+                  <datalist id="opponent-suggestions">
+                    {(leagueTeams ?? []).filter(t => !t.is_us).map(t => (
+                      <option key={t.id} value={t.name} />
+                    ))}
+                  </datalist>
                 </div>
                 <div className="space-y-2">
                   <Label>Season <span className="text-muted-foreground font-normal">(optional)</span></Label>
