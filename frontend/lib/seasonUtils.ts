@@ -5,7 +5,7 @@ type SeasonLike = { id: number; organizer: string | null; start_date: string | n
 // gives the UTC date, which can already be tomorrow while it's still today
 // locally (e.g. evenings in North America) — that skew was misclassifying
 // a game that hasn't happened yet as "already played".
-function todayLocalStr(): string {
+export function todayLocalStr(): string {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
