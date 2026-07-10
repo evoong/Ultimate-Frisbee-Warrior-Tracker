@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import PlayerAvatar from '../PlayerAvatar'
 import { Button } from '../../lib/shadcn/button'
@@ -61,42 +61,15 @@ function toRendered(x: number, y: number, landscape: boolean) {
   return { left: (1 - y) * 100, top: x * 100 }
 }
 
-// The curve a player's outgoing 'run' arrow should follow into the next
-// step, in canonical coordinates. x1,y1 is the player's actual on-field
-// position when the transition started (not the arrow's possibly-stale
-// stored start); cx,cy/x2,y2 are the arrow's control point and head, fixed
-// at the moment the transition began. The animation targets this x2,y2
-// directly rather than the live `target` prop: `target` comes from
-// Strategy.tsx's `positions` state, which still holds the *previous*
-// step's value for a few frames while the new step's data is in flight
-// over the network — animating toward it would start degenerate
-// (start≈end) and then restart mid-flight once the fetch resolved. Since
-// a new step's stored position for an anchored player is seeded from
-// exactly this arrow's head (see handleAddStep in Strategy.tsx), x2,y2 is
-// normally identical to the eventual target anyway; on the rare step that
-// was hand-edited afterward, the fallback declarative style (once `path`
-// clears) corrects to the true position with at most a small final snap.
-type ArrowPath = { x1: number; y1: number; cx: number; cy: number; x2: number; y2: number }
-
-function easeInOutQuad(t: number) {
-  return t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2
-}
-
-// One placed player. Normally just a plain CSS left/top transition (see the
-// default branch below). When `path` is set — this player has an outgoing
-// 'run' arrow anchored to them in the step being left — its position is
-// instead driven imperatively along that arrow's quadratic-bezier curve via
-// requestAnimationFrame, so the slide follows the drawn path rather than
-// cutting a straight line to the head. The animation writes directly to
-// `ref.current.style` and the JSX omits left/top from its own style object
-// while animating, so the two never fight over the same frame: React owns
-// left/top when not animating, the rAF loop owns it exclusively while it is.
+// One placed player: a plain CSS left/top transition between steps. (An
+// earlier version animated anchored players along their outgoing arrow's
+// curve via requestAnimationFrame; it stuttered in practice, so it was
+// reverted in favor of this simple straight-line slide for everyone.)
 function PlayerMarker({
-  player, target, path, transitionMs, isDesktop, isDragSource, isSelected, onTop, drawArmed, allowed, onPointerDown,
+  player, target, transitionMs, isDesktop, isDragSource, isSelected, onTop, drawArmed, allowed, onPointerDown,
 }: {
   player: BoardPlayer
   target: { x: number; y: number }
-  path: ArrowPath | undefined
   transitionMs: number
   isDesktop: boolean
   isDragSource: boolean
@@ -106,46 +79,14 @@ function PlayerMarker({
   allowed: boolean
   onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
 }) {
-  const ref = useRef<HTMLDivElement>(null)
-  const animated = !!path && transitionMs > 0 && !isDragSource
   const { left, top } = toRendered(target.x, target.y, isDesktop)
-
-  useLayoutEffect(() => {
-    if (!animated || !path || !ref.current) return
-    const el = ref.current
-    const startTime = performance.now()
-    let raf = 0
-    const step = (now: number) => {
-      const t = Math.min(1, (now - startTime) / transitionMs)
-      const e = easeInOutQuad(t)
-      const x = (1 - e) ** 2 * path.x1 + 2 * (1 - e) * e * path.cx + e ** 2 * path.x2
-      const y = (1 - e) ** 2 * path.y1 + 2 * (1 - e) * e * path.cy + e ** 2 * path.y2
-      const rendered = toRendered(x, y, isDesktop)
-      el.style.left = `${rendered.left}%`
-      el.style.top = `${rendered.top}%`
-      if (t < 1) raf = requestAnimationFrame(step)
-    }
-    raf = requestAnimationFrame(step)
-    return () => cancelAnimationFrame(raf)
-    // path identifies the specific transition on its own now that x2,y2 is
-    // the fixed endpoint (not the live `target` prop) — deliberately
-    // excluding target so an in-flight fetch updating it mid-animation
-    // doesn't restart the timer (see the ArrowPath comment above).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [animated, path?.x1, path?.y1, path?.cx, path?.cy, path?.x2, path?.y2, transitionMs, isDesktop])
-
   return (
     <div
-      ref={ref}
       onPointerDown={onPointerDown}
       className={`absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center touch-none animate-in fade-in duration-300 ${
         allowed ? (drawArmed ? 'cursor-crosshair' : 'cursor-grab') : ''
-      } ${isDragSource ? 'opacity-40' : animated ? '' : 'transition-[left,top] ease-in-out'}`}
-      style={
-        animated
-          ? { zIndex: onTop ? 20 : 10 }
-          : { left: `${left}%`, top: `${top}%`, zIndex: onTop ? 20 : 10, transitionDuration: `${transitionMs}ms` }
-      }
+      } ${isDragSource ? 'opacity-40' : 'transition-[left,top] ease-in-out'}`}
+      style={{ left: `${left}%`, top: `${top}%`, zIndex: onTop ? 20 : 10, transitionDuration: `${transitionMs}ms` }}
     >
       <div className={`rounded-full ${isSelected ? 'ring-2 ring-primary ring-offset-2 ring-offset-background' : ''}`}>
         <PlayerAvatar photoUrl={player.photo_url} name={player.display_name} size="sm" />
@@ -187,7 +128,6 @@ export default function StrategyBoard({
   onCreateArrow, onUpdateArrow, onDeleteArrow,
   onGroupMove, onDeleteMany,
   transitionMs = 700,
-  arrowPaths,
 }: {
   players: BoardPlayer[]
   positions: Map<number, { x: number; y: number }>
@@ -209,11 +149,6 @@ export default function StrategyBoard({
   // classes can't take a runtime value, so this drives an inline
   // transitionDuration alongside a static transition-[left,top] class.
   transitionMs?: number
-  // Per-player curve to follow for the transition currently in flight (see
-  // PlayerMarker). Set by Strategy.tsx's goToStep right before switching
-  // steps, for any player with an outgoing 'run' arrow anchored to them;
-  // absent (or missing an entry) means a plain straight-line slide.
-  arrowPaths?: Map<number, ArrowPath>
 }) {
   const isDesktop = useMediaQuery('(min-width: 1024px)')
   const hasHover = useMediaQuery('(hover: hover)')
@@ -836,7 +771,6 @@ export default function StrategyBoard({
               key={player.id}
               player={player}
               target={pos}
-              path={arrowPaths?.get(player.id)}
               transitionMs={transitionMs}
               isDesktop={isDesktop}
               isDragSource={isDragSource}

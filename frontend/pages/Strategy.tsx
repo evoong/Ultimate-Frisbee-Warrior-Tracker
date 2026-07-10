@@ -101,26 +101,6 @@ export default function Strategy() {
   const [opponents, setOpponents] = useState<StrategyOpponentMarker[]>([])
   const [arrows, setArrows] = useState<StrategyArrow[]>([])
 
-  // While a step transition is in flight, a player with an outgoing 'run'
-  // arrow anchored to them animates along that arrow's curve instead of
-  // sliding straight to their next position. Captured from `arrows`/
-  // `positions` right before the switch (the step we're leaving is about to
-  // be overwritten by loadStepData), keyed by player id, and cleared once
-  // the transition has had time to finish.
-  const [arrowPaths, setArrowPaths] = useState<Map<number, { x1: number; y1: number; cx: number; cy: number; x2: number; y2: number }>>(new Map())
-  const arrowPathsClearRef = useRef<number | null>(null)
-  const goToStep = (nextStepId: number) => {
-    const paths = new Map<number, { x1: number; y1: number; cx: number; cy: number; x2: number; y2: number }>()
-    for (const [playerId, pos] of positions.entries()) {
-      const runArrow = arrows.find(a => a.arrow_type === 'run' && a.start_player_id === playerId)
-      if (runArrow) paths.set(playerId, { x1: pos.x, y1: pos.y, cx: runArrow.cx, cy: runArrow.cy, x2: runArrow.x2, y2: runArrow.y2 })
-    }
-    setArrowPaths(paths)
-    setSelectedStepId(nextStepId)
-    if (arrowPathsClearRef.current != null) window.clearTimeout(arrowPathsClearRef.current)
-    arrowPathsClearRef.current = window.setTimeout(() => setArrowPaths(new Map()), transitionMs + 100)
-  }
-  useEffect(() => () => { if (arrowPathsClearRef.current != null) window.clearTimeout(arrowPathsClearRef.current) }, [])
 
   const [showCreate, setShowCreate] = useState(false)
   const [showRename, setShowRename] = useState(false)
@@ -585,7 +565,7 @@ export default function Strategy() {
       }
       await Promise.all(seeds)
       await fetchSteps({ playId: selectedPlayId })
-      goToStep(step.id)
+      setSelectedStepId(step.id)
     }
   }
 
@@ -743,7 +723,7 @@ export default function Strategy() {
             {selectedPlay && stepList.length > 0 && (
               <div className="flex items-center gap-1.5 flex-wrap">
                 <Button variant="outline" size="icon" className="h-7 w-7" aria-label="Previous step" disabled={stepIndex <= 0}
-                  onClick={() => goToStep(stepList[stepIndex - 1]!.id)}>
+                  onClick={() => setSelectedStepId(stepList[stepIndex - 1]!.id)}>
                   <ChevronLeft className="w-3.5 h-3.5" />
                 </Button>
                 {stepList.map((step, i) => (
@@ -752,13 +732,13 @@ export default function Strategy() {
                     size="sm"
                     variant={step.id === selectedStepId ? 'default' : 'outline'}
                     className="h-7 w-7 p-0 text-xs"
-                    onClick={() => goToStep(step.id)}
+                    onClick={() => setSelectedStepId(step.id)}
                   >
                     {i + 1}
                   </Button>
                 ))}
                 <Button variant="outline" size="icon" className="h-7 w-7" aria-label="Next step" disabled={stepIndex === -1 || stepIndex >= stepList.length - 1}
-                  onClick={() => goToStep(stepList[stepIndex + 1]!.id)}>
+                  onClick={() => setSelectedStepId(stepList[stepIndex + 1]!.id)}>
                   <ChevronRight className="w-3.5 h-3.5" />
                 </Button>
                 {allowed && (
@@ -796,7 +776,6 @@ export default function Strategy() {
               onGroupMove={handleGroupMove}
               onDeleteMany={handleDeleteMany}
               transitionMs={transitionMs}
-              arrowPaths={arrowPaths}
             />
             {allowed && (
               <p className="text-xs text-muted-foreground">
