@@ -512,6 +512,21 @@ export default function Schedule() {
   const otherPlayerOptions = ((otherPlayers as { id: number; display_name: string }[] | undefined) ?? [])
     .map(p => ({ id: p.id.toString(), label: p.display_name }))
 
+  // The Attendance tab's "Add player" box only offers otherPlayerOptions
+  // (players outside this season), since season roster members normally
+  // already have a game_attendance row from the game-creation backfill
+  // trigger and appear in the checkbox list below instead. But a player
+  // who joined the season mid-stream (added via a different game in the
+  // same season) only gets a game_attendance row for that one game, not
+  // retroactively for this game — without this, they'd be invisible in
+  // both lists here (already a season member, so excluded from
+  // otherPlayerOptions; no row, so absent from the checkbox list).
+  const seasonMembersMissingAttendance = ((players as Player[] | undefined) ?? [])
+    .filter(p => !((attendanceRows as { player_id: number }[] | undefined)?.some(r => r.player_id === p.id)))
+    .map(p => ({ id: p.id.toString(), label: p.display_name }))
+  const attendanceOtherPlayerOptions = [...seasonMembersMissingAttendance, ...otherPlayerOptions]
+    .sort((a, b) => a.label.localeCompare(b.label))
+
   // Calendar helpers
   const calYear = calendarDate.getFullYear()
   const calMonth = calendarDate.getMonth()
@@ -981,7 +996,7 @@ export default function Schedule() {
                     <span className="text-xs text-muted-foreground shrink-0">Add player</span>
                     <PlayerCombobox
                       players={[]}
-                      otherPlayers={otherPlayerOptions}
+                      otherPlayers={attendanceOtherPlayerOptions}
                       value="__none__"
                       onValueChange={() => {}}
                       onAddPlayer={handleAddPlayerToAttendance}
