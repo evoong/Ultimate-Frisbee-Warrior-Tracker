@@ -125,3 +125,20 @@ export function useUpdateEvent() {
   }, [])
   return useApiCall(fn)
 }
+
+// Recent Activity has no separate ordinal column: order is purely
+// event_timestamp. Reordering two adjacent events (see Schedule.tsx's
+// handleMoveEvent) means swapping their timestamps, which is what this
+// hook exists for rather than reusing useUpdateEvent's player-field shape.
+export function useUpdateEventTimestamp() {
+  const fn = useCallback(async (params: { eventId: number; timestamp: string }) => {
+    const { data, error } = await supabase
+      .from('game_events')
+      .update({ event_timestamp: params.timestamp })
+      .eq('id', params.eventId)
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0]
+  }, [])
+  return useApiCall(fn)
+}
