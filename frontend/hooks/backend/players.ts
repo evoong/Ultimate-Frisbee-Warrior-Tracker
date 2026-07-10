@@ -146,8 +146,17 @@ export function useGetPlayersNotInSeason() {
 
     if (spError) throw new Error(spError.message)
 
+    // No one is on this season's roster yet, so every player counts as
+    // "not in this season" (previously this short-circuited to [], which
+    // hid subs created for other seasons/games from a brand-new season's
+    // Add-player combobox until someone else joined the roster first).
     if (!seasonPlayers || seasonPlayers.length === 0) {
-      return []
+      const { data, error } = await supabase
+        .from('players')
+        .select('*')
+        .order('display_name')
+      if (error) throw new Error(error.message)
+      return data as any[]
     }
 
     const playerIds = seasonPlayers.map(sp => (sp as any).player_id)
@@ -339,6 +348,33 @@ export function useUpdatePlayerSeasons() {
         .from('season_players')
         .upsert(rows, { onConflict: 'season_id,player_id' })
       if (upsertError) throw new Error(upsertError.message)
+    }
+
+    // A player promoted to full-player (is_sub: false) for a season is
+    // expected to attend every game in that season by default, same as
+    // the rest of the roster. Games created while they were a sub (or
+    // before they joined) never got a game_attendance row for them, so
+    // without this they'd be invisible in the Attendance tab (which lists
+    // existing rows, not the roster) for every one of those games until
+    // added back game-by-game via "Add player". Backfill the missing rows
+    // for this season's existing games, mirroring the per-game upsert
+    // useCreatePlayerForGame/useAddToLineup already do for a single game.
+    const fullPlayerSeasonIds = params.seasonIds.filter(sid => !(params.subsBySeasonId?.[sid] ?? false))
+    if (fullPlayerSeasonIds.length > 0) {
+      const { data: seasonGames, error: gamesError } = await supabase
+        .from('games')
+        .select('id')
+        .in('season_id', fullPlayerSeasonIds)
+      if (gamesError) throw new Error(gamesError.message)
+      const attendanceRows = ((seasonGames ?? []) as { id: number }[]).map(g => ({
+        game_id: g.id, player_id: params.playerId, in: true,
+      }))
+      if (attendanceRows.length > 0) {
+        const { error: gaError } = await supabase
+          .from('game_attendance')
+          .upsert(attendanceRows, { onConflict: 'game_id,player_id', ignoreDuplicates: true })
+        if (gaError) throw new Error(gaError.message)
+      }
     }
   }, [])
   return useApiCall(fn)
