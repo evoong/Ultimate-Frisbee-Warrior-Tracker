@@ -22,7 +22,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '../lib/shadcn/popover'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '../lib/shadcn/command'
 import PlayerCombobox from '../components/PlayerCombobox'
 import PlayerAvatar from '../components/PlayerAvatar'
-import { GenderRatio } from '../components/GenderTag'
+import GenderTag, { GenderRatio } from '../components/GenderTag'
 import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
 import { useAuth } from '../contexts/AuthContext'
@@ -969,8 +969,9 @@ export default function Schedule() {
                                       onSelect={() => toggleLineupSelected(p.id)}
                                       className="flex items-center justify-between"
                                     >
-                                      <div className="flex items-center min-w-0">
-                                        <Check className={`mr-2 h-4 w-4 shrink-0 ${selected ? 'opacity-100' : 'opacity-0'}`} />
+                                      <div className="flex items-center min-w-0 gap-1.5">
+                                        <Check className={`mr-0.5 h-4 w-4 shrink-0 ${selected ? 'opacity-100' : 'opacity-0'}`} />
+                                        <GenderTag value={p.gender_match} />
                                         <span className="truncate">{p.display_name}</span>
                                       </div>
                                       <span className="text-xs text-muted-foreground shrink-0 ml-2">
