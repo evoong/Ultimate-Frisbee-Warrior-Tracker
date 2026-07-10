@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import Schedule from './pages/Schedule'
-import League from './pages/League'
 import Roster from './pages/Roster'
 import Ranking from './pages/Ranking'
 import Stats from './pages/Stats'
@@ -65,7 +64,6 @@ export default function App() {
   const pageContent = (
     <>
       {activeTab === 'schedule' && <Schedule />}
-      {activeTab === 'league' && <League />}
       {activeTab === 'roster' && <Roster />}
       {activeTab === 'ranking' && <Ranking />}
       {activeTab === 'stats' && <Stats />}
