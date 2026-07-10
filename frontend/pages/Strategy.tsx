@@ -21,14 +21,31 @@ import { Button } from '../lib/shadcn/button'
 import { Input } from '../lib/shadcn/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
+import { Popover, PopoverContent, PopoverTrigger } from '../lib/shadcn/popover'
 import { Label } from '../lib/shadcn/label'
 import { Skeleton } from '../lib/shadcn/skeleton'
-import { ClipboardList, Plus, Edit2, Trash2, ChevronLeft, ChevronRight, X } from 'lucide-react'
+import { ClipboardList, Plus, Edit2, Trash2, ChevronLeft, ChevronRight, X, Settings2 } from 'lucide-react'
 
 type Player = { id: number; display_name: string; photo_url: string | null; is_sub: boolean | null }
 type Game = { id: number; opponent: string; game_date: string; game_time: string | null; season_id: number | null }
 
 const NO_GAME = '__none__'
+
+// How long the slide between steps takes. Persisted in localStorage (not the
+// DB): it's a per-device viewing preference, not shared play data.
+const TRANSITION_SPEED_KEY = 'ufwt_strategy_transition_ms'
+const TRANSITION_SPEEDS = [
+  { label: 'Slow', ms: 1200 },
+  { label: 'Normal', ms: 700 },
+  { label: 'Fast', ms: 350 },
+  { label: 'Off', ms: 0 },
+] as const
+const DEFAULT_TRANSITION_MS: number = 700
+
+function loadTransitionMs(): number {
+  const stored = Number(localStorage.getItem(TRANSITION_SPEED_KEY))
+  return TRANSITION_SPEEDS.some(s => s.ms === stored) ? stored : DEFAULT_TRANSITION_MS
+}
 
 // A full snapshot of one step's board, used for per-step undo/redo.
 type Board = {
@@ -39,6 +56,11 @@ type Board = {
 
 export default function Strategy() {
   const { allowed } = useAuth()
+  const [transitionMs, setTransitionMs] = useState<number>(loadTransitionMs)
+  const handleTransitionSpeedChange = (ms: number) => {
+    setTransitionMs(ms)
+    localStorage.setItem(TRANSITION_SPEED_KEY, String(ms))
+  }
   const { data: rawPlayers, loading: playersLoading, error: playersError, trigger: fetchPlayers } = useGetPlayers()
   const { trigger: createPlayer } = useCreatePlayer()
   const { trigger: createPlayerForGame } = useCreatePlayerForGame()
@@ -78,6 +100,27 @@ export default function Strategy() {
   const [positions, setPositions] = useState<Map<number, { x: number; y: number }>>(new Map())
   const [opponents, setOpponents] = useState<StrategyOpponentMarker[]>([])
   const [arrows, setArrows] = useState<StrategyArrow[]>([])
+
+  // While a step transition is in flight, a player with an outgoing 'run'
+  // arrow anchored to them animates along that arrow's curve instead of
+  // sliding straight to their next position. Captured from `arrows`/
+  // `positions` right before the switch (the step we're leaving is about to
+  // be overwritten by loadStepData), keyed by player id, and cleared once
+  // the transition has had time to finish.
+  const [arrowPaths, setArrowPaths] = useState<Map<number, { x1: number; y1: number; cx: number; cy: number; x2: number; y2: number }>>(new Map())
+  const arrowPathsClearRef = useRef<number | null>(null)
+  const goToStep = (nextStepId: number) => {
+    const paths = new Map<number, { x1: number; y1: number; cx: number; cy: number; x2: number; y2: number }>()
+    for (const [playerId, pos] of positions.entries()) {
+      const runArrow = arrows.find(a => a.arrow_type === 'run' && a.start_player_id === playerId)
+      if (runArrow) paths.set(playerId, { x1: pos.x, y1: pos.y, cx: runArrow.cx, cy: runArrow.cy, x2: runArrow.x2, y2: runArrow.y2 })
+    }
+    setArrowPaths(paths)
+    setSelectedStepId(nextStepId)
+    if (arrowPathsClearRef.current != null) window.clearTimeout(arrowPathsClearRef.current)
+    arrowPathsClearRef.current = window.setTimeout(() => setArrowPaths(new Map()), transitionMs + 100)
+  }
+  useEffect(() => () => { if (arrowPathsClearRef.current != null) window.clearTimeout(arrowPathsClearRef.current) }, [])
 
   const [showCreate, setShowCreate] = useState(false)
   const [showRename, setShowRename] = useState(false)
@@ -198,7 +241,16 @@ export default function Strategy() {
   const handleAddOpponent = async () => {
     if (selectedStepId === null) return
     pushHistory()
-    const label = `Opp ${opponents.length + 1}`
+    // Derived from the highest existing "Opp N" rather than opponents.length:
+    // removing an opponent then adding a new one would otherwise reuse a
+    // number still in use (e.g. remove "Opp 1" from ["Opp 1", "Opp 2"], then
+    // add — length-based numbering would produce a duplicate "Opp 2").
+    // StrategyBoard keys opponent markers by label, so duplicates would
+    // also break React's key uniqueness within a step.
+    const usedNumbers = opponents
+      .map(o => parseInt(o.label.replace(/^Opp\s*/i, ''), 10))
+      .filter(n => !isNaN(n))
+    const label = `Opp ${(usedNumbers.length > 0 ? Math.max(...usedNumbers) : 0) + 1}`
     const x = 0.5
     const y = Math.min(0.9, 0.15 + (opponents.length % 6) * 0.12)
     const tempId = -Date.now()
@@ -533,7 +585,7 @@ export default function Strategy() {
       }
       await Promise.all(seeds)
       await fetchSteps({ playId: selectedPlayId })
-      setSelectedStepId(step.id)
+      goToStep(step.id)
     }
   }
 
@@ -568,7 +620,40 @@ export default function Strategy() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold text-foreground">Strategy</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-foreground">Strategy</h1>
+        <Popover>
+          <PopoverTrigger asChild>
+            <button
+              className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+              aria-label="Strategy board settings"
+            >
+              <Settings2 className="w-5 h-5" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-64 space-y-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Step transition speed</Label>
+              <p className="text-xs text-muted-foreground">
+                How long players and opponents take to slide into place when you switch steps.
+              </p>
+            </div>
+            <div className="grid grid-cols-4 gap-1">
+              {TRANSITION_SPEEDS.map(s => (
+                <button
+                  key={s.label}
+                  onClick={() => handleTransitionSpeedChange(s.ms)}
+                  className={`py-1.5 rounded-md text-xs font-medium transition-colors ${
+                    transitionMs === s.ms ? 'bg-primary text-primary-foreground' : 'bg-accent text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </PopoverContent>
+        </Popover>
+      </div>
 
       {(plays?.length ?? 0) === 0 ? (
         <FadeIn>
@@ -658,7 +743,7 @@ export default function Strategy() {
             {selectedPlay && stepList.length > 0 && (
               <div className="flex items-center gap-1.5 flex-wrap">
                 <Button variant="outline" size="icon" className="h-7 w-7" aria-label="Previous step" disabled={stepIndex <= 0}
-                  onClick={() => setSelectedStepId(stepList[stepIndex - 1]!.id)}>
+                  onClick={() => goToStep(stepList[stepIndex - 1]!.id)}>
                   <ChevronLeft className="w-3.5 h-3.5" />
                 </Button>
                 {stepList.map((step, i) => (
@@ -667,13 +752,13 @@ export default function Strategy() {
                     size="sm"
                     variant={step.id === selectedStepId ? 'default' : 'outline'}
                     className="h-7 w-7 p-0 text-xs"
-                    onClick={() => setSelectedStepId(step.id)}
+                    onClick={() => goToStep(step.id)}
                   >
                     {i + 1}
                   </Button>
                 ))}
                 <Button variant="outline" size="icon" className="h-7 w-7" aria-label="Next step" disabled={stepIndex === -1 || stepIndex >= stepList.length - 1}
-                  onClick={() => setSelectedStepId(stepList[stepIndex + 1]!.id)}>
+                  onClick={() => goToStep(stepList[stepIndex + 1]!.id)}>
                   <ChevronRight className="w-3.5 h-3.5" />
                 </Button>
                 {allowed && (
@@ -710,6 +795,8 @@ export default function Strategy() {
               onDeleteArrow={handleDeleteArrow}
               onGroupMove={handleGroupMove}
               onDeleteMany={handleDeleteMany}
+              transitionMs={transitionMs}
+              arrowPaths={arrowPaths}
             />
             {allowed && (
               <p className="text-xs text-muted-foreground">

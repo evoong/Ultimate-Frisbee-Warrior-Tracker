@@ -8,7 +8,8 @@ import { useGetJamSyncConflicts, useSyncJamNow, useCreateGameFromConflict, useLi
 import { useGetLeagueTeams } from '../hooks/backend/league'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
 import { isTurnoverEvent } from '../lib/eventUtils'
-import { sortGamesUpcomingFirst } from '../lib/gameOrder'
+import { sortGamesUpcomingFirst, isPastGame } from '../lib/gameOrder'
+import { todayLocalStr } from '../lib/seasonUtils'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
@@ -1116,10 +1117,15 @@ export default function Schedule() {
   // Next upcoming game first, then the rest of the future schedule
   // chronologically; a separate "Played" section below runs most-recent-first
   // so the last result is always the first thing you see in that group.
+  // Upcoming vs. Played is split by calendar day, not the exact start time:
+  // otherwise a game moves to "Played" the moment its scheduled time hits,
+  // even mid-game, and the next upcoming game (e.g. next week's) quietly
+  // becomes whatever you'd score against by mistake.
   const now = new Date()
-  const upcomingGames = filteredGames.filter(g => gameStartsAt(g) >= now).sort((a, b) => gameStartsAt(a).getTime() - gameStartsAt(b).getTime())
-  const pastGames = filteredGames.filter(g => gameStartsAt(g) < now).sort((a, b) => gameStartsAt(b).getTime() - gameStartsAt(a).getTime())
-  const sortedGames = sortGamesUpcomingFirst(filteredGames, now)
+  const today = todayLocalStr()
+  const upcomingGames = filteredGames.filter(g => !isPastGame(g, today)).sort((a, b) => gameStartsAt(a).getTime() - gameStartsAt(b).getTime())
+  const pastGames = filteredGames.filter(g => isPastGame(g, today)).sort((a, b) => gameStartsAt(b).getTime() - gameStartsAt(a).getTime())
+  const sortedGames = sortGamesUpcomingFirst(filteredGames, today)
 
   const formatRelativeDay = (dateStr: string) => {
     const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate())
