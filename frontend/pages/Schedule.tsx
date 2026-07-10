@@ -510,14 +510,19 @@ export default function Schedule() {
   const isNewEventGoalLike = ['Goal', 'Caught OB'].includes(newEventType)
 
   // Scorer/assister quick-select should only offer players marked present for
-  // this game (matches the Attendance tab's own default: no row yet means
-  // attending). The Edit Event dialog still uses the full roster so past
-  // events referencing a player who's since been marked absent stay editable.
+  // this game. A missing row defaults to "attending" for a full roster
+  // player (their row may just not exist yet), but NOT for a sub: a sub's
+  // game_attendance row is only ever created when they're explicitly added
+  // to a specific game (see useCreatePlayerForGame/useAddPlayerToGame), so
+  // no row for a sub means they were never part of this game, not that
+  // they're attending by default. The Edit Event dialog still uses the full
+  // roster so past events referencing a player who's since been marked
+  // absent stay editable.
   const attendingPlayerIds = new Set(
     ((players as Player[] | undefined) ?? [])
       .filter(p => {
         const row = (attendanceRows as { player_id: number; in: boolean }[] | undefined)?.find(r => r.player_id === p.id)
-        return row?.in ?? true
+        return row ? row.in : !p.is_sub
       })
       .map(p => p.id)
   )
@@ -597,8 +602,12 @@ export default function Schedule() {
     const currentLineupPlayerIds = new Set(
       lineupEntries.filter(e => e.lineup_name === lineupName).map(e => e.player_id)
     )
+    // Only offer players actually attending this game (same convention as
+    // the Scorer/Assister picker's attendingPlayerIds): a lineup is a plan
+    // for who's on the field, so someone marked absent shouldn't be
+    // selectable even though they're still on the season roster.
     const lineupCandidates = ((players as Player[] | undefined) ?? [])
-      .filter(p => !currentLineupPlayerIds.has(p.id))
+      .filter(p => !currentLineupPlayerIds.has(p.id) && attendingPlayerIds.has(p.id))
 
     return (
       <div className="space-y-4">
