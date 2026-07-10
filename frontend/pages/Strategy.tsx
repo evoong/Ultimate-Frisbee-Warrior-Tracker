@@ -47,6 +47,26 @@ function loadTransitionMs(): number {
   return TRANSITION_SPEEDS.some(s => s.ms === stored) ? stored : DEFAULT_TRANSITION_MS
 }
 
+// Recomputes every default-labeled ("Opp N") marker's number to close any
+// gaps left by an add/remove, so the labels on the field always read as a
+// dense 1..M run — keeping lower numbers stable (removing the middle one
+// shifts only the ones after it down by one, it doesn't reshuffle everyone).
+// A marker renamed to custom text (via the pencil icon) no longer matches
+// the pattern, so it's left untouched and doesn't consume a number slot.
+// Returns only the ids that actually need to change.
+function renumberedOpponentLabels(opps: StrategyOpponentMarker[]): Map<number, string> {
+  const defaultLabeled = opps
+    .map(o => ({ o, n: parseInt(o.label.replace(/^Opp\s*/i, ''), 10) }))
+    .filter((e): e is { o: StrategyOpponentMarker; n: number } => /^Opp\s*\d+$/i.test(e.o.label) && !isNaN(e.n))
+    .sort((a, b) => a.n - b.n)
+  const changes = new Map<number, string>()
+  defaultLabeled.forEach((e, i) => {
+    const label = `Opp ${i + 1}`
+    if (label !== e.o.label) changes.set(e.o.id, label)
+  })
+  return changes
+}
+
 // A full snapshot of one step's board, used for per-step undo/redo.
 type Board = {
   positions: Map<number, { x: number; y: number }>
@@ -218,6 +238,16 @@ export default function Strategy() {
     if (!ok) loadStepData(selectedStepId)
   }
 
+  // Renumbers whatever default-labeled markers need it in `list` (see
+  // renumberedOpponentLabels) and pushes the changed ones to local state +
+  // the DB. Called after every add/remove so the field never shows a gap.
+  const applyOpponentRenumber = async (list: StrategyOpponentMarker[]) => {
+    const changes = renumberedOpponentLabels(list)
+    if (changes.size === 0) return
+    setOpponents(prev => prev.map(o => (changes.has(o.id) ? { ...o, label: changes.get(o.id)! } : o)))
+    await Promise.all([...changes.entries()].map(([id, label]) => updateOpponent({ id, label })))
+  }
+
   const handleAddOpponent = async () => {
     if (selectedStepId === null) return
     pushHistory()
@@ -226,7 +256,9 @@ export default function Strategy() {
     // number still in use (e.g. remove "Opp 1" from ["Opp 1", "Opp 2"], then
     // add — length-based numbering would produce a duplicate "Opp 2").
     // StrategyBoard keys opponent markers by label, so duplicates would
-    // also break React's key uniqueness within a step.
+    // also break React's key uniqueness within a step. Any pre-existing gap
+    // (or a custom-renamed marker freeing up its old number) is closed
+    // right after by applyOpponentRenumber below.
     const usedNumbers = opponents
       .map(o => parseInt(o.label.replace(/^Opp\s*/i, ''), 10))
       .filter(n => !isNaN(n))
@@ -234,10 +266,16 @@ export default function Strategy() {
     const x = 0.5
     const y = Math.min(0.9, 0.15 + (opponents.length % 6) * 0.12)
     const tempId = -Date.now()
-    setOpponents(prev => [...prev, { id: tempId, label, x, y }])
+    const withNew = [...opponents, { id: tempId, label, x, y }]
+    setOpponents(withNew)
     const created = await trackCreate(createOpponent({ stepId: selectedStepId, label, x, y }))
-    if (created) setOpponents(prev => prev.map(o => (o.id === tempId ? created : o)))
-    else loadStepData(selectedStepId)
+    if (created) {
+      const settled = withNew.map(o => (o.id === tempId ? created : o))
+      setOpponents(settled)
+      await applyOpponentRenumber(settled)
+    } else {
+      loadStepData(selectedStepId)
+    }
   }
 
   const handleMoveOpponent = async (id: number, x: number, y: number) => {
@@ -247,17 +285,29 @@ export default function Strategy() {
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
   }
 
+  const handleRenameOpponent = async (id: number, label: string) => {
+    pushHistory()
+    setOpponents(prev => prev.map(o => (o.id === id ? { ...o, label } : o)))
+    const ok = await updateOpponent({ id, label })
+    if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
+  }
+
   const handleRemoveOpponent = async (id: number) => {
     pushHistory()
-    setOpponents(prev => prev.filter(o => o.id !== id))
+    const remaining = opponents.filter(o => o.id !== id)
+    setOpponents(remaining)
     const ok = await removeOpponent({ id })
-    if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
+    if (!ok && selectedStepId !== null) { loadStepData(selectedStepId); return }
+    await applyOpponentRenumber(remaining)
   }
 
   // A 'run' arrow anchored to a player drives that player's position in the
   // next step (if one already exists) — its head is where they end up.
   // Dragging them there afterward just overwrites it like any other
-  // position, no different from a player with no arrow at all.
+  // position, no different from a player with no arrow at all. Opponent
+  // anchors don't get this propagation: opponent markers have no
+  // persistent cross-step identity to upsert a position against (they're
+  // matched by label at step-creation time only, see handleAddStep).
   const propagateRunArrowToNextStep = async (arrow: { arrow_type: 'run' | 'throw'; start_player_id: number | null | undefined; x2: number; y2: number }) => {
     if (arrow.arrow_type !== 'run' || arrow.start_player_id == null) return
     const nextStep = stepList[stepIndex + 1]
@@ -265,7 +315,7 @@ export default function Strategy() {
     await upsertPosition({ stepId: nextStep.id, playerId: arrow.start_player_id, x: arrow.x2, y: arrow.y2 })
   }
 
-  const handleCreateArrow = async (arrow: { x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id: number | null }) => {
+  const handleCreateArrow = async (arrow: { x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id: number | null; start_opponent_id: number | null }) => {
     if (selectedStepId === null) return
     pushHistory()
     const tempId = -Date.now()
@@ -279,7 +329,7 @@ export default function Strategy() {
     }
   }
 
-  const handleUpdateArrow = async (arrow: { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id?: number | null }) => {
+  const handleUpdateArrow = async (arrow: { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id?: number | null; start_opponent_id?: number | null }) => {
     pushHistory()
     setArrows(prev => prev.map(a => (a.id === arrow.id ? { ...a, ...arrow } : a)))
     const ok = await updateArrow(arrow)
@@ -361,8 +411,8 @@ export default function Strategy() {
           if (created) setOpponents(prev => prev.map(p => (p.id === oldId ? created : p)))
           return !!created
         }))
-      } else if (c.x !== o.x || c.y !== o.y) {
-        ops.push(updateOpponent({ id: o.id, x: o.x, y: o.y }))
+      } else if (c.x !== o.x || c.y !== o.y || c.label !== o.label) {
+        ops.push(updateOpponent({ id: o.id, x: o.x, y: o.y, label: o.label }))
       }
     }
     for (const o of cur.opponents) if (!targetOppIds.has(o.id)) ops.push(removeOpponent({ id: o.id }))
@@ -374,12 +424,12 @@ export default function Strategy() {
       const c = curArr.get(a.id)
       if (!c) {
         const oldId = a.id
-        ops.push(trackCreate(createArrow({ stepId, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2, cx: a.cx, cy: a.cy, arrow_type: a.arrow_type, start_player_id: a.start_player_id })).then(created => {
+        ops.push(trackCreate(createArrow({ stepId, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2, cx: a.cx, cy: a.cy, arrow_type: a.arrow_type, start_player_id: a.start_player_id, start_opponent_id: a.start_opponent_id })).then(created => {
           if (created) setArrows(prev => prev.map(p => (p.id === oldId ? created : p)))
           return !!created
         }))
-      } else if (c.x1 !== a.x1 || c.y1 !== a.y1 || c.x2 !== a.x2 || c.y2 !== a.y2 || c.cx !== a.cx || c.cy !== a.cy || c.start_player_id !== a.start_player_id) {
-        ops.push(updateArrow({ id: a.id, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2, cx: a.cx, cy: a.cy, start_player_id: a.start_player_id }))
+      } else if (c.x1 !== a.x1 || c.y1 !== a.y1 || c.x2 !== a.x2 || c.y2 !== a.y2 || c.cx !== a.cx || c.cy !== a.cy || c.start_player_id !== a.start_player_id || c.start_opponent_id !== a.start_opponent_id) {
+        ops.push(updateArrow({ id: a.id, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2, cx: a.cx, cy: a.cy, start_player_id: a.start_player_id, start_opponent_id: a.start_opponent_id }))
       }
     }
     for (const a of cur.arrows) if (!targetArrIds.has(a.id)) ops.push(removeArrow({ id: a.id }))
@@ -433,8 +483,9 @@ export default function Strategy() {
     const playerIds = items.filter(i => i.kind === 'player').map(i => i.id)
     const oppIds = items.filter(i => i.kind === 'opponent').map(i => i.id)
     const arrowIds = items.filter(i => i.kind === 'arrow').map(i => i.id)
+    const remainingOpponents = opponents.filter(o => !oppIds.includes(o.id))
     if (playerIds.length) setPositions(prev => { const m = new Map(prev); playerIds.forEach(id => m.delete(id)); return m })
-    if (oppIds.length) setOpponents(prev => prev.filter(o => !oppIds.includes(o.id)))
+    if (oppIds.length) setOpponents(remainingOpponents)
     if (arrowIds.length) setArrows(prev => prev.filter(a => !arrowIds.includes(a.id)))
     const results = await Promise.all([
       ...playerIds.map(id => deletePosition({ stepId, playerId: id })),
@@ -442,6 +493,7 @@ export default function Strategy() {
       ...arrowIds.map(id => removeArrow({ id })),
     ])
     if (results.some(r => !r)) loadStepData(stepId)
+    else if (oppIds.length) await applyOpponentRenumber(remainingOpponents)
   }
 
   // Live group move of a multi-selection. `start` captures the pre-move board
@@ -463,17 +515,17 @@ export default function Strategy() {
     const arrowMoves = moves.filter((m): m is Extract<EntityMove, { kind: 'arrow' }> => m.kind === 'arrow')
     if (playerMoves.length) setPositions(prev => { const m = new Map(prev); playerMoves.forEach(mv => m.set(mv.id, { x: mv.x, y: mv.y })); return m })
     if (oppMoves.length) setOpponents(prev => prev.map(o => { const mv = oppMoves.find(m => m.id === o.id); return mv ? { ...o, x: mv.x, y: mv.y } : o }))
-    if (arrowMoves.length) setArrows(prev => prev.map(a => { const mv = arrowMoves.find(m => m.id === a.id); return mv ? { ...a, x1: mv.x1, y1: mv.y1, x2: mv.x2, y2: mv.y2, cx: mv.cx, cy: mv.cy, start_player_id: mv.start_player_id } : a }))
+    if (arrowMoves.length) setArrows(prev => prev.map(a => { const mv = arrowMoves.find(m => m.id === a.id); return mv ? { ...a, x1: mv.x1, y1: mv.y1, x2: mv.x2, y2: mv.y2, cx: mv.cx, cy: mv.cy, start_player_id: mv.start_player_id, start_opponent_id: mv.start_opponent_id } : a }))
     if (phase === 'commit') {
       const before = groupBeforeRef.current
       groupBeforeRef.current = null
       if (before) pushHistory(before)
-      // Group-moved arrows detach (start_player_id: null), so there is no
-      // anchored run arrow left to propagate into the next step.
+      // Group-moved arrows detach (start_player_id/start_opponent_id: null),
+      // so there is no anchored run arrow left to propagate into the next step.
       Promise.all([
         ...playerMoves.map(mv => upsertPosition({ stepId, playerId: mv.id, x: mv.x, y: mv.y })),
         ...oppMoves.map(mv => updateOpponent({ id: mv.id, x: mv.x, y: mv.y })),
-        ...arrowMoves.map(mv => updateArrow({ id: mv.id, x1: mv.x1, y1: mv.y1, x2: mv.x2, y2: mv.y2, cx: mv.cx, cy: mv.cy, start_player_id: mv.start_player_id })),
+        ...arrowMoves.map(mv => updateArrow({ id: mv.id, x1: mv.x1, y1: mv.y1, x2: mv.x2, y2: mv.y2, cx: mv.cx, cy: mv.cy, start_player_id: mv.start_player_id, start_opponent_id: mv.start_opponent_id })),
       ]).then(results => { if (results.some(r => !r)) loadStepData(stepId) })
     }
   }
@@ -550,10 +602,10 @@ export default function Strategy() {
     if (selectedPlayId === null) return
     const step = await addStep({ playId: selectedPlayId })
     if (step) {
-      // Seed the new step from the current one instead of starting empty:
-      // a placed player keeps their position unless they have an outgoing
-      // 'run' arrow anchored to them, in which case the arrow's head becomes
-      // their starting position here. Opponent markers just carry over.
+      // Seed the new step from the current one instead of starting empty: a
+      // placed player or opponent keeps their position unless they have an
+      // outgoing 'run' arrow anchored to them, in which case the arrow's
+      // head becomes their starting position here.
       const seeds: Promise<unknown>[] = []
       for (const [playerId, pos] of positions.entries()) {
         const runArrow = arrows.find(a => a.arrow_type === 'run' && a.start_player_id === playerId)
@@ -561,7 +613,9 @@ export default function Strategy() {
         seeds.push(upsertPosition({ stepId: step.id, playerId, x: target.x, y: target.y }))
       }
       for (const opp of opponents) {
-        seeds.push(createOpponent({ stepId: step.id, label: opp.label, x: opp.x, y: opp.y }))
+        const runArrow = arrows.find(a => a.arrow_type === 'run' && a.start_opponent_id === opp.id)
+        const target = runArrow ? { x: runArrow.x2, y: runArrow.y2 } : opp
+        seeds.push(createOpponent({ stepId: step.id, label: opp.label, x: target.x, y: target.y }))
       }
       await Promise.all(seeds)
       await fetchSteps({ playId: selectedPlayId })
@@ -770,6 +824,7 @@ export default function Strategy() {
               onAddOpponent={handleAddOpponent}
               onMoveOpponent={handleMoveOpponent}
               onRemoveOpponent={handleRemoveOpponent}
+              onRenameOpponent={handleRenameOpponent}
               onCreateArrow={handleCreateArrow}
               onUpdateArrow={handleUpdateArrow}
               onDeleteArrow={handleDeleteArrow}

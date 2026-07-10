@@ -12,17 +12,18 @@ export type StrategyArrow = {
   cx: number; cy: number
   arrow_type: 'run' | 'throw'
   start_player_id: number | null
+  start_opponent_id: number | null
 }
 
 // A board element that can be selected (player, opponent marker, or arrow).
 export type StrategySelectedItem = { kind: 'player' | 'opponent' | 'arrow'; id: number }
 // A relative move applied to a multi-selection during a group drag. Arrows
-// carry all six curve coordinates plus start_player_id (a group move detaches
-// an anchored arrow so the whole shape translates rigidly).
+// carry all six curve coordinates plus start_player_id/start_opponent_id (a
+// group move detaches an anchored arrow so the whole shape translates rigidly).
 export type StrategyEntityMove =
   | { kind: 'player'; id: number; x: number; y: number }
   | { kind: 'opponent'; id: number; x: number; y: number }
-  | { kind: 'arrow'; id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id: number | null }
+  | { kind: 'arrow'; id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id: number | null; start_opponent_id: number | null }
 
 type HookResult<T, P = void> = {
   data: T | undefined
@@ -230,15 +231,16 @@ export function useCreateStrategyOpponentMarker() {
 }
 
 export function useUpdateStrategyOpponentMarker() {
-  const fn = useCallback(async (params: { id: number; x: number; y: number }) => {
+  const fn = useCallback(async (params: { id: number; x?: number; y?: number; label?: string }) => {
+    const { id, ...body } = params
     const { error } = await supabase
       .from('strategy_opponent_markers')
-      .update({ x: params.x, y: params.y })
-      .eq('id', params.id)
+      .update(body)
+      .eq('id', id)
     if (error) throw new Error(error.message)
     return true
   }, [])
-  return useApiCall<boolean, { id: number; x: number; y: number }>(fn)
+  return useApiCall<boolean, { id: number; x?: number; y?: number; label?: string }>(fn)
 }
 
 export function useDeleteStrategyOpponentMarker() {
@@ -257,7 +259,7 @@ export function useGetStrategyArrows() {
   const fn = useCallback(async (params: { stepId: number }) => {
     const { data, error } = await supabase
       .from('strategy_arrows')
-      .select('id, x1, y1, x2, y2, cx, cy, arrow_type, start_player_id')
+      .select('id, x1, y1, x2, y2, cx, cy, arrow_type, start_player_id, start_opponent_id')
       .eq('step_id', params.stepId)
       .order('id')
     if (error) throw new Error(error.message)
@@ -268,7 +270,7 @@ export function useGetStrategyArrows() {
 
 export function useCreateStrategyArrow() {
   const fn = useCallback(async (params: {
-    stepId: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id?: number | null
+    stepId: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id?: number | null; start_opponent_id?: number | null
   }) => {
     const { data, error } = await supabase
       .from('strategy_arrows')
@@ -277,19 +279,20 @@ export function useCreateStrategyArrow() {
         x1: params.x1, y1: params.y1, x2: params.x2, y2: params.y2, cx: params.cx, cy: params.cy,
         arrow_type: params.arrow_type,
         start_player_id: params.start_player_id ?? null,
+        start_opponent_id: params.start_opponent_id ?? null,
       })
       .select()
     if (error) throw new Error(error.message)
     return data?.[0] as StrategyArrow
   }, [])
-  return useApiCall<StrategyArrow, { stepId: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id?: number | null }>(fn)
+  return useApiCall<StrategyArrow, { stepId: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id?: number | null; start_opponent_id?: number | null }>(fn)
 }
 
-// start_player_id is included so dragging an anchored arrow's start handle
-// can detach it (caller passes null) instead of leaving it pointing at a
-// stale, no-longer-tracked coordinate.
+// start_player_id/start_opponent_id are included so dragging an anchored
+// arrow's start handle can detach it (caller passes null for both) instead
+// of leaving it pointing at a stale, no-longer-tracked coordinate.
 export function useUpdateStrategyArrow() {
-  const fn = useCallback(async (params: { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id?: number | null }) => {
+  const fn = useCallback(async (params: { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id?: number | null; start_opponent_id?: number | null }) => {
     const { id, ...body } = params
     const { error } = await supabase
       .from('strategy_arrows')
@@ -298,7 +301,7 @@ export function useUpdateStrategyArrow() {
     if (error) throw new Error(error.message)
     return true
   }, [])
-  return useApiCall<boolean, { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id?: number | null }>(fn)
+  return useApiCall<boolean, { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id?: number | null; start_opponent_id?: number | null }>(fn)
 }
 
 export function useDeleteStrategyArrow() {

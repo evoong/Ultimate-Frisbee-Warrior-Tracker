@@ -44,7 +44,7 @@ type DragState = {
   moved: boolean
 }
 
-type ArrowDraft = { x1: number; y1: number; x2: number; y2: number; pointerId: number; startPlayerId?: number }
+type ArrowDraft = { x1: number; y1: number; x2: number; y2: number; pointerId: number; startPlayerId?: number; startOpponentId?: number }
 type ArrowLive = { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number }
 
 const DRAG_THRESHOLD_PX = 4
@@ -124,7 +124,7 @@ function isTypingTarget(t: EventTarget | null) {
 
 export default function StrategyBoard({
   players, positions, opponents, arrows, allowed,
-  onPlace, onRemove, onAddOpponent, onMoveOpponent, onRemoveOpponent,
+  onPlace, onRemove, onAddOpponent, onMoveOpponent, onRemoveOpponent, onRenameOpponent,
   onCreateArrow, onUpdateArrow, onDeleteArrow,
   onGroupMove, onDeleteMany,
   transitionMs = 700,
@@ -139,8 +139,9 @@ export default function StrategyBoard({
   onAddOpponent: () => void
   onMoveOpponent: (id: number, x: number, y: number) => void
   onRemoveOpponent: (id: number) => void
-  onCreateArrow: (arrow: { x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id: number | null }) => void
-  onUpdateArrow: (arrow: { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id?: number | null }) => void
+  onRenameOpponent: (id: number, label: string) => void
+  onCreateArrow: (arrow: { x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id: number | null; start_opponent_id: number | null }) => void
+  onUpdateArrow: (arrow: { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id?: number | null; start_opponent_id?: number | null }) => void
   onDeleteArrow: (id: number) => void
   onGroupMove: (moves: EntityMove[], phase: 'start' | 'preview' | 'commit' | 'cancel') => void
   onDeleteMany: (items: SelectedItem[]) => void
@@ -196,6 +197,19 @@ export default function StrategyBoard({
   // Handles (the tap-to-edit affordance) show only when a single arrow is
   // selected; a multi-selection is for delete/move, not per-handle editing.
   const selectedArrowId = selected.length === 1 && selected[0].kind === 'arrow' ? selected[0].id : null
+  // Same one-at-a-time rule for the opponent label editor: a pencil icon
+  // appears only when exactly one opponent marker is selected.
+  const selectedOpponentId = selected.length === 1 && selected[0].kind === 'opponent' ? selected[0].id : null
+  const [editingOpponentId, setEditingOpponentId] = useState<number | null>(null)
+  const [editingLabelValue, setEditingLabelValue] = useState('')
+  const commitOpponentLabel = () => {
+    const id = editingOpponentId
+    setEditingOpponentId(null)
+    if (id == null) return
+    const trimmed = editingLabelValue.trim()
+    const original = opponents.find(o => o.id === id)?.label
+    if (trimmed && trimmed !== original) onRenameOpponent(id, trimmed)
+  }
   // Refs so the window keydown listener (registered once) always sees the
   // latest selection and delete action without re-subscribing every render.
   const selectedRef = useRef<SelectedItem[]>(selected)
@@ -216,6 +230,7 @@ export default function StrategyBoard({
             : arrows.some(a => a.id === s.id))
       return next.length === prev.length ? prev : next
     })
+    setEditingOpponentId(id => (id != null && !opponents.some(o => o.id === id) ? null : id))
   }, [positions, opponents, arrows])
   // On hover-capable devices the edit handles reveal only while the pointer is
   // over the arrow (arrows stay clean otherwise); touch has no hover, so the
@@ -288,7 +303,13 @@ export default function StrategyBoard({
       e.stopPropagation() // don't let the field's own handler also start an arrow draw
       if (drawArmed) {
         const start = entity.kind === 'player' ? positions.get(entity.id) : opponents.find(o => o.id === entity.id)
-        if (start) beginArrowDraw(e.pointerId, start.x, start.y, entity.kind === 'player' ? entity.id : undefined)
+        if (start) {
+          beginArrowDraw(
+            e.pointerId, start.x, start.y,
+            entity.kind === 'player' ? entity.id : undefined,
+            entity.kind === 'opponent' ? entity.id : undefined,
+          )
+        }
         return
       }
       // Cmd/Ctrl+click a field entity toggles its membership in the selection
@@ -391,9 +412,9 @@ export default function StrategyBoard({
       .filter((a): a is StrategyArrow => !!a)
     // Clamp the shared delta (not each coordinate) so the whole group stays
     // rigid at the field edges instead of deforming. Arrows detach from any
-    // anchored player on a group move so all six coordinates translate and
-    // render as-is (an anchored tail would otherwise be re-pinned to its
-    // player and ignore the move).
+    // anchored player or opponent on a group move so all six coordinates
+    // translate and render as-is (an anchored tail would otherwise be
+    // re-pinned to its anchor and ignore the move).
     const allX = [...origPlayers.map(p => p.pos.x), ...origOpps.map(o => o.x), ...origArrows.flatMap(a => [a.x1, a.x2, a.cx])]
     const allY = [...origPlayers.map(p => p.pos.y), ...origOpps.map(o => o.y), ...origArrows.flatMap(a => [a.y1, a.y2, a.cy])]
     const minDx = allX.length ? -Math.min(...allX) : 0
@@ -406,7 +427,7 @@ export default function StrategyBoard({
       return [
         ...origPlayers.map(p => ({ kind: 'player' as const, id: p.id, x: p.pos.x + dx, y: p.pos.y + dy })),
         ...origOpps.map(o => ({ kind: 'opponent' as const, id: o.id, x: o.x + dx, y: o.y + dy })),
-        ...origArrows.map(a => ({ kind: 'arrow' as const, id: a.id, x1: a.x1 + dx, y1: a.y1 + dy, x2: a.x2 + dx, y2: a.y2 + dy, cx: a.cx + dx, cy: a.cy + dy, start_player_id: null })),
+        ...origArrows.map(a => ({ kind: 'arrow' as const, id: a.id, x1: a.x1 + dx, y1: a.y1 + dy, x2: a.x2 + dx, y2: a.y2 + dy, cx: a.cx + dx, cy: a.cy + dy, start_player_id: null, start_opponent_id: null })),
       ]
     }
     let moved = false
@@ -450,13 +471,14 @@ export default function StrategyBoard({
   }
 
   // ── Arrow drawing ──────────────────────────────────────────────────────────
-  // startPlayerId is set only when the drag began on a player avatar (not
-  // empty field or an opponent marker): the arrow's tail is then anchored to
-  // that player — tracking them live if dragged within the step, and (for
-  // 'run' arrows) its head drives their position in the next step.
-  const beginArrowDraw = (pointerId: number, x1: number, y1: number, startPlayerId?: number) => {
+  // startPlayerId/startOpponentId is set only when the drag began on a player
+  // avatar or opponent marker (not empty field): the arrow's tail is then
+  // anchored to that entity — tracking it live if dragged within the step,
+  // and (for 'run' arrows anchored to a player) its head drives their
+  // position in the next step. At most one of the two is ever set.
+  const beginArrowDraw = (pointerId: number, x1: number, y1: number, startPlayerId?: number, startOpponentId?: number) => {
     arrowDragTeardownRef.current() // defensively end any handle-drag still in flight
-    const initial: ArrowDraft = { x1, y1, x2: x1, y2: y1, pointerId, startPlayerId }
+    const initial: ArrowDraft = { x1, y1, x2: x1, y2: y1, pointerId, startPlayerId, startOpponentId }
     drawArrowRef.current = initial
     setDrawingArrow(initial)
 
@@ -481,7 +503,7 @@ export default function StrategyBoard({
       if (Math.hypot(d.x2 - d.x1, d.y2 - d.y1) < MIN_ARROW_LENGTH) return // treat as a tap, not a draw
       onCreateArrow({
         x1: d.x1, y1: d.y1, x2: d.x2, y2: d.y2, cx: (d.x1 + d.x2) / 2, cy: (d.y1 + d.y2) / 2,
-        arrow_type: arrowType, start_player_id: d.startPlayerId ?? null,
+        arrow_type: arrowType, start_player_id: d.startPlayerId ?? null, start_opponent_id: d.startOpponentId ?? null,
       })
     }
     const onCancel = (ev: PointerEvent) => {
@@ -539,9 +561,9 @@ export default function StrategyBoard({
         teardown()
         setLiveArrowEdit(null)
         // Manually dragging an anchored tail detaches it: it stops tracking
-        // the player and freezes at the coordinate it was dropped at.
-        const detach = handle === 'start' && arrow.start_player_id != null
-        onUpdateArrow(detach ? { ...current, start_player_id: null } : current)
+        // its player/opponent and freezes at the coordinate it was dropped at.
+        const detach = handle === 'start' && (arrow.start_player_id != null || arrow.start_opponent_id != null)
+        onUpdateArrow(detach ? { ...current, start_player_id: null, start_opponent_id: null } : current)
       }
       const onCancel = (ev: PointerEvent) => {
         if (ev.pointerId !== pointerId) return
@@ -595,12 +617,18 @@ export default function StrategyBoard({
   const ARROW_COLOR = '#f59e0b' // amber-500: reads on the emerald field in both themes
 
   // An anchored arrow's stored x1/y1 is just its position when last saved;
-  // render it tracking the player's current position instead so dragging the
-  // player within this step visibly drags the arrow's tail along with them.
+  // render it tracking the anchor's current position instead so dragging the
+  // player or opponent within this step visibly drags the arrow's tail
+  // along with them.
   const getEffectiveArrow = (a: StrategyArrow) => {
-    if (a.start_player_id == null) return a
-    const pos = positions.get(a.start_player_id)
-    return pos ? { ...a, x1: pos.x, y1: pos.y } : a
+    if (a.start_player_id != null) {
+      const pos = positions.get(a.start_player_id)
+      if (pos) return { ...a, x1: pos.x, y1: pos.y }
+    } else if (a.start_opponent_id != null) {
+      const opp = opponents.find(o => o.id === a.start_opponent_id)
+      if (opp) return { ...a, x1: opp.x, y1: opp.y }
+    }
+    return a
   }
   const renderedArrows = arrows.map(a => {
     const eff = getEffectiveArrow(a)
@@ -727,7 +755,7 @@ export default function StrategyBoard({
           const mid = onCurveMidpoint(handleArrow)
           const midRendered = toRendered(mid.x, mid.y, isDesktop)
           const handleClass = 'absolute w-4 h-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-background border-2 touch-none cursor-grab'
-          const startAnchored = handleArrow.start_player_id != null
+          const startAnchored = handleArrow.start_player_id != null || handleArrow.start_opponent_id != null
           // Keep the handles alive while the pointer is on them, so crossing
           // from the arrow line onto a handle doesn't dismiss the set.
           const hoverProps = hasHover
@@ -738,7 +766,7 @@ export default function StrategyBoard({
               <div
                 {...hoverProps}
                 className={`${handleClass} ${startAnchored ? 'border-sky-400' : 'border-amber-500'}`}
-                title={startAnchored ? 'Anchored to a player — drag to detach' : undefined}
+                title={startAnchored ? 'Anchored — drag to detach' : undefined}
                 style={{ left: `${start.left}%`, top: `${start.top}%` }}
                 onPointerDown={beginHandleDrag(handleArrow, 'start')}
               />
@@ -788,6 +816,7 @@ export default function StrategyBoard({
           const isDragSource = drag?.moved && drag.entity.kind === 'opponent' && drag.entity.id === opp.id
           const onTop = lastActiveKey === `opponent-${opp.id}`
           const isSelected = isSel('opponent', opp.id)
+          const isEditingLabel = editingOpponentId === opp.id
           return (
             <div
               // Keyed by label, not id: each step's opponent markers are
@@ -812,9 +841,40 @@ export default function StrategyBoard({
               <div className={`w-10 h-10 rounded-full bg-red-100 dark:bg-red-950 border-2 border-red-400 dark:border-red-700 flex items-center justify-center shrink-0 select-none ${isSelected ? 'ring-2 ring-primary ring-offset-2 ring-offset-background' : ''}`}>
                 <span className="text-[10px] font-bold text-red-700 dark:text-red-400">{opp.label.replace(/^Opp\s*/i, '')}</span>
               </div>
-              <span className="text-[9px] font-medium text-foreground bg-background/70 rounded px-1 mt-0.5 max-w-16 truncate">
-                {opp.label}
-              </span>
+              {isEditingLabel ? (
+                <input
+                  autoFocus
+                  value={editingLabelValue}
+                  onChange={e => setEditingLabelValue(e.target.value)}
+                  onPointerDown={e => e.stopPropagation()}
+                  onClick={e => e.stopPropagation()}
+                  onBlur={commitOpponentLabel}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() }
+                    else if (e.key === 'Escape') { e.preventDefault(); setEditingOpponentId(null) }
+                  }}
+                  className="mt-0.5 w-16 text-[9px] text-center rounded px-1 bg-background border border-primary text-foreground"
+                />
+              ) : (
+                <span className="text-[9px] font-medium text-foreground bg-background/70 rounded px-1 mt-0.5 max-w-16 truncate">
+                  {opp.label}
+                </span>
+              )}
+              {allowed && selectedOpponentId === opp.id && !isEditingLabel && (
+                <button
+                  type="button"
+                  aria-label="Rename opponent"
+                  onPointerDown={e => e.stopPropagation()}
+                  onClick={e => {
+                    e.stopPropagation()
+                    setEditingLabelValue(opp.label)
+                    setEditingOpponentId(opp.id)
+                  }}
+                  className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-background border border-border flex items-center justify-center text-muted-foreground hover:text-foreground shadow"
+                >
+                  <Pencil className="w-2.5 h-2.5" />
+                </button>
+              )}
             </div>
           )
         })}
