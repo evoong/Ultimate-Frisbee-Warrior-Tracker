@@ -1,6 +1,5 @@
 import {
   Calendar,
-  Trophy,
   Users,
   Award,
   BarChart3,
@@ -11,7 +10,6 @@ import {
 
 export type Tab =
   | "schedule"
-  | "league"
   | "roster"
   | "ranking"
   | "stats"
@@ -20,7 +18,6 @@ export type Tab =
 
 export const NAV_ITEMS: { key: Tab; label: string; icon: LucideIcon }[] = [
   { key: "schedule", label: "Schedule", icon: Calendar },
-  { key: "league", label: "League", icon: Trophy },
   { key: "roster", label: "Roster", icon: Users },
   { key: "ranking", label: "Ranking", icon: Award },
   { key: "stats", label: "Stats", icon: BarChart3 },

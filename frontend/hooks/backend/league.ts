@@ -44,6 +44,10 @@ export type LeagueTeam = {
   notes: string | null
 }
 
+// A row in league_games: a matchup we play links to its rich `games` row
+// via our_game_id and carries no score of its own (derived from that
+// game's goal events instead); this is the only kind of matchup that can
+// exist now that there's no "add matchup"/bracket UI for anyone else.
 export type LeagueGame = {
   id: number
   season_id: number
@@ -55,17 +59,10 @@ export type LeagueGame = {
   game_time: string | null
   location: string | null
   stage: 'regular' | 'playoff'
-  round: string | null
-  bracket_pos: number | null
-  next_game_id: number | null
-  next_slot: 'home' | 'away' | null
   our_game_id: number | null
 }
 
 // league_games row enriched with derived facts:
-// - eff_home/away_team_id: stored team, or the winner flowed in from a
-//   feeder playoff game (bracket advancement is derived, never persisted,
-//   so read-only viewers see a correct bracket too)
 // - eff_home/away_score: stored score, or for a matchup linked to one of
 //   our games, the score derived from that game's goal events
 // - is_final: whether the game counts as decided (drives standings)
@@ -170,27 +167,6 @@ export function useGetLeague() {
       }
       return base
     })
-
-    // Flow playoff winners into the next round's open slots. Purely
-    // derived: repeat until stable (bracket depth is at most 3 rounds).
-    const byId = new Map(enriched.map(g => [g.id, g]))
-    for (let pass = 0; pass < 4; pass++) {
-      let changed = false
-      for (const g of enriched) {
-        if (g.stage !== 'playoff' || !g.is_final || g.next_game_id == null || g.next_slot == null) continue
-        if (g.eff_home_score == null || g.eff_away_score == null || g.eff_home_score === g.eff_away_score) continue
-        const winner = g.eff_home_score > g.eff_away_score ? g.eff_home_team_id : g.eff_away_team_id
-        if (winner == null) continue
-        const next = byId.get(g.next_game_id)
-        if (!next) continue
-        const key = g.next_slot === 'home' ? 'eff_home_team_id' : 'eff_away_team_id'
-        if (next[key] !== winner) {
-          next[key] = winner
-          changed = true
-        }
-      }
-      if (!changed) break
-    }
 
     return {
       season: {
@@ -320,136 +296,3 @@ export function useDeleteLeagueTeam() {
   return useApiCall(fn)
 }
 
-export function useCreateLeagueGame() {
-  const fn = useCallback(async (params: {
-    seasonId: number
-    home_team_id: number | null
-    away_team_id: number | null
-    game_date?: string | null
-    game_time?: string | null
-    location?: string | null
-    stage?: 'regular' | 'playoff'
-    round?: string | null
-  }) => {
-    const { seasonId, ...rest } = params
-    const { data, error } = await supabase
-      .from('league_games')
-      .insert({ season_id: seasonId, ...rest })
-      .select()
-    if (error) throw new Error(error.message)
-    return data?.[0] as LeagueGame
-  }, [])
-  return useApiCall(fn)
-}
-
-export function useUpdateLeagueGame() {
-  const fn = useCallback(async (params: {
-    id: number
-    home_team_id?: number | null
-    away_team_id?: number | null
-    game_date?: string | null
-    game_time?: string | null
-    location?: string | null
-    round?: string | null
-  }) => {
-    const { id, ...body } = params
-    const { data, error } = await supabase.from('league_games').update(body).eq('id', id).select()
-    if (error) throw new Error(error.message)
-    return data?.[0] as LeagueGame
-  }, [])
-  return useApiCall(fn)
-}
-
-export function useDeleteLeagueGame() {
-  const fn = useCallback(async (params: { id: number }) => {
-    const { error } = await supabase.from('league_games').delete().eq('id', params.id)
-    if (error) throw new Error(error.message)
-    return true
-  }, [])
-  return useApiCall(fn)
-}
-
-// Record (or clear) the score of a matchup we are not tracking live.
-// Matchups linked to one of our games never go through this: their score
-// is derived from game events.
-export function useRecordLeagueScore() {
-  const fn = useCallback(async (params: { id: number; home_score: number | null; away_score: number | null }) => {
-    const isFinal = params.home_score != null && params.away_score != null
-    const { data, error } = await supabase
-      .from('league_games')
-      .update({ home_score: params.home_score, away_score: params.away_score, status: isFinal ? 'final' : 'scheduled' })
-      .eq('id', params.id)
-      .select()
-    if (error) throw new Error(error.message)
-    return data?.[0] as LeagueGame
-  }, [])
-  return useApiCall(fn)
-}
-
-// Create a single-elimination bracket from an ordered seed list (2, 4 or
-// 8 teams). Replaces previously generated playoff games (rows without a
-// linked tracked game) so regeneration is safe.
-export function useGenerateBracket() {
-  const fn = useCallback(async (params: { seasonId: number; seededTeamIds: number[] }) => {
-    const n = params.seededTeamIds.length
-    if (n !== 2 && n !== 4 && n !== 8) throw new Error('Bracket needs 2, 4 or 8 teams')
-
-    const { error: delError } = await supabase
-      .from('league_games')
-      .delete()
-      .eq('season_id', params.seasonId)
-      .eq('stage', 'playoff')
-      .is('our_game_id', null)
-    if (delError) throw new Error(delError.message)
-
-    const insert = async (row: Record<string, unknown>) => {
-      const { data, error } = await supabase
-        .from('league_games')
-        .insert({ season_id: params.seasonId, stage: 'playoff', ...row })
-        .select()
-      if (error) throw new Error(error.message)
-      return data?.[0] as LeagueGame
-    }
-
-    const seeds = params.seededTeamIds
-    const final = await insert({ round: 'Final', bracket_pos: 0 })
-    if (n === 2) {
-      await supabase.from('league_games')
-        .update({ home_team_id: seeds[0], away_team_id: seeds[1] })
-        .eq('id', final.id)
-      return final
-    }
-
-    // Standard seeding: semifinal pairs are (1 v 4, 2 v 3); with quarters,
-    // (1 v 8, 4 v 5) feed one semi and (2 v 7, 3 v 6) feed the other.
-    const semiPairs: [number, number][] = [[seeds[0], seeds[3]], [seeds[1], seeds[2]]]
-    const semis: LeagueGame[] = []
-    for (let i = 0; i < 2; i++) {
-      semis.push(await insert({
-        round: 'Semifinal',
-        bracket_pos: i,
-        next_game_id: final.id,
-        next_slot: i === 0 ? 'home' : 'away',
-        ...(n === 4 ? { home_team_id: semiPairs[i][0], away_team_id: semiPairs[i][1] } : {}),
-      }))
-    }
-    if (n === 8) {
-      const quarterPairs: [number, number][] = [
-        [seeds[0], seeds[7]], [seeds[3], seeds[4]],
-        [seeds[1], seeds[6]], [seeds[2], seeds[5]],
-      ]
-      for (let i = 0; i < 4; i++) {
-        await insert({
-          round: 'Quarterfinal',
-          bracket_pos: i,
-          home_team_id: quarterPairs[i][0],
-          away_team_id: quarterPairs[i][1],
-          next_game_id: semis[Math.floor(i / 2)].id,
-          next_slot: i % 2 === 0 ? 'home' : 'away',
-        })
-      }
-    }
-    return final
-  }, [])
-  return useApiCall(fn)
-}
