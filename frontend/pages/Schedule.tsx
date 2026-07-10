@@ -364,27 +364,10 @@ export default function Schedule() {
     fetchEvents({ gameId: selectedGame.id })
   }
 
-  // Recent Activity has no ordinal column; it's ordered purely by
-  // event_timestamp (descending). Reordering two adjacent rows means
-  // swapping their timestamps rather than reassigning a position number.
-  const handleMoveEvent = async (list: GameEvent[], index: number, direction: 'up' | 'down') => {
-    if (!selectedGame) return
-    const otherIndex = direction === 'up' ? index - 1 : index + 1
-    if (otherIndex < 0 || otherIndex >= list.length) return
-    const a = list[index]!
-    const b = list[otherIndex]!
-    await Promise.all([
-      updateEventTimestamp({ eventId: a.id, timestamp: b.event_timestamp }),
-      updateEventTimestamp({ eventId: b.id, timestamp: a.event_timestamp }),
-    ])
-    fetchEvents({ gameId: selectedGame.id })
-  }
-
-  // Drag a Recent Activity row to reorder it. Reassigns the same set of
-  // timestamps the list already had (still in descending order) to events
-  // in their new positions — a generalization of handleMoveEvent's adjacent
-  // swap to an arbitrary permutation, so it persists through the same
-  // event_timestamp-is-the-only-order-column mechanism.
+  // Drag a Recent Activity row to reorder it. There's no ordinal column on
+  // game_events; order is purely event_timestamp (descending), so
+  // reordering reassigns the same set of timestamps the list already had
+  // to events in their new positions rather than renumbering a position.
   const handleEventDragStart = (list: GameEvent[], event: GameEvent, rowEl: HTMLElement, e: React.PointerEvent) => {
     if (!allowed) return
     e.preventDefault()
@@ -968,22 +951,6 @@ export default function Schedule() {
                               aria-label="Drag to reorder event"
                             >
                               <GripVertical className="w-4 h-4 text-muted-foreground hover:text-foreground" />
-                            </button>
-                            <button
-                              onClick={() => handleMoveEvent(gameEvents, i, 'up')}
-                              disabled={i === 0}
-                              className="p-1.5 rounded hover:bg-accent transition-colors disabled:opacity-30 disabled:pointer-events-none"
-                              aria-label="Move event up"
-                            >
-                              <ChevronUp className="w-4 h-4 text-muted-foreground hover:text-foreground" />
-                            </button>
-                            <button
-                              onClick={() => handleMoveEvent(gameEvents, i, 'down')}
-                              disabled={i === gameEvents.length - 1}
-                              className="p-1.5 rounded hover:bg-accent transition-colors disabled:opacity-30 disabled:pointer-events-none"
-                              aria-label="Move event down"
-                            >
-                              <ChevronDown className="w-4 h-4 text-muted-foreground hover:text-foreground" />
                             </button>
                             <button onClick={() => handleEditEvent(event)} className="p-1.5 rounded hover:bg-accent transition-colors" aria-label="Edit event">
                               <Edit2 className="w-4 h-4 text-muted-foreground hover:text-foreground" />
