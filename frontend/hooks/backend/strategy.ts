@@ -5,6 +5,7 @@ export type StrategyPlay = { id: number; name: string; created_at: string; game_
 export type StrategyStep = { id: number; play_id: number; step_number: number }
 export type StrategyPosition = { player_id: number; x: number; y: number }
 export type StrategyOpponentMarker = { id: number; label: string; x: number; y: number }
+export type StrategyTextBox = { id: number; text: string; x: number; y: number }
 export type StrategyArrow = {
   id: number
   x1: number; y1: number
@@ -15,14 +16,15 @@ export type StrategyArrow = {
   start_opponent_id: number | null
 }
 
-// A board element that can be selected (player, opponent marker, or arrow).
-export type StrategySelectedItem = { kind: 'player' | 'opponent' | 'arrow'; id: number }
+// A board element that can be selected (player, opponent marker, text box, or arrow).
+export type StrategySelectedItem = { kind: 'player' | 'opponent' | 'textbox' | 'arrow'; id: number }
 // A relative move applied to a multi-selection during a group drag. Arrows
 // carry all six curve coordinates plus start_player_id/start_opponent_id (a
 // group move detaches an anchored arrow so the whole shape translates rigidly).
 export type StrategyEntityMove =
   | { kind: 'player'; id: number; x: number; y: number }
   | { kind: 'opponent'; id: number; x: number; y: number }
+  | { kind: 'textbox'; id: number; x: number; y: number }
   | { kind: 'arrow'; id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id: number | null; start_opponent_id: number | null }
 
 type HookResult<T, P = void> = {
@@ -247,6 +249,56 @@ export function useDeleteStrategyOpponentMarker() {
   const fn = useCallback(async (params: { id: number }) => {
     const { error } = await supabase
       .from('strategy_opponent_markers')
+      .delete()
+      .eq('id', params.id)
+    if (error) throw new Error(error.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { id: number }>(fn)
+}
+
+export function useGetStrategyTextBoxes() {
+  const fn = useCallback(async (params: { stepId: number }) => {
+    const { data, error } = await supabase
+      .from('strategy_text_boxes')
+      .select('id, text, x, y')
+      .eq('step_id', params.stepId)
+      .order('id')
+    if (error) throw new Error(error.message)
+    return (data ?? []) as StrategyTextBox[]
+  }, [])
+  return useApiCall<StrategyTextBox[], { stepId: number }>(fn)
+}
+
+export function useCreateStrategyTextBox() {
+  const fn = useCallback(async (params: { stepId: number; text: string; x: number; y: number }) => {
+    const { data, error } = await supabase
+      .from('strategy_text_boxes')
+      .insert({ step_id: params.stepId, text: params.text, x: params.x, y: params.y })
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0] as StrategyTextBox
+  }, [])
+  return useApiCall<StrategyTextBox, { stepId: number; text: string; x: number; y: number }>(fn)
+}
+
+export function useUpdateStrategyTextBox() {
+  const fn = useCallback(async (params: { id: number; x?: number; y?: number; text?: string }) => {
+    const { id, ...body } = params
+    const { error } = await supabase
+      .from('strategy_text_boxes')
+      .update(body)
+      .eq('id', id)
+    if (error) throw new Error(error.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { id: number; x?: number; y?: number; text?: string }>(fn)
+}
+
+export function useDeleteStrategyTextBox() {
+  const fn = useCallback(async (params: { id: number }) => {
+    const { error } = await supabase
+      .from('strategy_text_boxes')
       .delete()
       .eq('id', params.id)
     if (error) throw new Error(error.message)
