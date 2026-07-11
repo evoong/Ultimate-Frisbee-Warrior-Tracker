@@ -10,8 +10,9 @@ import {
   useGetStrategySteps, useAddStrategyStep, useDeleteStrategyStep,
   useGetStrategyPositions, useUpsertStrategyPosition, useDeleteStrategyPosition,
   useGetStrategyOpponentMarkers, useCreateStrategyOpponentMarker, useUpdateStrategyOpponentMarker, useDeleteStrategyOpponentMarker,
+  useGetStrategyTextBoxes, useCreateStrategyTextBox, useUpdateStrategyTextBox, useDeleteStrategyTextBox,
   useGetStrategyArrows, useCreateStrategyArrow, useUpdateStrategyArrow, useDeleteStrategyArrow,
-  type StrategyPlay, type StrategyStep, type StrategyOpponentMarker, type StrategyArrow,
+  type StrategyPlay, type StrategyStep, type StrategyOpponentMarker, type StrategyTextBox, type StrategyArrow,
   type StrategySelectedItem as BoardItem, type StrategyEntityMove as EntityMove,
 } from '../hooks/backend/strategy'
 import StrategyBoard from '../components/strategy/StrategyBoard'
@@ -71,6 +72,7 @@ function renumberedOpponentLabels(opps: StrategyOpponentMarker[]): Map<number, s
 type Board = {
   positions: Map<number, { x: number; y: number }>
   opponents: StrategyOpponentMarker[]
+  textBoxes: StrategyTextBox[]
   arrows: StrategyArrow[]
 }
 
@@ -108,6 +110,11 @@ export default function Strategy() {
   const { trigger: updateOpponent } = useUpdateStrategyOpponentMarker()
   const { trigger: removeOpponent } = useDeleteStrategyOpponentMarker()
 
+  const { trigger: fetchTextBoxes } = useGetStrategyTextBoxes()
+  const { trigger: createTextBox } = useCreateStrategyTextBox()
+  const { trigger: updateTextBox } = useUpdateStrategyTextBox()
+  const { trigger: removeTextBox } = useDeleteStrategyTextBox()
+
   const { trigger: fetchArrows } = useGetStrategyArrows()
   const { trigger: createArrow } = useCreateStrategyArrow()
   const { trigger: updateArrow } = useUpdateStrategyArrow()
@@ -119,6 +126,7 @@ export default function Strategy() {
   const [selectedStepId, setSelectedStepId] = useState<number | null>(null)
   const [positions, setPositions] = useState<Map<number, { x: number; y: number }>>(new Map())
   const [opponents, setOpponents] = useState<StrategyOpponentMarker[]>([])
+  const [textBoxes, setTextBoxes] = useState<StrategyTextBox[]>([])
   const [arrows, setArrows] = useState<StrategyArrow[]>([])
 
 
@@ -157,6 +165,7 @@ export default function Strategy() {
     setSelectedStepId(null)
     setPositions(new Map())
     setOpponents([])
+    setTextBoxes([])
     setArrows([])
     if (selectedPlayId !== null) {
       fetchSteps({ playId: selectedPlayId }).then(rows => {
@@ -188,13 +197,15 @@ export default function Strategy() {
   // StrategyBoard's left/top CSS transition animates the change) instead of
   // vanishing and popping back in at the new spot.
   const loadStepData = async (stepId: number) => {
-    const [posRows, oppRows, arrowRows] = await Promise.all([
+    const [posRows, oppRows, textRows, arrowRows] = await Promise.all([
       fetchPositions({ stepId }),
       fetchOpponents({ stepId }),
+      fetchTextBoxes({ stepId }),
       fetchArrows({ stepId }),
     ])
     if (posRows) setPositions(new Map(posRows.map(r => [r.player_id, { x: r.x, y: r.y }])))
     if (oppRows) setOpponents(oppRows)
+    if (textRows) setTextBoxes(textRows)
     if (arrowRows) setArrows(arrowRows)
   }
 
@@ -301,6 +312,47 @@ export default function Strategy() {
     await applyOpponentRenumber(remaining)
   }
 
+  // Text boxes are free-floating annotations: no roster backing, no
+  // auto-numbered label to keep dense (unlike opponent markers), so this is
+  // simpler than the opponent handlers above — just create/move/edit/remove.
+  const handleAddTextBox = async () => {
+    if (selectedStepId === null) return
+    pushHistory()
+    const text = 'Text'
+    const x = 0.5
+    const y = Math.min(0.9, 0.15 + (textBoxes.length % 6) * 0.12)
+    const tempId = -Date.now()
+    const withNew = [...textBoxes, { id: tempId, text, x, y }]
+    setTextBoxes(withNew)
+    const created = await trackCreate(createTextBox({ stepId: selectedStepId, text, x, y }))
+    if (created) {
+      setTextBoxes(withNew.map(t => (t.id === tempId ? created : t)))
+    } else {
+      loadStepData(selectedStepId)
+    }
+  }
+
+  const handleMoveTextBox = async (id: number, x: number, y: number) => {
+    pushHistory()
+    setTextBoxes(prev => prev.map(t => (t.id === id ? { ...t, x, y } : t)))
+    const ok = await updateTextBox({ id, x, y })
+    if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
+  }
+
+  const handleEditTextBox = async (id: number, text: string) => {
+    pushHistory()
+    setTextBoxes(prev => prev.map(t => (t.id === id ? { ...t, text } : t)))
+    const ok = await updateTextBox({ id, text })
+    if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
+  }
+
+  const handleRemoveTextBox = async (id: number) => {
+    pushHistory()
+    setTextBoxes(prev => prev.filter(t => t.id !== id))
+    const ok = await removeTextBox({ id })
+    if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
+  }
+
   // A 'run' arrow anchored to a player drives that player's position in the
   // next step (if one already exists) — its head is where they end up.
   // Dragging them there afterward just overwrites it like any other
@@ -356,11 +408,12 @@ export default function Strategy() {
   // applying (in the handlers above and the batch handlers below); undo/redo
   // restore a snapshot and reconcile the database to match. Scoped to board
   // elements only — step/play/game structural changes are not undoable.
-  const boardRef = useRef<Board>({ positions, opponents, arrows })
-  boardRef.current = { positions, opponents, arrows }
+  const boardRef = useRef<Board>({ positions, opponents, textBoxes, arrows })
+  boardRef.current = { positions, opponents, textBoxes, arrows }
   const cloneBoard = (b: Board): Board => ({
     positions: new Map(b.positions),
     opponents: b.opponents.map(o => ({ ...o })),
+    textBoxes: b.textBoxes.map(t => ({ ...t })),
     arrows: b.arrows.map(a => ({ ...a })),
   })
   const historyRef = useRef<Map<number, { past: Board[]; future: Board[] }>>(new Map())
@@ -416,6 +469,23 @@ export default function Strategy() {
       }
     }
     for (const o of cur.opponents) if (!targetOppIds.has(o.id)) ops.push(removeOpponent({ id: o.id }))
+
+    setTextBoxes(target.textBoxes.map(t => ({ ...t })))
+    const curText = new Map(cur.textBoxes.map(t => [t.id, t]))
+    const targetTextIds = new Set(target.textBoxes.map(t => t.id))
+    for (const t of target.textBoxes) {
+      const c = curText.get(t.id)
+      if (!c) {
+        const oldId = t.id
+        ops.push(trackCreate(createTextBox({ stepId, text: t.text, x: t.x, y: t.y })).then(created => {
+          if (created) setTextBoxes(prev => prev.map(p => (p.id === oldId ? created : p)))
+          return !!created
+        }))
+      } else if (c.x !== t.x || c.y !== t.y || c.text !== t.text) {
+        ops.push(updateTextBox({ id: t.id, x: t.x, y: t.y, text: t.text }))
+      }
+    }
+    for (const t of cur.textBoxes) if (!targetTextIds.has(t.id)) ops.push(removeTextBox({ id: t.id }))
 
     setArrows(target.arrows.map(a => ({ ...a })))
     const curArr = new Map(cur.arrows.map(a => [a.id, a]))
@@ -482,14 +552,17 @@ export default function Strategy() {
     const stepId = selectedStepId
     const playerIds = items.filter(i => i.kind === 'player').map(i => i.id)
     const oppIds = items.filter(i => i.kind === 'opponent').map(i => i.id)
+    const textIds = items.filter(i => i.kind === 'textbox').map(i => i.id)
     const arrowIds = items.filter(i => i.kind === 'arrow').map(i => i.id)
     const remainingOpponents = opponents.filter(o => !oppIds.includes(o.id))
     if (playerIds.length) setPositions(prev => { const m = new Map(prev); playerIds.forEach(id => m.delete(id)); return m })
     if (oppIds.length) setOpponents(remainingOpponents)
+    if (textIds.length) setTextBoxes(prev => prev.filter(t => !textIds.includes(t.id)))
     if (arrowIds.length) setArrows(prev => prev.filter(a => !arrowIds.includes(a.id)))
     const results = await Promise.all([
       ...playerIds.map(id => deletePosition({ stepId, playerId: id })),
       ...oppIds.map(id => removeOpponent({ id })),
+      ...textIds.map(id => removeTextBox({ id })),
       ...arrowIds.map(id => removeArrow({ id })),
     ])
     if (results.some(r => !r)) loadStepData(stepId)
@@ -507,14 +580,16 @@ export default function Strategy() {
     if (phase === 'cancel') {
       const before = groupBeforeRef.current
       groupBeforeRef.current = null
-      if (before) { setPositions(new Map(before.positions)); setOpponents(before.opponents.map(o => ({ ...o }))); setArrows(before.arrows.map(a => ({ ...a }))) }
+      if (before) { setPositions(new Map(before.positions)); setOpponents(before.opponents.map(o => ({ ...o }))); setTextBoxes(before.textBoxes.map(t => ({ ...t }))); setArrows(before.arrows.map(a => ({ ...a }))) }
       return
     }
     const playerMoves = moves.filter((m): m is Extract<EntityMove, { kind: 'player' }> => m.kind === 'player')
     const oppMoves = moves.filter((m): m is Extract<EntityMove, { kind: 'opponent' }> => m.kind === 'opponent')
+    const textMoves = moves.filter((m): m is Extract<EntityMove, { kind: 'textbox' }> => m.kind === 'textbox')
     const arrowMoves = moves.filter((m): m is Extract<EntityMove, { kind: 'arrow' }> => m.kind === 'arrow')
     if (playerMoves.length) setPositions(prev => { const m = new Map(prev); playerMoves.forEach(mv => m.set(mv.id, { x: mv.x, y: mv.y })); return m })
     if (oppMoves.length) setOpponents(prev => prev.map(o => { const mv = oppMoves.find(m => m.id === o.id); return mv ? { ...o, x: mv.x, y: mv.y } : o }))
+    if (textMoves.length) setTextBoxes(prev => prev.map(t => { const mv = textMoves.find(m => m.id === t.id); return mv ? { ...t, x: mv.x, y: mv.y } : t }))
     if (arrowMoves.length) setArrows(prev => prev.map(a => { const mv = arrowMoves.find(m => m.id === a.id); return mv ? { ...a, x1: mv.x1, y1: mv.y1, x2: mv.x2, y2: mv.y2, cx: mv.cx, cy: mv.cy, start_player_id: mv.start_player_id, start_opponent_id: mv.start_opponent_id } : a }))
     if (phase === 'commit') {
       const before = groupBeforeRef.current
@@ -525,6 +600,7 @@ export default function Strategy() {
       Promise.all([
         ...playerMoves.map(mv => upsertPosition({ stepId, playerId: mv.id, x: mv.x, y: mv.y })),
         ...oppMoves.map(mv => updateOpponent({ id: mv.id, x: mv.x, y: mv.y })),
+        ...textMoves.map(mv => updateTextBox({ id: mv.id, x: mv.x, y: mv.y })),
         ...arrowMoves.map(mv => updateArrow({ id: mv.id, x1: mv.x1, y1: mv.y1, x2: mv.x2, y2: mv.y2, cx: mv.cx, cy: mv.cy, start_player_id: mv.start_player_id, start_opponent_id: mv.start_opponent_id })),
       ]).then(results => { if (results.some(r => !r)) loadStepData(stepId) })
     }
@@ -616,6 +692,11 @@ export default function Strategy() {
         const runArrow = arrows.find(a => a.arrow_type === 'run' && a.start_opponent_id === opp.id)
         const target = runArrow ? { x: runArrow.x2, y: runArrow.y2 } : opp
         seeds.push(createOpponent({ stepId: step.id, label: opp.label, x: target.x, y: target.y }))
+      }
+      // Text boxes carry their text and position forward unchanged (they
+      // don't anchor arrows, so there's no head-position case to handle).
+      for (const box of textBoxes) {
+        seeds.push(createTextBox({ stepId: step.id, text: box.text, x: box.x, y: box.y }))
       }
       await Promise.all(seeds)
       await fetchSteps({ playId: selectedPlayId })
@@ -817,6 +898,7 @@ export default function Strategy() {
               players={boardPlayers}
               positions={positions}
               opponents={opponents}
+              textBoxes={textBoxes}
               arrows={arrows}
               allowed={allowed}
               onPlace={handlePlace}
@@ -825,6 +907,10 @@ export default function Strategy() {
               onMoveOpponent={handleMoveOpponent}
               onRemoveOpponent={handleRemoveOpponent}
               onRenameOpponent={handleRenameOpponent}
+              onAddTextBox={handleAddTextBox}
+              onMoveTextBox={handleMoveTextBox}
+              onEditTextBox={handleEditTextBox}
+              onRemoveTextBox={handleRemoveTextBox}
               onCreateArrow={handleCreateArrow}
               onUpdateArrow={handleUpdateArrow}
               onDeleteArrow={handleDeleteArrow}
@@ -835,9 +921,10 @@ export default function Strategy() {
             {allowed && (
               <p className="text-xs text-muted-foreground">
                 Drag players from the bench onto the field. Drag a player off the field to bench them.
-                Add opponent markers and drag them off the field to remove them. Toggle Draw arrow (or
-                hold A) and drag on the field — or starting from a player — to add running or thrown-pass
-                arrows. Use the numbered steps to build a sequence; Prev/Next slides everyone into place.
+                Add opponent markers or text boxes and drag them off the field to remove them. Toggle
+                Draw arrow (or hold A) and drag on the field — or starting from a player — to add running
+                or thrown-pass arrows. Use the numbered steps to build a sequence; Prev/Next slides
+                everyone into place.
               </p>
             )}
           </div>
