@@ -115,11 +115,14 @@ export function useDeleteGame() {
 
 export function useGetLineups() {
   const fn = useCallback(async (params: { gameId: number }) => {
-    // Join players so the UI can render names/positions directly
+    // Join players so the UI can render names/positions directly. Ordered
+    // by sort_order so the list reflects manual drag-reordering rather than
+    // insertion order (which Postgres doesn't guarantee anyway).
     const { data, error } = await supabase
       .from('game_lineups')
       .select('*, players(display_name, position, gender_match, photo_url)')
       .eq('game_id', params.gameId)
+      .order('sort_order')
     if (error) throw new Error(error.message)
     return ((data ?? []) as any[]).map((row: any) => ({
       ...row,
@@ -133,13 +136,14 @@ export function useGetLineups() {
 }
 
 export function useAddToLineup() {
-  const fn = useCallback(async (params: { gameId: number; player_id: number; lineup_name?: string; seasonId?: number | null }) => {
+  const fn = useCallback(async (params: { gameId: number; player_id: number; lineup_name?: string; seasonId?: number | null; sortOrder?: number }) => {
     const { data, error } = await supabase
       .from('game_lineups')
       .insert({
         game_id: params.gameId,
         player_id: params.player_id,
         lineup_name: params.lineup_name ?? 'Starting',
+        ...(params.sortOrder != null ? { sort_order: params.sortOrder } : {}),
       })
       .select()
     if (error) throw new Error(error.message)
@@ -161,6 +165,19 @@ export function useAddToLineup() {
       .from('game_attendance')
       .upsert({ game_id: params.gameId, player_id: params.player_id, in: true }, { onConflict: 'game_id,player_id', ignoreDuplicates: true })
     if (gaError) throw new Error(gaError.message)
+    return data?.[0]
+  }, [])
+  return useApiCall(fn)
+}
+
+export function useUpdateLineupSortOrder() {
+  const fn = useCallback(async (params: { id: number; sortOrder: number }) => {
+    const { data, error } = await supabase
+      .from('game_lineups')
+      .update({ sort_order: params.sortOrder })
+      .eq('id', params.id)
+      .select()
+    if (error) throw new Error(error.message)
     return data?.[0]
   }, [])
   return useApiCall(fn)
