@@ -937,7 +937,7 @@ export default function StrategyBoard({
               } ${isDragSource ? 'opacity-40' : 'transition-[left,top] ease-in-out'}`}
               style={{ left: `${left}%`, top: `${top}%`, zIndex: onTop ? 20 : 10, transitionDuration: isDragSource ? undefined : `${transitionMs}ms` }}
             >
-              <div className={`relative min-w-[70px] max-w-[160px] px-2 py-1 rounded-md bg-yellow-100 dark:bg-yellow-950 border-2 border-yellow-400 dark:border-yellow-700 shadow-sm ${isSelected ? 'ring-2 ring-primary ring-offset-2 ring-offset-background' : ''}`}>
+              <div className={`relative min-w-[70px] max-w-[160px] px-2 py-1 rounded-md ${isSelected ? 'ring-2 ring-primary ring-offset-2 ring-offset-background' : ''}`}>
                 {isEditing ? (
                   <textarea
                     autoFocus
@@ -1033,7 +1033,7 @@ export default function StrategyBoard({
           className="fixed z-50 -translate-x-1/2 -translate-y-1/2 pointer-events-none scale-105 drop-shadow-lg"
           style={{ left: pointerPosRef.current.x, top: pointerPosRef.current.y }}
         >
-          <div className="min-w-[70px] max-w-[160px] px-2 py-1 rounded-md bg-yellow-100 dark:bg-yellow-950 border-2 border-yellow-400 dark:border-yellow-700 text-[11px] text-foreground">
+          <div className="min-w-[70px] max-w-[160px] px-2 py-1 rounded-md text-[11px] text-foreground">
             {textBoxes.find(t => t.id === drag.entity.id)?.text || 'Text'}
           </div>
         </div>,
