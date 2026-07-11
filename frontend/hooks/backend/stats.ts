@@ -149,25 +149,30 @@ export function useGetPlayerStats() {
     const statsMap = new Map<number, any>()
     filtered.forEach((event: any) => {
       const playerId = event.player_id
-      const playerData = playersMap.get(playerId)
-      if (!playerId || !playerData) return
+      const playerData = playerId ? playersMap.get(playerId) : undefined
 
-      if (!statsMap.has(playerId)) {
-        statsMap.set(playerId, {
-          player_id: playerId,
-          player_name: playerData.display_name,
-          goals: 0,
-          assists: 0,
-          turnovers: 0,
-          games_played: new Set<number>(),
-        })
+      // Credit the scorer (goals/turnovers) only when the scorer is known.
+      // This does NOT gate the assist credit below: a goal can have no
+      // recorded scorer (e.g. an unregistered teammate scored) while still
+      // having a recorded assister, and that assist should still count.
+      if (playerId && playerData) {
+        if (!statsMap.has(playerId)) {
+          statsMap.set(playerId, {
+            player_id: playerId,
+            player_name: playerData.display_name,
+            goals: 0,
+            assists: 0,
+            turnovers: 0,
+            games_played: new Set<number>(),
+          })
+        }
+
+        const stats = statsMap.get(playerId)!
+        stats.games_played.add(event.game_id)
+
+        if (event.event_type === 'Goal') stats.goals++
+        else if (isTurnoverEvent(event.event_type)) stats.turnovers++
       }
-
-      const stats = statsMap.get(playerId)!
-      stats.games_played.add(event.game_id)
-
-      if (event.event_type === 'Goal') stats.goals++
-      else if (isTurnoverEvent(event.event_type)) stats.turnovers++
 
       // Credit assist to the related player on a Goal
       if (event.event_type === 'Goal' && event.related_player_id) {
