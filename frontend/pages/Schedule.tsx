@@ -166,6 +166,12 @@ export default function Schedule() {
   const [lineupName, setLineupName] = useState('Lineup 1')
   const [lineupSelectedIds, setLineupSelectedIds] = useState<Set<number>>(new Set())
   const [lineupPopoverOpen, setLineupPopoverOpen] = useState(false)
+  // Lineup names beyond the two defaults. A newly-added name has no rows in
+  // game_lineups yet (nothing to persist until a player is added to it), so
+  // it's tracked here only for the current game visit rather than in the DB.
+  const [extraLineupNames, setExtraLineupNames] = useState<string[]>([])
+  const [addingLineupName, setAddingLineupName] = useState(false)
+  const [newLineupNameInput, setNewLineupNameInput] = useState('')
   // Drag-to-reorder a lineup group. dragLineupGroup identifies which group
   // is being dragged (a player id is only unique within a group, since the
   // same player can appear in multiple lineups); dragLineupOrder mirrors
@@ -265,6 +271,9 @@ export default function Schedule() {
     setNewScorerId('')
     setNewAssisterId('')
     setLineupSelectedIds(new Set())
+    setExtraLineupNames([])
+    setAddingLineupName(false)
+    setNewLineupNameInput('')
   }
 
   // Season roster refetch needs the game's season id, not the game id.
@@ -676,6 +685,13 @@ export default function Schedule() {
       acc[e.lineup_name]!.push(e)
       return acc
     }, {} as Record<string, LineupEntry[]>)
+    // The selectable lineup names: the two defaults, any name already used in
+    // this game's saved lineups (so custom names persist across visits once
+    // a player has been added to them), and any name added this visit that
+    // has no players yet.
+    const lineupNames = Array.from(new Set([
+      'Lineup 1', 'Lineup 2', ...lineupEntries.map(e => e.lineup_name), ...extraLineupNames,
+    ]))
 
     // This season's per-player goals/assists (scoped to the selected game's
     // season, fetched in handleSelectGame), used to help pick balanced
@@ -1023,12 +1039,67 @@ export default function Schedule() {
               {allowed && (
                 <div className="space-y-2 bg-background rounded-lg p-3">
                   <Label className="text-xs text-muted-foreground">Add Players</Label>
-                  <Select value={lineupName} onValueChange={n => { setLineupName(n); setLineupSelectedIds(new Set()) }}>
-                    <SelectTrigger className="h-8 text-sm bg-card border-border text-foreground"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {['Lineup 1', 'Lineup 2'].map(n => <SelectItem key={n} value={n}>{n}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <Select value={lineupName} onValueChange={n => { setLineupName(n); setLineupSelectedIds(new Set()) }}>
+                        <SelectTrigger className="h-8 text-sm bg-card border-border text-foreground"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {lineupNames.map(n => <SelectItem key={n} value={n}>{n}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => { setAddingLineupName(true); setNewLineupNameInput('') }}
+                      className="h-8 bg-card border-border"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                  {addingLineupName && (
+                    <div className="flex gap-2">
+                      <Input
+                        autoFocus
+                        value={newLineupNameInput}
+                        onChange={e => setNewLineupNameInput(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            const name = newLineupNameInput.trim()
+                            if (name && !lineupNames.includes(name)) setExtraLineupNames(prev => [...prev, name])
+                            if (name) setLineupName(name)
+                            setLineupSelectedIds(new Set())
+                            setAddingLineupName(false)
+                          } else if (e.key === 'Escape') {
+                            e.preventDefault()
+                            setAddingLineupName(false)
+                          }
+                        }}
+                        placeholder="New lineup name..."
+                        className="h-8 text-sm bg-card border-border text-foreground"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => {
+                          const name = newLineupNameInput.trim()
+                          if (name && !lineupNames.includes(name)) setExtraLineupNames(prev => [...prev, name])
+                          if (name) setLineupName(name)
+                          setLineupSelectedIds(new Set())
+                          setAddingLineupName(false)
+                        }}
+                        disabled={!newLineupNameInput.trim()}
+                        className="h-8 bg-primary text-primary-foreground hover:bg-primary/90"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" onClick={() => setAddingLineupName(false)} className="h-8 bg-card border-border">
+                        <X className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  )}
                   <div className="flex gap-2">
                     <div className="flex-1">
                       <Popover open={lineupPopoverOpen} onOpenChange={setLineupPopoverOpen}>
