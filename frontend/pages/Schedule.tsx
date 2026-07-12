@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { useGetGames, useCreateGame, useUpdateGame, useDeleteGame, useGetLineups, useAddToLineup, useRemoveFromLineup, useUpdateLineupSortOrder, useUpdateLineupRole, useGetLineupGroups, useCreateLineupGroup, useReorderLineupGroups, useDeleteLineupGroup, type LineupGroup } from '../hooks/backend/games'
+import { useGetGames, useCreateGame, useUpdateGame, useDeleteGame, useGetLineups, useAddToLineup, useRemoveFromLineup, useUpdateLineupSortOrder, useUpdateLineupRole, useGetLineupGroups, useCreateLineupGroup, useRenameLineupGroup, useReorderLineupGroups, useDeleteLineupGroup, type LineupGroup } from '../hooks/backend/games'
 import { useGetGameEvents, useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useGetEventTypes } from '../hooks/backend/events'
 import { useGetSeasonRoster, useGetPlayersNotInSeason, useCreatePlayerForGame, useDeleteSubPlayer, useAddPlayerToGame } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons, useCreateSeason, useGetSeasonsMeta, useGetPlayerStats } from '../hooks/backend/stats'
@@ -100,6 +100,7 @@ export default function Schedule() {
   const { trigger: updateLineupRole } = useUpdateLineupRole()
   const { data: lineupGroups, trigger: fetchLineupGroups } = useGetLineupGroups()
   const { trigger: createLineupGroup } = useCreateLineupGroup()
+  const { trigger: renameLineupGroup } = useRenameLineupGroup()
   const { trigger: reorderLineupGroups } = useReorderLineupGroups()
   const { trigger: deleteLineupGroup } = useDeleteLineupGroup()
   const { data: lineupSeasonStats, trigger: fetchLineupSeasonStats } = useGetPlayerStats()
@@ -192,6 +193,9 @@ export default function Schedule() {
   const [editingRoleEntryId, setEditingRoleEntryId] = useState<number | null>(null)
   const [editingRoleValue, setEditingRoleValue] = useState('')
   const [deleteGroupConfirm, setDeleteGroupConfirm] = useState<LineupGroup | null>(null)
+  // Inline-editing a lineup group's name.
+  const [editingGroupId, setEditingGroupId] = useState<number | null>(null)
+  const [editingGroupNameValue, setEditingGroupNameValue] = useState('')
 
   useEffect(() => {
     // fetchGames happens in the scheduleSeasonIds effect below (fires on mount too).
@@ -551,6 +555,16 @@ export default function Schedule() {
   const handleDeleteLineupGroup = async (group: LineupGroup) => {
     if (!selectedGame) return
     await deleteLineupGroup({ gameId: selectedGame.id, lineupName: group.lineup_name, groupId: group.id })
+    fetchLineupGroups({ gameId: selectedGame.id })
+    fetchLineups({ gameId: selectedGame.id })
+  }
+
+  const handleRenameLineupGroup = async (group: LineupGroup, newName: string, existingNames: string[]) => {
+    const trimmed = newName.trim()
+    setEditingGroupId(null)
+    if (!selectedGame || !trimmed || trimmed === group.lineup_name || existingNames.includes(trimmed)) return
+    await renameLineupGroup({ gameId: selectedGame.id, groupId: group.id, oldName: group.lineup_name, newName: trimmed })
+    if (lineupName === group.lineup_name) setLineupName(trimmed)
     fetchLineupGroups({ gameId: selectedGame.id })
     fetchLineups({ gameId: selectedGame.id })
   }
@@ -1309,7 +1323,30 @@ export default function Schedule() {
                             <GripVertical className="w-3.5 h-3.5 text-muted-foreground" />
                           </button>
                         )}
-                        <Badge variant="secondary" className="text-xs">{g.lineup_name}</Badge>
+                        {editingGroupId === g.id ? (
+                          <Input
+                            autoFocus
+                            value={editingGroupNameValue}
+                            onChange={ev => setEditingGroupNameValue(ev.target.value)}
+                            onBlur={() => handleRenameLineupGroup(g, editingGroupNameValue, lineupNames)}
+                            onKeyDown={ev => {
+                              if (ev.key === 'Enter') { ev.preventDefault(); handleRenameLineupGroup(g, editingGroupNameValue, lineupNames) }
+                              else if (ev.key === 'Escape') { ev.preventDefault(); setEditingGroupId(null) }
+                            }}
+                            className="h-6 w-32 text-xs bg-card border-border text-foreground"
+                          />
+                        ) : (
+                          <Badge variant="secondary" className="text-xs">{g.lineup_name}</Badge>
+                        )}
+                        {allowed && editingGroupId !== g.id && (
+                          <button
+                            onClick={() => { setEditingGroupId(g.id); setEditingGroupNameValue(g.lineup_name) }}
+                            className="p-1 rounded hover:bg-accent"
+                            aria-label={`Rename ${g.lineup_name}`}
+                          >
+                            <Edit2 className="w-3 h-3 text-muted-foreground" />
+                          </button>
+                        )}
                         <span className="text-xs text-muted-foreground">{entries.length} players</span>
                         <span className="text-xs text-muted-foreground">
                           &middot; {totals.goals}G {totals.assists}A this season

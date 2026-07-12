@@ -241,6 +241,27 @@ export function useCreateLineupGroup() {
   return useApiCall<LineupGroup | undefined, { gameId: number; lineupName: string; sortOrder: number }>(fn)
 }
 
+// Renaming a group must also repoint its players: game_lineups.lineup_name
+// is a plain text match against game_lineup_groups.lineup_name, not a real
+// foreign key, so both rows need updating in the same action.
+export function useRenameLineupGroup() {
+  const fn = useCallback(async (params: { gameId: number; groupId: number; oldName: string; newName: string }) => {
+    const { error: groupError } = await supabase
+      .from('game_lineup_groups')
+      .update({ lineup_name: params.newName })
+      .eq('id', params.groupId)
+    if (groupError) throw new Error(groupError.message)
+    const { error: playersError } = await supabase
+      .from('game_lineups')
+      .update({ lineup_name: params.newName })
+      .eq('game_id', params.gameId)
+      .eq('lineup_name', params.oldName)
+    if (playersError) throw new Error(playersError.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { gameId: number; groupId: number; oldName: string; newName: string }>(fn)
+}
+
 export function useReorderLineupGroups() {
   const fn = useCallback(async (params: { updates: { id: number; sortOrder: number }[] }) => {
     await Promise.all(params.updates.map(u =>
