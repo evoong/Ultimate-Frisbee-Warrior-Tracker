@@ -1383,7 +1383,9 @@ export default function Schedule() {
                                 <PlayerAvatar photoUrl={e.photo_url} name={e.display_name} genderMatch={e.gender_match} size="sm" />
                                 <div className="min-w-0">
                                   <span className="text-sm font-medium text-foreground">{e.display_name}</span>
-                                  {e.position && <span className="text-xs text-muted-foreground ml-1">{e.position}</span>}
+                                  {/* Roster position is just a fallback label: once this lineup sets
+                                      its own role, that's what the player is actually playing here. */}
+                                  {!e.role && e.position && <span className="text-xs text-muted-foreground ml-1">{e.position}</span>}
                                 </div>
                               </div>
                               {isEditingRole ? (
