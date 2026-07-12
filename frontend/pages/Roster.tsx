@@ -3,6 +3,7 @@ import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlaye
 import { useGetAllSeasons, useGetSeasons } from '../hooks/backend/stats'
 import { useSetAttendance } from '../hooks/backend/attendance'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
+import { POSITIONS } from '../lib/positions'
 import { useAuth } from '../contexts/AuthContext'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import PlayerAvatar from '../components/PlayerAvatar'
@@ -26,7 +27,6 @@ type GameStat = { game_id: number; opponent: string; game_date: string; game_typ
 type Season = { id: number; name: string; year: number; organizer: string | null; start_date: string | null; end_date: string | null }
 type PlayerSeason = { id: number; name: string; year: number; organizer: string | null; active: boolean; is_sub: boolean }
 
-const POSITIONS = ['Handler', 'Cutter', 'Hybrid', 'Deep Cutter']
 const GENDERS = ['Man', 'Woman']
 
 function seasonLabel(s: { name: string; year: number; organizer: string | null }) {
