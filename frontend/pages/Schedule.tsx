@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { useGetGames, useCreateGame, useUpdateGame, useDeleteGame, useGetLineups, useAddToLineup, useRemoveFromLineup, useUpdateLineupSortOrder } from '../hooks/backend/games'
+import { useGetGames, useCreateGame, useUpdateGame, useDeleteGame, useGetLineups, useAddToLineup, useRemoveFromLineup, useUpdateLineupSortOrder, useUpdateLineupRole, useGetLineupGroups, useCreateLineupGroup, useReorderLineupGroups, useDeleteLineupGroup, type LineupGroup } from '../hooks/backend/games'
 import { useGetGameEvents, useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useGetEventTypes } from '../hooks/backend/events'
 import { useGetSeasonRoster, useGetPlayersNotInSeason, useCreatePlayerForGame, useDeleteSubPlayer, useAddPlayerToGame } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons, useCreateSeason, useGetSeasonsMeta, useGetPlayerStats } from '../hooks/backend/stats'
@@ -51,7 +51,7 @@ type GameEvent = { id: number; event_type: string; event_timestamp: string; play
 type Player = { id: number; display_name: string; position: string | null; gender_match: string | null; is_sub: boolean | null; photo_url: string | null }
 type Season = { id: number; name: string; year: number; organizer: string | null; default_game_time: string | null; start_date: string | null; end_date: string | null }
 type SeasonMeta = { organizers: string[]; names: string[]; years: number[]; locations: string[] }
-type LineupEntry = { id: number; player_id: number; lineup_name: string; sort_order: number; display_name: string; position: string | null; gender_match: string | null; photo_url: string | null }
+type LineupEntry = { id: number; player_id: number; lineup_name: string; sort_order: number; role: string | null; display_name: string; position: string | null; gender_match: string | null; photo_url: string | null }
 
 function seasonLabel(s: { name: string; year: number; organizer: string | null }) {
   return [s.organizer, s.name, s.year].filter(Boolean).join(' ')
@@ -97,6 +97,11 @@ export default function Schedule() {
   const { trigger: addToLineup } = useAddToLineup()
   const { trigger: removeFromLineup } = useRemoveFromLineup()
   const { trigger: updateLineupSortOrder } = useUpdateLineupSortOrder()
+  const { trigger: updateLineupRole } = useUpdateLineupRole()
+  const { data: lineupGroups, trigger: fetchLineupGroups } = useGetLineupGroups()
+  const { trigger: createLineupGroup } = useCreateLineupGroup()
+  const { trigger: reorderLineupGroups } = useReorderLineupGroups()
+  const { trigger: deleteLineupGroup } = useDeleteLineupGroup()
   const { data: lineupSeasonStats, trigger: fetchLineupSeasonStats } = useGetPlayerStats()
   const { trigger: createGoal } = useCreateGoalEvent()
   const { trigger: createOpponentGoal } = useCreateOpponentGoalEvent()
@@ -166,10 +171,6 @@ export default function Schedule() {
   const [lineupName, setLineupName] = useState('Lineup 1')
   const [lineupSelectedIds, setLineupSelectedIds] = useState<Set<number>>(new Set())
   const [lineupPopoverOpen, setLineupPopoverOpen] = useState(false)
-  // Lineup names beyond the two defaults. A newly-added name has no rows in
-  // game_lineups yet (nothing to persist until a player is added to it), so
-  // it's tracked here only for the current game visit rather than in the DB.
-  const [extraLineupNames, setExtraLineupNames] = useState<string[]>([])
   const [addingLineupName, setAddingLineupName] = useState(false)
   const [newLineupNameInput, setNewLineupNameInput] = useState('')
   // Drag-to-reorder a lineup group. dragLineupGroup identifies which group
@@ -181,6 +182,16 @@ export default function Schedule() {
   const [dragLineupOrder, setDragLineupOrder] = useState<LineupEntry[] | null>(null)
   const [dragLineupOffsetY, setDragLineupOffsetY] = useState(0)
   const lineupDragRef = useRef<{ pointerId: number; startY: number; rowHeight: number; originalIndex: number; order: LineupEntry[] } | null>(null)
+  // Drag-to-reorder the lineup GROUPS themselves (e.g. move "Handlers" above
+  // "Lineup 2"), separate from reordering players within one group above.
+  const [dragGroupId, setDragGroupId] = useState<number | null>(null)
+  const [dragGroupOrder, setDragGroupOrder] = useState<LineupGroup[] | null>(null)
+  const [dragGroupOffsetY, setDragGroupOffsetY] = useState(0)
+  const groupDragRef = useRef<{ pointerId: number; startY: number; rowHeight: number; originalIndex: number; order: LineupGroup[] } | null>(null)
+  // Inline-editing a player's role/position within the current lineup.
+  const [editingRoleEntryId, setEditingRoleEntryId] = useState<number | null>(null)
+  const [editingRoleValue, setEditingRoleValue] = useState('')
+  const [deleteGroupConfirm, setDeleteGroupConfirm] = useState<LineupGroup | null>(null)
 
   useEffect(() => {
     // fetchGames happens in the scheduleSeasonIds effect below (fires on mount too).
@@ -230,6 +241,17 @@ export default function Schedule() {
     fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined })
   }, [scheduleSeasonIds])
 
+  // Keep the "Add Players" target valid against the loaded groups: if the
+  // currently selected name was just deleted (or hasn't loaded yet), fall
+  // back to the first group rather than pointing at a group that no longer
+  // exists.
+  useEffect(() => {
+    const groups = (lineupGroups as LineupGroup[] | undefined) ?? []
+    if (groups.length > 0 && !groups.some(g => g.lineup_name === lineupName)) {
+      setLineupName(groups[0]!.lineup_name)
+    }
+  }, [lineupGroups])
+
   // If a game is imminent (starting within 30 minutes, or already underway
   // and less than 30 minutes in), jump straight into it ready to score
   // instead of making you find it in the list. Only does this once per page
@@ -246,10 +268,25 @@ export default function Schedule() {
     }
   }, [games])
 
+  // A game with no game_lineup_groups rows yet (never visited under this
+  // schema) gets the two defaults seeded so the group list/ordering always
+  // has something to show and reorder, rather than starting empty.
+  const ensureLineupGroups = async (gameId: number) => {
+    const groups = await fetchLineupGroups({ gameId })
+    if (groups && groups.length === 0) {
+      await Promise.all([
+        createLineupGroup({ gameId, lineupName: 'Lineup 1', sortOrder: 0 }),
+        createLineupGroup({ gameId, lineupName: 'Lineup 2', sortOrder: 1 }),
+      ])
+      fetchLineupGroups({ gameId })
+    }
+  }
+
   const handleSelectGame = (game: Game, opts?: { openForScoring?: boolean }) => {
     setSelectedGame(game)
     fetchEvents({ gameId: game.id })
     fetchLineups({ gameId: game.id })
+    ensureLineupGroups(game.id)
     fetchAttendance({ gameId: game.id })
     if (game.season_id) {
       fetchPlayers({ seasonId: game.season_id })
@@ -271,9 +308,9 @@ export default function Schedule() {
     setNewScorerId('')
     setNewAssisterId('')
     setLineupSelectedIds(new Set())
-    setExtraLineupNames([])
     setAddingLineupName(false)
     setNewLineupNameInput('')
+    setEditingRoleEntryId(null)
   }
 
   // Season roster refetch needs the game's season id, not the game id.
@@ -491,6 +528,33 @@ export default function Schedule() {
     fetchLineups({ gameId: selectedGame.id })
   }
 
+  const handleUpdateLineupRole = async (entryId: number, role: string) => {
+    await updateLineupRole({ id: entryId, role: role.trim() || null })
+    setEditingRoleEntryId(null)
+    if (selectedGame) fetchLineups({ gameId: selectedGame.id })
+  }
+
+  // Creating a lineup group both persists it (so it appears as its own
+  // card immediately, even with zero players) and makes it the active
+  // target for "Add Players".
+  const handleAddLineupGroup = async (name: string) => {
+    if (!selectedGame || !name.trim()) return
+    const groups = (lineupGroups as LineupGroup[] | undefined) ?? []
+    const nextSortOrder = groups.reduce((max, g) => Math.max(max, g.sort_order), -1) + 1
+    await createLineupGroup({ gameId: selectedGame.id, lineupName: name.trim(), sortOrder: nextSortOrder })
+    setLineupName(name.trim())
+    setLineupSelectedIds(new Set())
+    setAddingLineupName(false)
+    fetchLineupGroups({ gameId: selectedGame.id })
+  }
+
+  const handleDeleteLineupGroup = async (group: LineupGroup) => {
+    if (!selectedGame) return
+    await deleteLineupGroup({ gameId: selectedGame.id, lineupName: group.lineup_name, groupId: group.id })
+    fetchLineupGroups({ gameId: selectedGame.id })
+    fetchLineups({ gameId: selectedGame.id })
+  }
+
   const toggleLineupSelected = (playerId: number) => {
     setLineupSelectedIds(prev => {
       const next = new Set(prev)
@@ -567,6 +631,73 @@ export default function Schedule() {
       setDragLineupGroup(null)
       setDragLineupOrder(null)
       setDragLineupOffsetY(0)
+    }
+    const teardown = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
+  }
+
+  // Drag a lineup group's header to reorder the groups themselves. Same
+  // pattern as handleLineupDragStart above, but reassigns
+  // game_lineup_groups.sort_order instead of game_lineups.sort_order.
+  const handleGroupDragStart = (list: LineupGroup[], group: LineupGroup, rowEl: HTMLElement, e: React.PointerEvent) => {
+    if (!allowed) return
+    e.preventDefault()
+    e.stopPropagation()
+    const pointerId = e.pointerId
+    const originalIndex = list.findIndex(g => g.id === group.id)
+    if (originalIndex === -1) return
+    const rowHeight = rowEl.getBoundingClientRect().height
+    const drag = { pointerId, startY: e.clientY, rowHeight, originalIndex, order: [...list] }
+    groupDragRef.current = drag
+    setDragGroupId(group.id)
+    setDragGroupOffsetY(0)
+    setDragGroupOrder(drag.order)
+
+    const onMove = (ev: PointerEvent) => {
+      const d = groupDragRef.current
+      if (!d || ev.pointerId !== d.pointerId) return
+      const rawDelta = ev.clientY - d.startY
+      const targetIndex = Math.min(d.order.length - 1, Math.max(0, d.originalIndex + Math.round(rawDelta / d.rowHeight)))
+      const currentIndex = d.order.findIndex(g => g.id === group.id)
+      if (targetIndex !== currentIndex) {
+        const next = [...d.order]
+        const [moved] = next.splice(currentIndex, 1)
+        next.splice(targetIndex, 0, moved)
+        d.order = next
+        setDragGroupOrder(next)
+      }
+      setDragGroupOffsetY(rawDelta - (targetIndex - d.originalIndex) * d.rowHeight)
+    }
+    const onUp = async (ev: PointerEvent) => {
+      const d = groupDragRef.current
+      if (!d || ev.pointerId !== d.pointerId) return
+      teardown()
+      groupDragRef.current = null
+      setDragGroupId(null)
+      setDragGroupOrder(null)
+      setDragGroupOffsetY(0)
+      const originalSortOrders = list.map(g => g.sort_order)
+      const changes = d.order
+        .map((g, i) => ({ id: g.id, sortOrder: originalSortOrders[i]! }))
+        .filter(c => list.find(g => g.id === c.id)?.sort_order !== c.sortOrder)
+      if (changes.length > 0 && selectedGame) {
+        await reorderLineupGroups({ updates: changes })
+        fetchLineupGroups({ gameId: selectedGame.id })
+      }
+    }
+    const onCancel = (ev: PointerEvent) => {
+      if (groupDragRef.current?.pointerId !== ev.pointerId) return
+      teardown()
+      groupDragRef.current = null
+      setDragGroupId(null)
+      setDragGroupOrder(null)
+      setDragGroupOffsetY(0)
     }
     const teardown = () => {
       window.removeEventListener('pointermove', onMove)
@@ -685,13 +816,12 @@ export default function Schedule() {
       acc[e.lineup_name]!.push(e)
       return acc
     }, {} as Record<string, LineupEntry[]>)
-    // The selectable lineup names: the two defaults, any name already used in
-    // this game's saved lineups (so custom names persist across visits once
-    // a player has been added to them), and any name added this visit that
-    // has no players yet.
-    const lineupNames = Array.from(new Set([
-      'Lineup 1', 'Lineup 2', ...lineupEntries.map(e => e.lineup_name), ...extraLineupNames,
-    ]))
+    // Lineup groups (name + display order) are their own table now, not
+    // inferred from game_lineups: a group exists, is orderable, and is
+    // deletable independent of whether it currently has any players in it.
+    const groups = ((lineupGroups as LineupGroup[] | undefined) ?? [])
+    const orderedGroups = dragGroupOrder ?? groups
+    const lineupNames = groups.map(g => g.lineup_name)
 
     // This season's per-player goals/assists (scoped to the selected game's
     // season, fetched in handleSelectGame), used to help pick balanced
@@ -1067,11 +1197,7 @@ export default function Schedule() {
                         onKeyDown={e => {
                           if (e.key === 'Enter') {
                             e.preventDefault()
-                            const name = newLineupNameInput.trim()
-                            if (name && !lineupNames.includes(name)) setExtraLineupNames(prev => [...prev, name])
-                            if (name) setLineupName(name)
-                            setLineupSelectedIds(new Set())
-                            setAddingLineupName(false)
+                            handleAddLineupGroup(newLineupNameInput)
                           } else if (e.key === 'Escape') {
                             e.preventDefault()
                             setAddingLineupName(false)
@@ -1083,13 +1209,7 @@ export default function Schedule() {
                       <Button
                         type="button"
                         size="sm"
-                        onClick={() => {
-                          const name = newLineupNameInput.trim()
-                          if (name && !lineupNames.includes(name)) setExtraLineupNames(prev => [...prev, name])
-                          if (name) setLineupName(name)
-                          setLineupSelectedIds(new Set())
-                          setAddingLineupName(false)
-                        }}
+                        onClick={() => handleAddLineupGroup(newLineupNameInput)}
                         disabled={!newLineupNameInput.trim()}
                         className="h-8 bg-primary text-primary-foreground hover:bg-primary/90"
                       >
@@ -1158,13 +1278,15 @@ export default function Schedule() {
               )}
 
               {/* Lineup groups */}
-              {Object.keys(lineupByGroup).length === 0 ? (
+              {orderedGroups.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground text-sm">
                   <Users className="w-10 h-10 mx-auto mb-2 opacity-40" />
                   No lineups set yet
                 </div>
               ) : (
-                Object.entries(lineupByGroup).map(([group, entries]) => {
+                orderedGroups.map(g => {
+                  const entries = lineupByGroup[g.lineup_name] ?? []
+                  const isGroupDragging = dragGroupId === g.id
                   const totals = entries.reduce((acc, e) => {
                     const s = seasonStatsByPlayerId.get(e.player_id)
                     acc.goals += s?.goals ?? 0
@@ -1172,19 +1294,38 @@ export default function Schedule() {
                     return acc
                   }, { goals: 0, assists: 0 })
                   return (
-                    <div key={group}>
+                    <div
+                      key={g.id}
+                      data-lineup-group-row
+                      style={isGroupDragging ? { transform: `translateY(${dragGroupOffsetY}px)`, position: 'relative', zIndex: 20 } : undefined}
+                    >
                       <div className="flex items-center gap-2 mb-2">
-                        <Badge variant="secondary" className="text-xs">{group}</Badge>
+                        {allowed && (
+                          <button
+                            onPointerDown={ev => handleGroupDragStart(groups, g, ev.currentTarget.closest('[data-lineup-group-row]') as HTMLElement, ev)}
+                            className="p-1 -ml-1 shrink-0 cursor-grab active:cursor-grabbing touch-none"
+                            aria-label={`Drag to reorder ${g.lineup_name}`}
+                          >
+                            <GripVertical className="w-3.5 h-3.5 text-muted-foreground" />
+                          </button>
+                        )}
+                        <Badge variant="secondary" className="text-xs">{g.lineup_name}</Badge>
                         <span className="text-xs text-muted-foreground">{entries.length} players</span>
                         <span className="text-xs text-muted-foreground">
                           &middot; {totals.goals}G {totals.assists}A this season
                         </span>
                         <GenderRatio entries={entries} className="ml-auto" />
+                        {allowed && (
+                          <button onClick={() => setDeleteGroupConfirm(g)} className="p-1 rounded hover:bg-destructive/10" aria-label={`Delete ${g.lineup_name}`}>
+                            <Trash2 className="w-3.5 h-3.5 text-muted-foreground hover:text-destructive" />
+                          </button>
+                        )}
                       </div>
                       <div className="space-y-1.5">
-                        {(dragLineupGroup === group && dragLineupOrder ? dragLineupOrder : entries).map(e => {
+                        {(dragLineupGroup === g.lineup_name && dragLineupOrder ? dragLineupOrder : entries).map(e => {
                           const s = seasonStatsByPlayerId.get(e.player_id)
                           const isDragging = dragLineupEntryId === e.id
+                          const isEditingRole = editingRoleEntryId === e.id
                           return (
                             <div
                               key={e.id}
@@ -1194,7 +1335,7 @@ export default function Schedule() {
                             >
                               {allowed && (
                                 <button
-                                  onPointerDown={ev => handleLineupDragStart(group, entries, e, ev.currentTarget.closest('[data-lineup-row]') as HTMLElement, ev)}
+                                  onPointerDown={ev => handleLineupDragStart(g.lineup_name, entries, e, ev.currentTarget.closest('[data-lineup-row]') as HTMLElement, ev)}
                                   className="p-1 -ml-1 shrink-0 cursor-grab active:cursor-grabbing touch-none"
                                   aria-label={`Drag to reorder ${e.display_name}`}
                                 >
@@ -1208,6 +1349,31 @@ export default function Schedule() {
                                   {e.position && <span className="text-xs text-muted-foreground ml-1">{e.position}</span>}
                                 </div>
                               </div>
+                              {isEditingRole ? (
+                                <Input
+                                  autoFocus
+                                  value={editingRoleValue}
+                                  onChange={ev => setEditingRoleValue(ev.target.value)}
+                                  onBlur={() => handleUpdateLineupRole(e.id, editingRoleValue)}
+                                  onKeyDown={ev => {
+                                    if (ev.key === 'Enter') { ev.preventDefault(); handleUpdateLineupRole(e.id, editingRoleValue) }
+                                    else if (ev.key === 'Escape') { ev.preventDefault(); setEditingRoleEntryId(null) }
+                                  }}
+                                  placeholder="Role..."
+                                  className="h-6 w-24 text-xs bg-card border-border text-foreground shrink-0"
+                                />
+                              ) : allowed ? (
+                                <button
+                                  onClick={() => { setEditingRoleEntryId(e.id); setEditingRoleValue(e.role ?? '') }}
+                                  className="shrink-0"
+                                >
+                                  <Badge variant={e.role ? 'outline' : 'secondary'} className="text-xs text-muted-foreground">
+                                    {e.role || '+ Role'}
+                                  </Badge>
+                                </button>
+                              ) : e.role ? (
+                                <Badge variant="outline" className="text-xs text-muted-foreground shrink-0">{e.role}</Badge>
+                              ) : null}
                               <span className="text-xs text-muted-foreground shrink-0">
                                 {s ? `${s.goals}G ${s.assists}A` : ''}
                               </span>
@@ -1378,6 +1544,25 @@ export default function Schedule() {
             <div className="flex gap-3 mt-2">
               <Button variant="outline" onClick={() => setDeleteConfirmId(null)} className="flex-1">Cancel</Button>
               <Button onClick={() => deleteConfirmId && handleDeleteGame(deleteConfirmId)} className="flex-1 bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete Game</Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Delete lineup group confirm */}
+        <Dialog open={deleteGroupConfirm !== null} onOpenChange={open => !open && setDeleteGroupConfirm(null)}>
+          <DialogContent className="bg-card text-card-foreground">
+            <DialogHeader><DialogTitle>Delete Lineup</DialogTitle></DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              This will delete &quot;{deleteGroupConfirm?.lineup_name}&quot; and remove all its players from this lineup. This cannot be undone.
+            </p>
+            <div className="flex gap-3 mt-2">
+              <Button variant="outline" onClick={() => setDeleteGroupConfirm(null)} className="flex-1">Cancel</Button>
+              <Button
+                onClick={async () => { if (deleteGroupConfirm) { await handleDeleteLineupGroup(deleteGroupConfirm); setDeleteGroupConfirm(null) } }}
+                className="flex-1 bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Delete Lineup
+              </Button>
             </div>
           </DialogContent>
         </Dialog>
