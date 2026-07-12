@@ -7,6 +7,7 @@ import { useGetGameAttendance, useSetAttendance, useSetAllAttendance } from '../
 import { useGetJamSyncConflicts, useSyncJamNow, useCreateGameFromConflict, useLinkConflictToGame, useDismissConflict, type JamSyncConflict } from '../hooks/backend/jamSync'
 import { useGetLeagueTeams } from '../hooks/backend/league'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
+import { POSITIONS } from '../lib/positions'
 import { isTurnoverEvent } from '../lib/eventUtils'
 import { sortGamesUpcomingFirst, isPastGame } from '../lib/gameOrder'
 import { todayLocalStr } from '../lib/seasonUtils'
@@ -189,9 +190,6 @@ export default function Schedule() {
   const [dragGroupOrder, setDragGroupOrder] = useState<LineupGroup[] | null>(null)
   const [dragGroupOffsetY, setDragGroupOffsetY] = useState(0)
   const groupDragRef = useRef<{ pointerId: number; startY: number; rowHeight: number; originalIndex: number; order: LineupGroup[] } | null>(null)
-  // Inline-editing a player's role/position within the current lineup.
-  const [editingRoleEntryId, setEditingRoleEntryId] = useState<number | null>(null)
-  const [editingRoleValue, setEditingRoleValue] = useState('')
   const [deleteGroupConfirm, setDeleteGroupConfirm] = useState<LineupGroup | null>(null)
   // Inline-editing a lineup group's name.
   const [editingGroupId, setEditingGroupId] = useState<number | null>(null)
@@ -314,7 +312,6 @@ export default function Schedule() {
     setLineupSelectedIds(new Set())
     setAddingLineupName(false)
     setNewLineupNameInput('')
-    setEditingRoleEntryId(null)
   }
 
   // Season roster refetch needs the game's season id, not the game id.
@@ -534,7 +531,6 @@ export default function Schedule() {
 
   const handleUpdateLineupRole = async (entryId: number, role: string) => {
     await updateLineupRole({ id: entryId, role: role.trim() || null })
-    setEditingRoleEntryId(null)
     if (selectedGame) fetchLineups({ gameId: selectedGame.id })
   }
 
@@ -1362,7 +1358,9 @@ export default function Schedule() {
                         {(dragLineupGroup === g.lineup_name && dragLineupOrder ? dragLineupOrder : entries).map(e => {
                           const s = seasonStatsByPlayerId.get(e.player_id)
                           const isDragging = dragLineupEntryId === e.id
-                          const isEditingRole = editingRoleEntryId === e.id
+                          // The role dropdown defaults to the player's roster position
+                          // (players.position) until this lineup sets its own override.
+                          const effectiveRole = e.role ?? e.position ?? null
                           return (
                             <div
                               key={e.id}
@@ -1381,37 +1379,21 @@ export default function Schedule() {
                               )}
                               <div className="flex-1 flex items-center gap-2 min-w-0">
                                 <PlayerAvatar photoUrl={e.photo_url} name={e.display_name} genderMatch={e.gender_match} size="sm" />
-                                <div className="min-w-0">
-                                  <span className="text-sm font-medium text-foreground">{e.display_name}</span>
-                                  {/* Roster position is just a fallback label: once this lineup sets
-                                      its own role, that's what the player is actually playing here. */}
-                                  {!e.role && e.position && <span className="text-xs text-muted-foreground ml-1">{e.position}</span>}
-                                </div>
+                                <span className="text-sm font-medium text-foreground truncate">{e.display_name}</span>
                               </div>
-                              {isEditingRole ? (
-                                <Input
-                                  autoFocus
-                                  value={editingRoleValue}
-                                  onChange={ev => setEditingRoleValue(ev.target.value)}
-                                  onBlur={() => handleUpdateLineupRole(e.id, editingRoleValue)}
-                                  onKeyDown={ev => {
-                                    if (ev.key === 'Enter') { ev.preventDefault(); handleUpdateLineupRole(e.id, editingRoleValue) }
-                                    else if (ev.key === 'Escape') { ev.preventDefault(); setEditingRoleEntryId(null) }
-                                  }}
-                                  placeholder="Role..."
-                                  className="h-6 w-24 text-xs bg-card border-border text-foreground shrink-0"
-                                />
-                              ) : allowed ? (
-                                <button
-                                  onClick={() => { setEditingRoleEntryId(e.id); setEditingRoleValue(e.role ?? '') }}
-                                  className="shrink-0"
+                              {allowed ? (
+                                <Select
+                                  value={e.role ?? e.position ?? '__none__'}
+                                  onValueChange={v => handleUpdateLineupRole(e.id, v === '__none__' ? '' : v)}
                                 >
-                                  <Badge variant={e.role ? 'outline' : 'secondary'} className="text-xs text-muted-foreground">
-                                    {e.role || '+ Role'}
-                                  </Badge>
-                                </button>
-                              ) : e.role ? (
-                                <Badge variant="outline" className="text-xs text-muted-foreground shrink-0">{e.role}</Badge>
+                                  <SelectTrigger className="h-6 w-28 text-xs bg-card border-border text-foreground shrink-0"><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">Not set</SelectItem>
+                                    {POSITIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                                  </SelectContent>
+                                </Select>
+                              ) : effectiveRole ? (
+                                <Badge variant="outline" className="text-xs text-muted-foreground shrink-0">{effectiveRole}</Badge>
                               ) : null}
                               <span className="text-xs text-muted-foreground shrink-0">
                                 {s ? `${s.goals}G ${s.assists}A` : ''}
