@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { useGetGames, useCreateGame, useUpdateGame, useDeleteGame, useGetLineups, useAddToLineup, useRemoveFromLineup, useUpdateLineupSortOrder, useUpdateLineupRole, useGetLineupGroups, useCreateLineupGroup, useRenameLineupGroup, useReorderLineupGroups, useDeleteLineupGroup, type LineupGroup } from '../hooks/backend/games'
-import { useGetGameEvents, useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useGetEventTypes } from '../hooks/backend/events'
+import { useGetGameEvents, useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useUpdateEventTimestamp, useGetEventTypes } from '../hooks/backend/events'
 import { useGetSeasonRoster, useGetPlayersNotInSeason, useCreatePlayerForGame, useDeleteSubPlayer, useAddPlayerToGame } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons, useCreateSeason, useGetSeasonsMeta, useGetPlayerStats } from '../hooks/backend/stats'
 import { useGetGameAttendance, useSetAttendance, useSetAllAttendance } from '../hooks/backend/attendance'
@@ -109,6 +109,7 @@ export default function Schedule() {
   const { trigger: createOpponentGoal } = useCreateOpponentGoalEvent()
   const { trigger: deleteEvent } = useDeleteEvent()
   const { trigger: updateEvent } = useUpdateEvent()
+  const { trigger: updateEventTimestamp } = useUpdateEventTimestamp()
   const { data: eventTypes, trigger: fetchEventTypes } = useGetEventTypes()
   const { data: leagueTeams, trigger: fetchLeagueTeams } = useGetLeagueTeams()
 
@@ -150,6 +151,18 @@ export default function Schedule() {
   const [editingEventId, setEditingEventId] = useState<number | null>(null)
   const [editScorerId, setEditScorerId] = useState<string>('')
   const [editAssisterId, setEditAssisterId] = useState<string>('')
+
+  // Drag-to-reorder Recent Activity. dragOrder mirrors the list with the
+  // dragged row moved to its live position as the pointer crosses each
+  // neighbor's row; null when no drag is in progress, so the render just
+  // falls back to the DB-fetched order. dragOffsetY is the sub-row-height
+  // remainder of pointer movement not yet consumed by a swap, applied as a
+  // translateY on the dragged row only, so it visually follows the pointer
+  // smoothly between swaps instead of jumping a full row height at a time.
+  const [dragEventId, setDragEventId] = useState<number | null>(null)
+  const [dragOrder, setDragOrder] = useState<GameEvent[] | null>(null)
+  const [dragOffsetY, setDragOffsetY] = useState(0)
+  const eventDragRef = useRef<{ pointerId: number; startY: number; rowHeight: number; originalIndex: number; order: GameEvent[] } | null>(null)
 
   // Add event. Scorer/assister persist across successive adds (rather than
   // clearing after each one) so scoring several points in a row for the same
@@ -416,6 +429,74 @@ export default function Schedule() {
     if (!selectedGame) return
     await deleteEvent({ eventId })
     fetchEvents({ gameId: selectedGame.id })
+  }
+
+  // Drag a Recent Activity row to reorder it. There's no ordinal column on
+  // game_events; order is purely event_timestamp (descending), so
+  // reordering reassigns the same set of timestamps the list already had
+  // to events in their new positions rather than renumbering a position.
+  const handleEventDragStart = (list: GameEvent[], event: GameEvent, rowEl: HTMLElement, e: React.PointerEvent) => {
+    if (!allowed) return
+    e.preventDefault()
+    e.stopPropagation()
+    const pointerId = e.pointerId
+    const originalIndex = list.findIndex(ev => ev.id === event.id)
+    if (originalIndex === -1) return
+    const rowHeight = rowEl.getBoundingClientRect().height
+    const drag = { pointerId, startY: e.clientY, rowHeight, originalIndex, order: [...list] }
+    eventDragRef.current = drag
+    setDragEventId(event.id)
+    setDragOffsetY(0)
+    setDragOrder(drag.order)
+
+    const onMove = (ev: PointerEvent) => {
+      const d = eventDragRef.current
+      if (!d || ev.pointerId !== d.pointerId) return
+      const rawDelta = ev.clientY - d.startY
+      const targetIndex = Math.min(d.order.length - 1, Math.max(0, d.originalIndex + Math.round(rawDelta / d.rowHeight)))
+      const currentIndex = d.order.findIndex(ev2 => ev2.id === event.id)
+      if (targetIndex !== currentIndex) {
+        const next = [...d.order]
+        const [moved] = next.splice(currentIndex, 1)
+        next.splice(targetIndex, 0, moved)
+        d.order = next
+        setDragOrder(next)
+      }
+      setDragOffsetY(rawDelta - (targetIndex - d.originalIndex) * d.rowHeight)
+    }
+    const onUp = async (ev: PointerEvent) => {
+      const d = eventDragRef.current
+      if (!d || ev.pointerId !== d.pointerId) return
+      teardown()
+      eventDragRef.current = null
+      setDragEventId(null)
+      setDragOrder(null)
+      setDragOffsetY(0)
+      const originalTimestamps = list.map(ev2 => ev2.event_timestamp)
+      const changes = d.order
+        .map((ev2, i) => ({ id: ev2.id, timestamp: originalTimestamps[i]! }))
+        .filter(c => list.find(ev2 => ev2.id === c.id)?.event_timestamp !== c.timestamp)
+      if (changes.length > 0 && selectedGame) {
+        await Promise.all(changes.map(c => updateEventTimestamp({ eventId: c.id, timestamp: c.timestamp })))
+        fetchEvents({ gameId: selectedGame.id })
+      }
+    }
+    const onCancel = (ev: PointerEvent) => {
+      if (eventDragRef.current?.pointerId !== ev.pointerId) return
+      teardown()
+      eventDragRef.current = null
+      setDragEventId(null)
+      setDragOrder(null)
+      setDragOffsetY(0)
+    }
+    const teardown = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
   }
 
   const handleEditEvent = (event: GameEvent) => {
@@ -1102,13 +1183,14 @@ export default function Schedule() {
                 <div className="text-center py-8 text-muted-foreground text-sm">Loading events...</div>
               ) : gameEvents.length ? (
                 <div className="space-y-2">
-                  {gameEvents.map((event, i) => {
+                  {(dragOrder ?? gameEvents).map((event, i) => {
                     const scorer = getPlayerName(event.player_id)
                     const assister = getPlayerName(event.related_player_id)
                     const isGoal = event.event_type === 'Goal'
                     const isOpponentGoal = event.event_type === 'Opponent Goal'
                     const isTurnover = isTurnoverEvent(event.event_type)
                     const isEditing = editingEventId === event.id
+                    const isDragging = dragEventId === event.id
 
                     if (isEditing) {
                       return (
@@ -1130,8 +1212,21 @@ export default function Schedule() {
                         </div>
                       )
                     }
+                    // The dragged row skips FadeIn: its animate-in classes
+                    // persist a CSS-animation-driven transform (fill-mode:
+                    // both) that would fight the inline translateY below.
+                    // Every other row keeps a stable key across a reorder
+                    // (keyed by event.id, not index), so FadeIn's mount
+                    // animation never re-triggers just from shuffling.
+                    const RowTag = isDragging ? 'div' : FadeIn
                     return (
-                      <FadeIn key={event.id} delay={i * 40} className="flex items-center gap-3 py-2 border-b border-border last:border-0">
+                      <RowTag
+                        key={event.id}
+                        data-event-row
+                        {...(isDragging ? {} : { delay: i * 40 })}
+                        className={`flex items-center gap-3 py-2 border-b border-border last:border-0 ${isDragging ? 'relative z-10 bg-card shadow-lg rounded-lg' : ''}`}
+                        style={isDragging ? { transform: `translateY(${dragOffsetY}px)` } : undefined}
+                      >
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${isGoal ? 'bg-green-100 dark:bg-green-950' : isOpponentGoal ? 'bg-red-100 dark:bg-red-950' : 'bg-orange-100 dark:bg-orange-950'}`}>
                           {isGoal && <Target className="w-5 h-5 text-green-600 dark:text-green-400" />}
                           {isOpponentGoal && <Target className="w-5 h-5 text-red-600 dark:text-red-400" />}
@@ -1147,7 +1242,14 @@ export default function Schedule() {
                           <div className="text-xs text-muted-foreground">{formatTimestamp(event.event_timestamp)}</div>
                         </div>
                         {allowed && (
-                          <div className="flex items-center gap-1 shrink-0">
+                          <div className="flex items-center gap-0.5 shrink-0">
+                            <button
+                              onPointerDown={e => handleEventDragStart(gameEvents, event, e.currentTarget.closest('[data-event-row]') as HTMLElement, e)}
+                              className="p-1.5 rounded hover:bg-accent transition-colors cursor-grab touch-none"
+                              aria-label="Drag to reorder event"
+                            >
+                              <GripVertical className="w-4 h-4 text-muted-foreground hover:text-foreground" />
+                            </button>
                             <button onClick={() => handleEditEvent(event)} className="p-1.5 rounded hover:bg-accent transition-colors" aria-label="Edit event">
                               <Edit2 className="w-4 h-4 text-muted-foreground hover:text-foreground" />
                             </button>
@@ -1159,7 +1261,7 @@ export default function Schedule() {
                         {(isGoal || isOpponentGoal) && (
                           <div className={`text-lg font-bold tabular-nums ml-1 ${isGoal ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>+1</div>
                         )}
-                      </FadeIn>
+                      </RowTag>
                     )
                   })}
                 </div>
