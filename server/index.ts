@@ -69,17 +69,34 @@ const supabase = createClient(
 
 const allowlistCache = new Map<string, { allowed: boolean; expires: number }>();
 
+// "Allowed" now means "belongs to at least one organization" (allowed_users
+// was fully replaced by organization_members in 016_organizations.sql).
 async function isEmailAllowed(email: string): Promise<boolean> {
   const cached = allowlistCache.get(email);
   if (cached && cached.expires > Date.now()) return cached.allowed;
   const { data, error } = await supabase
-    .from("allowed_users")
+    .from("organization_members")
     .select("email")
     .eq("email", email)
+    .limit(1)
     .maybeSingle();
   const allowed = !error && data !== null;
   allowlistCache.set(email, { allowed, expires: Date.now() + 60_000 });
   return allowed;
+}
+
+// True only when the email is a member of this specific organization —
+// used by the chat endpoints, which need to scope team context/logs to one
+// organization rather than "any org" (the global isEmailAllowed check above).
+async function isOrgMember(email: string, organizationId: number): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("organization_members")
+    .select("email")
+    .eq("email", email)
+    .eq("organization_id", organizationId)
+    .limit(1)
+    .maybeSingle();
+  return !error && data !== null;
 }
 
 const requireAllowedUser = createRequireAllowedUser(gatewayConfig, isEmailAllowed);
@@ -114,13 +131,13 @@ const vaultConfig = {
 // averaging ~0.6s per reply vs gemma's ~20s+ (and occasional transient 500s).
 const DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest";
 
-async function getTeamContext() {
+async function getTeamContext(organizationId: number) {
   const [players, seasons, games, events, seasonPlayers] = await Promise.all([
-    supabase.from("players").select("id, display_name, position, gender_match, is_sub").order("display_name"),
-    supabase.from("seasons").select("id, name, year, organizer").order("id"),
-    supabase.from("games").select("id, season_id, opponent, game_date, result, outcome_override").order("game_date", { ascending: true }),
-    supabase.from("game_events").select("player_id, related_player_id, event_type, game_id, event_timestamp"),
-    supabase.from("season_players").select("player_id, season_id").eq("active", true),
+    supabase.from("players").select("id, display_name, position, gender_match, is_sub").eq("organization_id", organizationId).order("display_name"),
+    supabase.from("seasons").select("id, name, year, organizer").eq("organization_id", organizationId).order("id"),
+    supabase.from("games").select("id, season_id, opponent, game_date, result, outcome_override").eq("organization_id", organizationId).order("game_date", { ascending: true }),
+    supabase.from("game_events").select("player_id, related_player_id, event_type, game_id, event_timestamp").eq("organization_id", organizationId),
+    supabase.from("season_players").select("player_id, season_id").eq("active", true).eq("organization_id", organizationId),
   ]);
 
   const seasonNames = new Map((seasons.data ?? []).map((s: any) => [s.id, `${s.organizer ?? ""} ${s.name} ${s.year}`.trim()]));
@@ -272,12 +289,23 @@ function isTransientGeminiError(err: unknown): boolean {
 }
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-app.post("/api/chat", requireAuth, async (req, res) => {
+app.post("/api/chat", async (req, res) => {
   try {
-    const { message, session_id, history = [] } = req.body as { message: string; session_id: string; history: { role: string; content: string }[] };
+    const { message, session_id, history = [], organization_id } = req.body as {
+      message: string; session_id: string; history: { role: string; content: string }[]; organization_id: number
+    };
     if (!message || !session_id) return res.status(400).json({ error: "message and session_id required" });
+    if (!organization_id) return res.status(400).json({ error: "organization_id required" });
 
-    const systemContext = await getTeamContext();
+    const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
+      headers: { cookie: req.headers.cookie ?? "" },
+    });
+    const user = await requireAllowedUser(webRequest);
+    if (!user || !(await isOrgMember(user.email.toLowerCase(), organization_id))) {
+      return res.status(401).json({ error: "not authenticated" });
+    }
+
+    const systemContext = await getTeamContext(organization_id);
 
     const geminiApiKey = await getVaultSecret(vaultConfig, "gemini_api_key", process.env.GEMINI_API_KEY);
     const geminiModel = (await getVaultSecret(vaultConfig, "gemini_model", process.env.GEMINI_MODEL)) ?? DEFAULT_GEMINI_MODEL;
@@ -309,8 +337,8 @@ app.post("/api/chat", requireAuth, async (req, res) => {
 
     // Save both turns to chat_logs
     await supabase.from("chat_logs").insert([
-      { session_id, role: "user", content: message },
-      { session_id, role: "assistant", content: reply },
+      { session_id, role: "user", content: message, organization_id },
+      { session_id, role: "assistant", content: reply, organization_id },
     ]);
 
     res.json({ reply });
@@ -319,15 +347,25 @@ app.post("/api/chat", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/api/chat/history", requireAuth, async (req, res) => {
+app.get("/api/chat/history", async (req, res) => {
   try {
-    const { session_id } = req.query as { session_id: string };
+    const { session_id, organization_id } = req.query as { session_id: string; organization_id: string };
     if (!session_id) return res.status(400).json({ error: "session_id required" });
+    if (!organization_id) return res.status(400).json({ error: "organization_id required" });
+
+    const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
+      headers: { cookie: req.headers.cookie ?? "" },
+    });
+    const user = await requireAllowedUser(webRequest);
+    if (!user || !(await isOrgMember(user.email.toLowerCase(), Number(organization_id)))) {
+      return res.status(401).json({ error: "not authenticated" });
+    }
 
     const { data, error } = await supabase
       .from("chat_logs")
       .select("role, content, created_at")
       .eq("session_id", session_id)
+      .eq("organization_id", organization_id)
       .order("created_at", { ascending: true });
 
     if (error) throw error;
@@ -337,12 +375,21 @@ app.get("/api/chat/history", requireAuth, async (req, res) => {
   }
 });
 
-app.delete("/api/chat/history", requireAuth, async (req, res) => {
+app.delete("/api/chat/history", async (req, res) => {
   try {
-    const { session_id } = req.query as { session_id: string };
+    const { session_id, organization_id } = req.query as { session_id: string; organization_id: string };
     if (!session_id) return res.status(400).json({ error: "session_id required" });
+    if (!organization_id) return res.status(400).json({ error: "organization_id required" });
 
-    const { error } = await supabase.from("chat_logs").delete().eq("session_id", session_id);
+    const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
+      headers: { cookie: req.headers.cookie ?? "" },
+    });
+    const user = await requireAllowedUser(webRequest);
+    if (!user || !(await isOrgMember(user.email.toLowerCase(), Number(organization_id)))) {
+      return res.status(401).json({ error: "not authenticated" });
+    }
+
+    const { error } = await supabase.from("chat_logs").delete().eq("session_id", session_id).eq("organization_id", organization_id);
     if (error) throw error;
     res.json({ ok: true });
   } catch (err: unknown) {

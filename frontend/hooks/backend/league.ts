@@ -266,10 +266,10 @@ export function useUpdateSeasonPoints() {
 }
 
 export function useCreateLeagueTeam() {
-  const fn = useCallback(async (params: { seasonId: number; name: string; is_us?: boolean }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; seasonId: number; name: string; is_us?: boolean }) => {
     const { data, error } = await supabase
       .from('league_teams')
-      .insert({ season_id: params.seasonId, name: params.name.trim(), is_us: params.is_us ?? false })
+      .insert({ organization_id: params.organizationId, season_id: params.seasonId, name: params.name.trim(), is_us: params.is_us ?? false })
       .select()
     if (error) throw new Error(error.message)
     return data?.[0] as LeagueTeam

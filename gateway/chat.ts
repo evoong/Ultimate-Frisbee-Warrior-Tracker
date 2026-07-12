@@ -1,6 +1,8 @@
 import { GoogleGenAI } from '@google/genai'
-import { createRequireAllowedUser, type GatewayConfig } from './index.js'
+import type { GatewayConfig } from './index.js'
 import { getVaultSecret } from './secrets.js'
+import { cookieNames, parseCookies } from './cookies.js'
+import { verifyAccessToken } from './jwt.js'
 
 // Chat needs privileged (service-role) Supabase access to read all team data
 // regardless of caller identity, plus a Gemini key. Team-context/log queries
@@ -15,7 +17,10 @@ export interface ChatConfig extends GatewayConfig {
   // dev before Vault is populated.
   geminiApiKey?: string
   geminiModel?: string
-  isEmailAllowed: (email: string) => Promise<boolean>
+  // True only when the email belongs to this specific organization — chat
+  // context/logs are scoped per organization, unlike the coarser
+  // "belongs to any organization" check used elsewhere.
+  isOrgMember: (email: string, organizationId: number) => Promise<boolean>
 }
 
 // Switched from gemma-4-31b-it: side-by-side timing showed gemini-flash-lite
@@ -38,7 +43,7 @@ async function supabaseServiceFetch(config: ChatConfig, path: string): Promise<a
   return res.json()
 }
 
-async function insertChatLogs(config: ChatConfig, rows: { session_id: string; role: string; content: string }[]): Promise<void> {
+async function insertChatLogs(config: ChatConfig, organizationId: number, rows: { session_id: string; role: string; content: string }[]): Promise<void> {
   await fetch(`${config.supabaseUrl}/rest/v1/chat_logs`, {
     method: 'POST',
     headers: {
@@ -46,19 +51,39 @@ async function insertChatLogs(config: ChatConfig, rows: { session_id: string; ro
       Authorization: `Bearer ${config.supabaseSecretKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(rows),
+    body: JSON.stringify(rows.map(r => ({ ...r, organization_id: organizationId }))),
   }).catch(() => void 0)
+}
+
+// Verifies the caller's session cookie and that they belong to the given
+// organization. Chat needs per-organization scoping (unlike the coarser
+// "any organization" gate elsewhere), so this checks membership directly
+// rather than using createRequireAllowedUser.
+async function requireOrgMember(
+  config: ChatConfig,
+  request: Request,
+  organizationId: number
+): Promise<{ email: string } | null> {
+  const url = new URL(request.url)
+  const token = parseCookies(request)[cookieNames(url).accessToken]
+  if (!token) return null
+  const claims = await verifyAccessToken(token, config.jwksUrl, config.supabaseUrl)
+  if (!claims) return null
+  const email = claims.email.toLowerCase()
+  if (!(await config.isOrgMember(email, organizationId))) return null
+  return { email }
 }
 
 type Stat = { goals: number; assists: number; turnovers: number }
 
-async function getTeamContext(config: ChatConfig): Promise<string> {
+async function getTeamContext(config: ChatConfig, organizationId: number): Promise<string> {
+  const orgFilter = `organization_id=eq.${organizationId}`
   const [players, seasons, games, events, seasonPlayers] = await Promise.all([
-    supabaseServiceFetch(config, '/players?select=id,display_name,position,gender_match,is_sub&order=display_name.asc'),
-    supabaseServiceFetch(config, '/seasons?select=id,name,year,organizer&order=id.asc'),
-    supabaseServiceFetch(config, '/games?select=id,season_id,opponent,game_date,result,outcome_override&order=game_date.asc'),
-    supabaseServiceFetch(config, '/game_events?select=player_id,related_player_id,event_type,game_id,event_timestamp'),
-    supabaseServiceFetch(config, '/season_players?select=player_id,season_id&active=eq.true'),
+    supabaseServiceFetch(config, `/players?select=id,display_name,position,gender_match,is_sub&${orgFilter}&order=display_name.asc`),
+    supabaseServiceFetch(config, `/seasons?select=id,name,year,organizer&${orgFilter}&order=id.asc`),
+    supabaseServiceFetch(config, `/games?select=id,season_id,opponent,game_date,result,outcome_override&${orgFilter}&order=game_date.asc`),
+    supabaseServiceFetch(config, `/game_events?select=player_id,related_player_id,event_type,game_id,event_timestamp&${orgFilter}`),
+    supabaseServiceFetch(config, `/season_players?select=player_id,season_id&active=eq.true&${orgFilter}`),
   ])
 
   const seasonNames = new Map((seasons ?? []).map((s: any) => [s.id, `${s.organizer ?? ''} ${s.name} ${s.year}`.trim()]))
@@ -235,21 +260,24 @@ async function callGemini(apiKey: string, model: string, systemInstruction: stri
 }
 
 export async function handleChatRequest(config: ChatConfig, request: Request): Promise<Response> {
-  const user = await createRequireAllowedUser(config, config.isEmailAllowed)(request)
-  if (!user) return json({ error: 'not authenticated' }, 401)
-
   try {
     const body: any = await request.json().catch(() => ({}))
-    const { message, session_id, history = [] } = body as { message: string; session_id: string; history: { role: string; content: string }[] }
+    const { message, session_id, history = [], organization_id } = body as {
+      message: string; session_id: string; history: { role: string; content: string }[]; organization_id: number
+    }
     if (!message || !session_id) return json({ error: 'message and session_id required' }, 400)
+    if (!organization_id) return json({ error: 'organization_id required' }, 400)
 
-    const systemContext = await getTeamContext(config)
+    const user = await requireOrgMember(config, request, organization_id)
+    if (!user) return json({ error: 'not authenticated' }, 401)
+
+    const systemContext = await getTeamContext(config, organization_id)
     const geminiApiKey = await getVaultSecret(config, 'gemini_api_key', config.geminiApiKey)
     const geminiModel = await getVaultSecret(config, 'gemini_model', config.geminiModel) ?? DEFAULT_GEMINI_MODEL
     if (!geminiApiKey) return json({ error: 'Gemini API key not configured' }, 500)
     const reply = await callGemini(geminiApiKey, geminiModel, systemContext, history, message)
 
-    await insertChatLogs(config, [
+    await insertChatLogs(config, organization_id, [
       { session_id, role: 'user', content: message },
       { session_id, role: 'assistant', content: reply },
     ])
@@ -261,17 +289,19 @@ export async function handleChatRequest(config: ChatConfig, request: Request): P
 }
 
 export async function handleChatHistoryRequest(config: ChatConfig, request: Request): Promise<Response> {
-  const user = await createRequireAllowedUser(config, config.isEmailAllowed)(request)
-  if (!user) return json({ error: 'not authenticated' }, 401)
-
   try {
     const url = new URL(request.url)
     const sessionId = url.searchParams.get('session_id')
+    const organizationId = Number(url.searchParams.get('organization_id'))
     if (!sessionId) return json({ error: 'session_id required' }, 400)
+    if (!organizationId) return json({ error: 'organization_id required' }, 400)
+
+    const user = await requireOrgMember(config, request, organizationId)
+    if (!user) return json({ error: 'not authenticated' }, 401)
 
     const rows = await supabaseServiceFetch(
       config,
-      `/chat_logs?select=role,content,created_at&session_id=eq.${encodeURIComponent(sessionId)}&order=created_at.asc`
+      `/chat_logs?select=role,content,created_at&session_id=eq.${encodeURIComponent(sessionId)}&organization_id=eq.${organizationId}&order=created_at.asc`
     )
     return json(rows ?? [])
   } catch (err: unknown) {
@@ -280,15 +310,17 @@ export async function handleChatHistoryRequest(config: ChatConfig, request: Requ
 }
 
 export async function handleChatHistoryDeleteRequest(config: ChatConfig, request: Request): Promise<Response> {
-  const user = await createRequireAllowedUser(config, config.isEmailAllowed)(request)
-  if (!user) return json({ error: 'not authenticated' }, 401)
-
   try {
     const url = new URL(request.url)
     const sessionId = url.searchParams.get('session_id')
+    const organizationId = Number(url.searchParams.get('organization_id'))
     if (!sessionId) return json({ error: 'session_id required' }, 400)
+    if (!organizationId) return json({ error: 'organization_id required' }, 400)
 
-    const res = await fetch(`${config.supabaseUrl}/rest/v1/chat_logs?session_id=eq.${encodeURIComponent(sessionId)}`, {
+    const user = await requireOrgMember(config, request, organizationId)
+    if (!user) return json({ error: 'not authenticated' }, 401)
+
+    const res = await fetch(`${config.supabaseUrl}/rest/v1/chat_logs?session_id=eq.${encodeURIComponent(sessionId)}&organization_id=eq.${organizationId}`, {
       method: 'DELETE',
       headers: {
         apikey: config.supabaseSecretKey,

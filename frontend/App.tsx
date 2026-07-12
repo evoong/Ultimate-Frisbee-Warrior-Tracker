@@ -7,13 +7,15 @@ import Strategy from './pages/Strategy'
 import Chat from './pages/Chat'
 import Login from './pages/Login'
 import ResetPassword from './pages/ResetPassword'
+import CreateOrganization from './pages/CreateOrganization'
 import { useAuth } from './contexts/AuthContext'
-import { Moon, Sun, Loader2, LogOut, KeyRound } from 'lucide-react'
+import { Moon, Sun, Loader2, LogOut, KeyRound, Settings } from 'lucide-react'
 import { NAV_ITEMS, type Tab } from './lib/nav'
 import { useMediaQuery } from './lib/shadcn/use-media-query'
 import { SidebarProvider, SidebarInset, SidebarTrigger } from './lib/shadcn/sidebar'
 import AppSidebar from './components/AppSidebar'
 import PasskeysDialog from './components/PasskeysDialog'
+import OrganizationSettingsDialog from './components/OrganizationSettingsDialog'
 import { passkeysAvailable } from './lib/passkeys'
 
 const THEME_KEY = 'ufwt_theme'
@@ -28,8 +30,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('schedule')
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme)
   const [passkeysOpen, setPasskeysOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const isDesktop = useMediaQuery('(min-width: 1024px)')
-  const { user, allowed, loading, logout } = useAuth()
+  const { user, organizations, currentOrgId, switchOrg, allowed, loading, logout } = useAuth()
 
   useEffect(() => {
     const root = document.documentElement
@@ -54,11 +57,18 @@ export default function App() {
     return <ResetPassword />
   }
 
-  // Anyone signed in may enter (read-only). The `allowed` flag now means
-  // "team member — can write"; write controls are gated on it, and the DB's
-  // RLS is the real enforcement (002_public_read_team_write.sql).
+  // Anyone signed in may enter (read-only, or read-write for a public org
+  // they don't belong to). The `allowed` flag means "member of the current
+  // organization — can write"; write controls are gated on it, and the
+  // DB's RLS is the real enforcement (016_organizations.sql).
   if (!user) {
     return <Login />
+  }
+
+  // Every domain table requires an organization_id, so a user with zero
+  // memberships has nothing to see yet: send them to create one first.
+  if (organizations.length === 0) {
+    return <CreateOrganization />
   }
 
   const pageContent = (
@@ -92,9 +102,14 @@ export default function App() {
           toggleTheme={toggleTheme}
           userEmail={user.email}
           logout={logout}
+          organizations={organizations}
+          currentOrgId={currentOrgId}
+          switchOrg={switchOrg}
+          openSettings={() => setSettingsOpen(true)}
           openPasskeys={passkeysAvailable() ? () => setPasskeysOpen(true) : undefined}
         />
         <PasskeysDialog open={passkeysOpen} onOpenChange={setPasskeysOpen} />
+        <OrganizationSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
         <SidebarInset>
           <header className="sticky top-0 z-10 flex h-14 items-center gap-2 border-b border-border bg-card px-4">
             <SidebarTrigger />
@@ -116,6 +131,13 @@ export default function App() {
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
           <h1 className="text-lg font-bold text-primary">Warrior Tracker</h1>
           <div className="flex items-center gap-1">
+            <button
+              onClick={() => setSettingsOpen(true)}
+              className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+              aria-label="Organization settings"
+            >
+              <Settings className="w-5 h-5" />
+            </button>
             {passkeysAvailable() && (
               <button
                 onClick={() => setPasskeysOpen(true)}
@@ -144,9 +166,24 @@ export default function App() {
         </div>
       </header>
 
+      {organizations.length > 1 && (
+        <div className="bg-card border-b border-border px-4 py-2">
+          <select
+            value={currentOrgId ?? ''}
+            onChange={e => switchOrg(Number(e.target.value))}
+            className="w-full text-sm bg-transparent border border-border rounded-md px-2 py-1"
+          >
+            {organizations.map(o => (
+              <option key={o.organization_id} value={o.organization_id}>{o.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {readOnlyNotice}
 
       <PasskeysDialog open={passkeysOpen} onOpenChange={setPasskeysOpen} />
+      <OrganizationSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
 
       <main className="max-w-2xl mx-auto px-4 py-6 pb-24">
         {pageContent}
