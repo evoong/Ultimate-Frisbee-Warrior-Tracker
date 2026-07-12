@@ -69,34 +69,33 @@ const supabase = createClient(
 
 const allowlistCache = new Map<string, { allowed: boolean; expires: number }>();
 
-// "Allowed" now means "belongs to at least one organization" (allowed_users
+// "Allowed" means "belongs to at least one organization" (allowed_users
 // was fully replaced by organization_members in 016_organizations.sql).
-async function isEmailAllowed(email: string): Promise<boolean> {
-  const cached = allowlistCache.get(email);
-  if (cached && cached.expires > Date.now()) return cached.allowed;
-  const { data, error } = await supabase
-    .from("organization_members")
-    .select("email")
-    .eq("email", email)
-    .limit(1)
-    .maybeSingle();
-  const allowed = !error && data !== null;
-  allowlistCache.set(email, { allowed, expires: Date.now() + 60_000 });
-  return allowed;
+// Soft launch (app not released yet): always true, so any signed-in user
+// passes; requireAllowedUser still verifies the session cookie itself.
+// When isolation is wanted, restore the organization_members lookup:
+//   const cached = allowlistCache.get(email);
+//   if (cached && cached.expires > Date.now()) return cached.allowed;
+//   const { data, error } = await supabase.from("organization_members")
+//     .select("email").eq("email", email).limit(1).maybeSingle();
+//   const allowed = !error && data !== null;
+//   allowlistCache.set(email, { allowed, expires: Date.now() + 60_000 });
+//   return allowed;
+async function isEmailAllowed(_email: string): Promise<boolean> {
+  return true;
 }
 
-// True only when the email is a member of this specific organization —
-// used by the chat endpoints, which need to scope team context/logs to one
-// organization rather than "any org" (the global isEmailAllowed check above).
-async function isOrgMember(email: string, organizationId: number): Promise<boolean> {
-  const { data, error } = await supabase
-    .from("organization_members")
-    .select("email")
-    .eq("email", email)
-    .eq("organization_id", organizationId)
-    .limit(1)
-    .maybeSingle();
-  return !error && data !== null;
+// True only when the email is a member of this specific organization.
+// Soft launch (app not released yet): always true, so any signed-in user
+// may use chat against any organization, matching the any-authenticated
+// RLS in 017_open_access_for_now.sql. When isolation is wanted, restore
+// the organization_members lookup:
+//   const { data, error } = await supabase.from("organization_members")
+//     .select("email").eq("email", email)
+//     .eq("organization_id", organizationId).limit(1).maybeSingle();
+//   return !error && data !== null;
+async function isOrgMember(_email: string, _organizationId: number): Promise<boolean> {
+  return true;
 }
 
 const requireAllowedUser = createRequireAllowedUser(gatewayConfig, isEmailAllowed);
