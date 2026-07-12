@@ -63,10 +63,11 @@ export function useGetEventTypes() {
 }
 
 export function useCreateGoalEvent() {
-  const fn = useCallback(async (params: { gameId: number; playerId: number | null; relatedPlayerId: number | null; eventType?: string; notes?: string }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; gameId: number; playerId: number | null; relatedPlayerId: number | null; eventType?: string; notes?: string }) => {
     const { data, error } = await supabase
       .from('game_events')
       .insert({
+        organization_id: params.organizationId,
         game_id: params.gameId,
         player_id: params.playerId,
         related_player_id: params.relatedPlayerId,
@@ -82,10 +83,11 @@ export function useCreateGoalEvent() {
 }
 
 export function useCreateOpponentGoalEvent() {
-  const fn = useCallback(async (params: { gameId: number }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; gameId: number }) => {
     const { data, error } = await supabase
       .from('game_events')
       .insert({
+        organization_id: params.organizationId,
         game_id: params.gameId,
         event_type: 'Opponent Goal',
         event_timestamp: new Date().toISOString(),

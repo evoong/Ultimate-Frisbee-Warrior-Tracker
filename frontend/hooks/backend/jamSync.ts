@@ -36,6 +36,7 @@ function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P
 
 export type JamSyncConflict = {
   id: number
+  organization_id: number
   jam_uid: string
   organizer: string
   opponent: string
@@ -49,16 +50,17 @@ export type JamSyncConflict = {
 }
 
 export function useGetJamSyncConflicts() {
-  const fn = useCallback(async () => {
+  const fn = useCallback(async (params: { organizationId: number | null }) => {
     const { data, error } = await supabase
       .from('jam_sync_conflicts')
       .select('*')
+      .eq('organization_id', params.organizationId)
       .eq('status', 'pending')
       .order('event_date', { ascending: true })
     if (error) throw new Error(error.message)
     return (data ?? []) as JamSyncConflict[]
   }, [])
-  return useApiCall<JamSyncConflict[]>(fn)
+  return useApiCall<JamSyncConflict[], { organizationId: number | null }>(fn)
 }
 
 // Manual "sync now" trigger — the same import also runs automatically every
@@ -81,6 +83,7 @@ export function useCreateGameFromConflict() {
   const fn = useCallback(async (params: { conflict: JamSyncConflict; seasonId: number | null }) => {
     const { conflict, seasonId } = params
     const { error: insertError } = await supabase.from('games').insert({
+      organization_id: conflict.organization_id,
       season_id: seasonId,
       opponent: conflict.opponent,
       game_date: conflict.event_date,

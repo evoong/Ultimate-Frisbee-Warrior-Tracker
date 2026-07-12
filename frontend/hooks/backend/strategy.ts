@@ -5,6 +5,7 @@ export type StrategyPlay = { id: number; name: string; created_at: string; game_
 export type StrategyStep = { id: number; play_id: number; step_number: number }
 export type StrategyPosition = { player_id: number; x: number; y: number }
 export type StrategyOpponentMarker = { id: number; label: string; x: number; y: number }
+export type StrategyTextBox = { id: number; text: string; x: number; y: number }
 export type StrategyArrow = {
   id: number
   x1: number; y1: number
@@ -15,14 +16,15 @@ export type StrategyArrow = {
   start_opponent_id: number | null
 }
 
-// A board element that can be selected (player, opponent marker, or arrow).
-export type StrategySelectedItem = { kind: 'player' | 'opponent' | 'arrow'; id: number }
+// A board element that can be selected (player, opponent marker, text box, or arrow).
+export type StrategySelectedItem = { kind: 'player' | 'opponent' | 'textbox' | 'arrow'; id: number }
 // A relative move applied to a multi-selection during a group drag. Arrows
 // carry all six curve coordinates plus start_player_id/start_opponent_id (a
 // group move detaches an anchored arrow so the whole shape translates rigidly).
 export type StrategyEntityMove =
   | { kind: 'player'; id: number; x: number; y: number }
   | { kind: 'opponent'; id: number; x: number; y: number }
+  | { kind: 'textbox'; id: number; x: number; y: number }
   | { kind: 'arrow'; id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id: number | null; start_opponent_id: number | null }
 
 type HookResult<T, P = void> = {
@@ -60,35 +62,36 @@ function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P
 }
 
 export function useGetStrategyPlays() {
-  const fn = useCallback(async () => {
+  const fn = useCallback(async (params: { organizationId: number | null }) => {
     const { data, error } = await supabase
       .from('strategy_plays')
       .select('*')
+      .eq('organization_id', params.organizationId)
       .order('created_at')
     if (error) throw new Error(error.message)
     return (data ?? []) as StrategyPlay[]
   }, [])
-  return useApiCall<StrategyPlay[]>(fn)
+  return useApiCall<StrategyPlay[], { organizationId: number | null }>(fn)
 }
 
 // Every play needs at least one step, so creation inserts the play and its
 // first step together; callers never have to special-case a stepless play.
 export function useCreateStrategyPlay() {
-  const fn = useCallback(async (params: { name: string; game_id?: number | null }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; name: string; game_id?: number | null }) => {
     const { data, error } = await supabase
       .from('strategy_plays')
-      .insert({ name: params.name, game_id: params.game_id ?? null })
+      .insert({ organization_id: params.organizationId, name: params.name, game_id: params.game_id ?? null })
       .select()
     if (error) throw new Error(error.message)
     const play = data?.[0] as StrategyPlay
     const { data: stepData, error: stepError } = await supabase
       .from('strategy_steps')
-      .insert({ play_id: play.id, step_number: 1 })
+      .insert({ organization_id: params.organizationId, play_id: play.id, step_number: 1 })
       .select()
     if (stepError) throw new Error(stepError.message)
     return { ...play, firstStepId: (stepData?.[0] as { id: number }).id }
   }, [])
-  return useApiCall<StrategyPlay & { firstStepId: number }, { name: string; game_id?: number | null }>(fn)
+  return useApiCall<StrategyPlay & { firstStepId: number }, { organizationId: number | null; name: string; game_id?: number | null }>(fn)
 }
 
 export function useUpdateStrategyPlay() {
@@ -130,7 +133,7 @@ export function useGetStrategySteps() {
 }
 
 export function useAddStrategyStep() {
-  const fn = useCallback(async (params: { playId: number }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; playId: number }) => {
     const { data: existing, error: fetchError } = await supabase
       .from('strategy_steps')
       .select('step_number')
@@ -141,12 +144,12 @@ export function useAddStrategyStep() {
     const nextNumber = ((existing?.[0] as { step_number: number } | undefined)?.step_number ?? 0) + 1
     const { data, error } = await supabase
       .from('strategy_steps')
-      .insert({ play_id: params.playId, step_number: nextNumber })
+      .insert({ organization_id: params.organizationId, play_id: params.playId, step_number: nextNumber })
       .select()
     if (error) throw new Error(error.message)
     return data?.[0] as StrategyStep
   }, [])
-  return useApiCall<StrategyStep, { playId: number }>(fn)
+  return useApiCall<StrategyStep, { organizationId: number | null; playId: number }>(fn)
 }
 
 // Deleting a step cascades to its positions/opponent markers/arrows. The
@@ -179,17 +182,17 @@ export function useGetStrategyPositions() {
 // caller can tell success from a failed trigger (which returns undefined),
 // letting the page revert its optimistic update.
 export function useUpsertStrategyPosition() {
-  const fn = useCallback(async (params: { stepId: number; playerId: number; x: number; y: number }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; stepId: number; playerId: number; x: number; y: number }) => {
     const { error } = await supabase
       .from('strategy_positions')
       .upsert(
-        { step_id: params.stepId, player_id: params.playerId, x: params.x, y: params.y },
+        { organization_id: params.organizationId, step_id: params.stepId, player_id: params.playerId, x: params.x, y: params.y },
         { onConflict: 'step_id,player_id' }
       )
     if (error) throw new Error(error.message)
     return true
   }, [])
-  return useApiCall<boolean, { stepId: number; playerId: number; x: number; y: number }>(fn)
+  return useApiCall<boolean, { organizationId: number | null; stepId: number; playerId: number; x: number; y: number }>(fn)
 }
 
 export function useDeleteStrategyPosition() {
@@ -219,15 +222,15 @@ export function useGetStrategyOpponentMarkers() {
 }
 
 export function useCreateStrategyOpponentMarker() {
-  const fn = useCallback(async (params: { stepId: number; label: string; x: number; y: number }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; stepId: number; label: string; x: number; y: number }) => {
     const { data, error } = await supabase
       .from('strategy_opponent_markers')
-      .insert({ step_id: params.stepId, label: params.label, x: params.x, y: params.y })
+      .insert({ organization_id: params.organizationId, step_id: params.stepId, label: params.label, x: params.x, y: params.y })
       .select()
     if (error) throw new Error(error.message)
     return data?.[0] as StrategyOpponentMarker
   }, [])
-  return useApiCall<StrategyOpponentMarker, { stepId: number; label: string; x: number; y: number }>(fn)
+  return useApiCall<StrategyOpponentMarker, { organizationId: number | null; stepId: number; label: string; x: number; y: number }>(fn)
 }
 
 export function useUpdateStrategyOpponentMarker() {
@@ -255,6 +258,56 @@ export function useDeleteStrategyOpponentMarker() {
   return useApiCall<boolean, { id: number }>(fn)
 }
 
+export function useGetStrategyTextBoxes() {
+  const fn = useCallback(async (params: { stepId: number }) => {
+    const { data, error } = await supabase
+      .from('strategy_text_boxes')
+      .select('id, text, x, y')
+      .eq('step_id', params.stepId)
+      .order('id')
+    if (error) throw new Error(error.message)
+    return (data ?? []) as StrategyTextBox[]
+  }, [])
+  return useApiCall<StrategyTextBox[], { stepId: number }>(fn)
+}
+
+export function useCreateStrategyTextBox() {
+  const fn = useCallback(async (params: { organizationId: number | null; stepId: number; text: string; x: number; y: number }) => {
+    const { data, error } = await supabase
+      .from('strategy_text_boxes')
+      .insert({ organization_id: params.organizationId, step_id: params.stepId, text: params.text, x: params.x, y: params.y })
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0] as StrategyTextBox
+  }, [])
+  return useApiCall<StrategyTextBox, { organizationId: number | null; stepId: number; text: string; x: number; y: number }>(fn)
+}
+
+export function useUpdateStrategyTextBox() {
+  const fn = useCallback(async (params: { id: number; x?: number; y?: number; text?: string }) => {
+    const { id, ...body } = params
+    const { error } = await supabase
+      .from('strategy_text_boxes')
+      .update(body)
+      .eq('id', id)
+    if (error) throw new Error(error.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { id: number; x?: number; y?: number; text?: string }>(fn)
+}
+
+export function useDeleteStrategyTextBox() {
+  const fn = useCallback(async (params: { id: number }) => {
+    const { error } = await supabase
+      .from('strategy_text_boxes')
+      .delete()
+      .eq('id', params.id)
+    if (error) throw new Error(error.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { id: number }>(fn)
+}
+
 export function useGetStrategyArrows() {
   const fn = useCallback(async (params: { stepId: number }) => {
     const { data, error } = await supabase
@@ -270,11 +323,12 @@ export function useGetStrategyArrows() {
 
 export function useCreateStrategyArrow() {
   const fn = useCallback(async (params: {
-    stepId: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id?: number | null; start_opponent_id?: number | null
+    organizationId: number | null; stepId: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id?: number | null; start_opponent_id?: number | null
   }) => {
     const { data, error } = await supabase
       .from('strategy_arrows')
       .insert({
+        organization_id: params.organizationId,
         step_id: params.stepId,
         x1: params.x1, y1: params.y1, x2: params.x2, y2: params.y2, cx: params.cx, cy: params.cy,
         arrow_type: params.arrow_type,
@@ -285,7 +339,7 @@ export function useCreateStrategyArrow() {
     if (error) throw new Error(error.message)
     return data?.[0] as StrategyArrow
   }, [])
-  return useApiCall<StrategyArrow, { stepId: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id?: number | null; start_opponent_id?: number | null }>(fn)
+  return useApiCall<StrategyArrow, { organizationId: number | null; stepId: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id?: number | null; start_opponent_id?: number | null }>(fn)
 }
 
 // start_player_id/start_opponent_id are included so dragging an anchored

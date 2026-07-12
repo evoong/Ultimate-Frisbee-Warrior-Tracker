@@ -1,5 +1,6 @@
-import { Disc, Moon, Sun, LogOut, KeyRound } from "lucide-react"
+import { Disc, Moon, Sun, LogOut, KeyRound, Settings } from "lucide-react"
 import { NAV_ITEMS, type Tab } from "../lib/nav"
+import type { OrgMembership } from "../lib/authClient"
 import {
   Sidebar,
   SidebarHeader,
@@ -12,6 +13,7 @@ import {
   SidebarMenuButton,
   SidebarRail,
 } from "../lib/shadcn/sidebar"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../lib/shadcn/select"
 
 type AppSidebarProps = {
   activeTab: Tab
@@ -20,6 +22,10 @@ type AppSidebarProps = {
   toggleTheme: () => void
   userEmail: string
   logout: () => void
+  organizations: OrgMembership[]
+  currentOrgId: number | null
+  switchOrg: (organizationId: number) => void
+  openSettings: () => void
   // Absent when passkeys are unavailable on this deployment (see passkeys.ts).
   openPasskeys?: () => void
 }
@@ -31,6 +37,10 @@ export default function AppSidebar({
   toggleTheme,
   userEmail,
   logout,
+  organizations,
+  currentOrgId,
+  switchOrg,
+  openSettings,
   openPasskeys,
 }: AppSidebarProps) {
   return (
@@ -47,6 +57,18 @@ export default function AppSidebar({
               </div>
             </SidebarMenuButton>
           </SidebarMenuItem>
+          {organizations.length > 1 && (
+            <SidebarMenuItem>
+              <Select value={currentOrgId != null ? String(currentOrgId) : undefined} onValueChange={v => switchOrg(Number(v))}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {organizations.map(o => (
+                    <SelectItem key={o.organization_id} value={String(o.organization_id)}>{o.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SidebarMenuItem>
+          )}
         </SidebarMenu>
       </SidebarHeader>
 
@@ -77,6 +99,12 @@ export default function AppSidebar({
             <SidebarMenuButton onClick={toggleTheme} tooltip="Toggle theme">
               {theme === "dark" ? <Sun /> : <Moon />}
               <span>{theme === "dark" ? "Light mode" : "Dark mode"}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton onClick={openSettings} tooltip="Organization settings">
+              <Settings />
+              <span>Organization</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           {openPasskeys && (

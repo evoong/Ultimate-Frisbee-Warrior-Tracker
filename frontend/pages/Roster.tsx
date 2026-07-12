@@ -3,6 +3,7 @@ import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlaye
 import { useGetAllSeasons, useGetSeasons } from '../hooks/backend/stats'
 import { useSetAttendance } from '../hooks/backend/attendance'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
+import { POSITIONS } from '../lib/positions'
 import { useAuth } from '../contexts/AuthContext'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import PlayerAvatar from '../components/PlayerAvatar'
@@ -26,7 +27,6 @@ type GameStat = { game_id: number; opponent: string; game_date: string; game_typ
 type Season = { id: number; name: string; year: number; organizer: string | null; start_date: string | null; end_date: string | null }
 type PlayerSeason = { id: number; name: string; year: number; organizer: string | null; active: boolean; is_sub: boolean }
 
-const POSITIONS = ['Handler', 'Cutter', 'Hybrid', 'Deep Cutter']
 const GENDERS = ['Man', 'Woman']
 
 function seasonLabel(s: { name: string; year: number; organizer: string | null }) {
@@ -53,7 +53,7 @@ function RosterCardSkeleton() {
 }
 
 export default function Roster() {
-  const { allowed } = useAuth()
+  const { allowed, currentOrgId } = useAuth()
   const { data: rawPlayers, loading, error, trigger: fetchPlayers } = useGetPlayers()
   const { data: gameStats, loading: statsLoading, trigger: fetchGameStats } = useGetPlayerGameStats()
   const { data: allSeasons, trigger: fetchAllSeasons } = useGetAllSeasons()
@@ -92,9 +92,10 @@ export default function Roster() {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    fetchAllSeasons()
-    fetchSeasonsWithGames()
-  }, [])
+    if (currentOrgId == null) return
+    fetchAllSeasons({ organizationId: currentOrgId })
+    fetchSeasonsWithGames({ organizationId: currentOrgId })
+  }, [currentOrgId])
 
   useEffect(() => {
     const s = seasonsWithGames as { id: number }[] | undefined
@@ -105,8 +106,9 @@ export default function Roster() {
   }, [seasonsWithGames, allSeasons])
 
   useEffect(() => {
-    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined })
-  }, [rosterSeasonIds])
+    if (currentOrgId == null) return
+    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
+  }, [rosterSeasonIds, currentOrgId])
 
   useEffect(() => {
     // Default the stats filter to every active season whenever a player's
@@ -150,7 +152,7 @@ export default function Roster() {
     }) as Player | undefined
     if (updated) {
       setSelectedPlayer(updated)
-      fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined })
+      fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
     }
     setEditing(false)
   }
@@ -165,9 +167,9 @@ export default function Roster() {
 
   const handleSaveSeasons = async () => {
     if (!selectedPlayer) return
-    await updatePlayerSeasons({ playerId: selectedPlayer.id, seasonIds: selectedSeasonIds, subsBySeasonId: selectedSeasonSubs })
+    await updatePlayerSeasons({ playerId: selectedPlayer.id, seasonIds: selectedSeasonIds, subsBySeasonId: selectedSeasonSubs, organizationId: currentOrgId })
     await fetchPlayerSeasons({ playerId: selectedPlayer.id })
-    const refreshed = await fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined })
+    const refreshed = await fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
     const updated = (refreshed as Player[] | undefined)?.find(p => p.id === selectedPlayer.id)
     if (updated) setSelectedPlayer(updated)
     setEditingSeasons(false)
@@ -178,14 +180,14 @@ export default function Roster() {
     await deletePlayer({ playerId: selectedPlayer.id })
     setDeleteConfirm(false)
     handleBack()
-    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined })
+    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
   }
 
   const handlePositionChange = async (player: Player, position: string) => {
     const newPos = position === '__none__' ? null : position
     setSelectedPlayer({ ...player, position: newPos })
     await updatePosition({ playerId: player.id, position: newPos })
-    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined })
+    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
   }
 
   const handlePhotoClick = () => fileInputRef.current?.click()
@@ -198,7 +200,7 @@ export default function Roster() {
     if (result?.photo_url) {
       const updated = { ...selectedPlayer, photo_url: result.photo_url }
       setSelectedPlayer(updated)
-      fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined })
+      fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
     } else setUploadError('Upload failed. Please try again.')
     e.target.value = ''
   }
@@ -212,6 +214,7 @@ export default function Roster() {
       number: newPlayerData.number ? parseInt(newPlayerData.number) : undefined,
       position: newPlayerData.position || undefined,
       season_ids: newPlayerData.season_ids,
+      organizationId: currentOrgId,
     })
     setCreatingPlayer(false)
     if (!created) {
@@ -221,7 +224,7 @@ export default function Roster() {
     }
     setShowNewPlayer(false)
     setNewPlayerData({ display_name: '', number: '', gender_match: '', position: '', season_ids: [] })
-    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined })
+    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
   }
 
   const filteredPlayers = players?.filter(p => (p.display_name ?? '').toLowerCase().includes(searchQuery.toLowerCase()))
@@ -546,7 +549,7 @@ export default function Roster() {
                         checked={stat.in}
                         disabled={!allowed}
                         onChange={async e => {
-                          await setAttendance({ gameId: stat.game_id, playerId: selectedPlayer.id, attending: e.target.checked })
+                          await setAttendance({ gameId: stat.game_id, playerId: selectedPlayer.id, attending: e.target.checked, organizationId: currentOrgId })
                           fetchGameStats({ playerId: selectedPlayer.id })
                         }}
                         className={`accent-primary w-4 h-4 ${allowed ? 'cursor-pointer' : 'cursor-default'}`}

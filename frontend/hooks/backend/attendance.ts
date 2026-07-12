@@ -50,16 +50,16 @@ export function useGetGameAttendance() {
 
 // Upsert so players added to a season after the game was created (no backfilled row) still work
 export function useSetAttendance() {
-  const fn = useCallback(async (params: { gameId: number; playerId: number; attending: boolean }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; gameId: number; playerId: number; attending: boolean }) => {
     const { error } = await supabase
       .from('game_attendance')
       .upsert(
-        { game_id: params.gameId, player_id: params.playerId, in: params.attending },
+        { organization_id: params.organizationId, game_id: params.gameId, player_id: params.playerId, in: params.attending },
         { onConflict: 'game_id,player_id' }
       )
     if (error) throw new Error(error.message)
   }, [])
-  return useApiCall<void, { gameId: number; playerId: number; attending: boolean }>(fn)
+  return useApiCall<void, { organizationId: number | null; gameId: number; playerId: number; attending: boolean }>(fn)
 }
 
 // Sets `in` for a specific set of playerIds in one update, sets everyone else to false

@@ -3,8 +3,8 @@ import { createPortal } from 'react-dom'
 import PlayerAvatar from '../PlayerAvatar'
 import { Button } from '../../lib/shadcn/button'
 import { useMediaQuery } from '../../lib/shadcn/use-media-query'
-import { Pencil, UserPlus, Trash2, Disc } from 'lucide-react'
-import type { StrategyArrow, StrategyOpponentMarker, StrategySelectedItem as SelectedItem, StrategyEntityMove as EntityMove } from '../../hooks/backend/strategy'
+import { Pencil, UserPlus, Type, Trash2, Disc } from 'lucide-react'
+import type { StrategyArrow, StrategyOpponentMarker, StrategyTextBox, StrategySelectedItem as SelectedItem, StrategyEntityMove as EntityMove } from '../../hooks/backend/strategy'
 
 // Canonical coordinates are fractions in [0, 1] of a LANDSCAPE field:
 // x along the 100m length (0 = left back line), y across the 37m width
@@ -25,7 +25,7 @@ function shortName(name: string) {
   if (parts.length < 2) return name
   return `${parts[0]} ${parts[parts.length - 1].charAt(0)}.`
 }
-type Entity = { kind: 'player'; id: number } | { kind: 'opponent'; id: number }
+type Entity = { kind: 'player'; id: number } | { kind: 'opponent'; id: number } | { kind: 'textbox'; id: number }
 
 // Stable React key for an opponent marker across step changes: label when
 // it's unique in this step (the normal case), else label + index so
@@ -123,8 +123,9 @@ function isTypingTarget(t: EventTarget | null) {
 }
 
 export default function StrategyBoard({
-  players, positions, opponents, arrows, allowed,
+  players, positions, opponents, textBoxes, arrows, allowed,
   onPlace, onRemove, onAddOpponent, onMoveOpponent, onRemoveOpponent, onRenameOpponent,
+  onAddTextBox, onMoveTextBox, onEditTextBox, onRemoveTextBox,
   onCreateArrow, onUpdateArrow, onDeleteArrow,
   onGroupMove, onDeleteMany,
   transitionMs = 700,
@@ -132,6 +133,7 @@ export default function StrategyBoard({
   players: BoardPlayer[]
   positions: Map<number, { x: number; y: number }>
   opponents: StrategyOpponentMarker[]
+  textBoxes: StrategyTextBox[]
   arrows: StrategyArrow[]
   allowed: boolean
   onPlace: (playerId: number, x: number, y: number) => void
@@ -140,6 +142,10 @@ export default function StrategyBoard({
   onMoveOpponent: (id: number, x: number, y: number) => void
   onRemoveOpponent: (id: number) => void
   onRenameOpponent: (id: number, label: string) => void
+  onAddTextBox: () => void
+  onMoveTextBox: (id: number, x: number, y: number) => void
+  onEditTextBox: (id: number, text: string) => void
+  onRemoveTextBox: (id: number) => void
   onCreateArrow: (arrow: { x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id: number | null; start_opponent_id: number | null }) => void
   onUpdateArrow: (arrow: { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id?: number | null; start_opponent_id?: number | null }) => void
   onDeleteArrow: (id: number) => void
@@ -210,6 +216,19 @@ export default function StrategyBoard({
     const original = opponents.find(o => o.id === id)?.label
     if (trimmed && trimmed !== original) onRenameOpponent(id, trimmed)
   }
+  // Same one-at-a-time rule for the text box editor: a pencil icon appears
+  // only when exactly one text box is selected.
+  const selectedTextBoxId = selected.length === 1 && selected[0].kind === 'textbox' ? selected[0].id : null
+  const [editingTextBoxId, setEditingTextBoxId] = useState<number | null>(null)
+  const [editingTextValue, setEditingTextValue] = useState('')
+  const commitTextBoxText = () => {
+    const id = editingTextBoxId
+    setEditingTextBoxId(null)
+    if (id == null) return
+    const trimmed = editingTextValue.trim()
+    const original = textBoxes.find(t => t.id === id)?.text
+    if (trimmed !== original) onEditTextBox(id, trimmed)
+  }
   // Refs so the window keydown listener (registered once) always sees the
   // latest selection and delete action without re-subscribing every render.
   const selectedRef = useRef<SelectedItem[]>(selected)
@@ -227,11 +246,13 @@ export default function StrategyBoard({
       const next = prev.filter(s =>
         s.kind === 'player' ? positions.has(s.id)
           : s.kind === 'opponent' ? opponents.some(o => o.id === s.id)
-            : arrows.some(a => a.id === s.id))
+            : s.kind === 'textbox' ? textBoxes.some(t => t.id === s.id)
+              : arrows.some(a => a.id === s.id))
       return next.length === prev.length ? prev : next
     })
     setEditingOpponentId(id => (id != null && !opponents.some(o => o.id === id) ? null : id))
-  }, [positions, opponents, arrows])
+    setEditingTextBoxId(id => (id != null && !textBoxes.some(t => t.id === id) ? null : id))
+  }, [positions, opponents, textBoxes, arrows])
   // On hover-capable devices the edit handles reveal only while the pointer is
   // over the arrow (arrows stay clean otherwise); touch has no hover, so the
   // tap-selected arrow shows them instead. The short clear-delay keeps the
@@ -301,7 +322,7 @@ export default function StrategyBoard({
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (!allowed) return
       e.stopPropagation() // don't let the field's own handler also start an arrow draw
-      if (drawArmed) {
+      if (drawArmed && (entity.kind === 'player' || entity.kind === 'opponent')) {
         const start = entity.kind === 'player' ? positions.get(entity.id) : opponents.find(o => o.id === entity.id)
         if (start) {
           beginArrowDraw(
@@ -312,6 +333,8 @@ export default function StrategyBoard({
         }
         return
       }
+      // Text boxes don't anchor arrows — a draw-mode pointer-down on one
+      // falls through to the normal move/select handling below instead.
       // Cmd/Ctrl+click a field entity toggles its membership in the selection
       // (no drag). On the bench there's nothing to gather, so ignore it.
       if (e.metaKey || e.ctrlKey) {
@@ -364,13 +387,17 @@ export default function StrategyBoard({
           const relTop = (ev.clientY - rect.top) / rect.height
           const { x, y } = toCanonical(relLeft, relTop, isDesktop)
           if (d.entity.kind === 'player') onPlace(d.entity.id, x, y)
-          else onMoveOpponent(d.entity.id, x, y)
+          else if (d.entity.kind === 'opponent') onMoveOpponent(d.entity.id, x, y)
+          else onMoveTextBox(d.entity.id, x, y)
         } else if (d.entity.kind === 'player' && d.origin === 'field') {
           // Any off-field drop returns a player to the bench.
           onRemove(d.entity.id)
         } else if (d.entity.kind === 'opponent') {
           // Opponents have no bench; any off-field drop deletes the marker.
           onRemoveOpponent(d.entity.id)
+        } else if (d.entity.kind === 'textbox') {
+          // Text boxes have no bench either; any off-field drop deletes it.
+          onRemoveTextBox(d.entity.id)
         }
       }
       const onCancel = (ev: PointerEvent) => {
@@ -407,6 +434,9 @@ export default function StrategyBoard({
     const origOpps = selected.filter(s => s.kind === 'opponent')
       .map(s => opponents.find(o => o.id === s.id))
       .filter((o): o is StrategyOpponentMarker => !!o)
+    const origBoxes = selected.filter(s => s.kind === 'textbox')
+      .map(s => textBoxes.find(t => t.id === s.id))
+      .filter((t): t is StrategyTextBox => !!t)
     const origArrows = selected.filter(s => s.kind === 'arrow')
       .map(s => arrows.find(a => a.id === s.id))
       .filter((a): a is StrategyArrow => !!a)
@@ -415,8 +445,8 @@ export default function StrategyBoard({
     // anchored player or opponent on a group move so all six coordinates
     // translate and render as-is (an anchored tail would otherwise be
     // re-pinned to its anchor and ignore the move).
-    const allX = [...origPlayers.map(p => p.pos.x), ...origOpps.map(o => o.x), ...origArrows.flatMap(a => [a.x1, a.x2, a.cx])]
-    const allY = [...origPlayers.map(p => p.pos.y), ...origOpps.map(o => o.y), ...origArrows.flatMap(a => [a.y1, a.y2, a.cy])]
+    const allX = [...origPlayers.map(p => p.pos.x), ...origOpps.map(o => o.x), ...origBoxes.map(t => t.x), ...origArrows.flatMap(a => [a.x1, a.x2, a.cx])]
+    const allY = [...origPlayers.map(p => p.pos.y), ...origOpps.map(o => o.y), ...origBoxes.map(t => t.y), ...origArrows.flatMap(a => [a.y1, a.y2, a.cy])]
     const minDx = allX.length ? -Math.min(...allX) : 0
     const maxDx = allX.length ? 1 - Math.max(...allX) : 0
     const minDy = allY.length ? -Math.min(...allY) : 0
@@ -427,6 +457,7 @@ export default function StrategyBoard({
       return [
         ...origPlayers.map(p => ({ kind: 'player' as const, id: p.id, x: p.pos.x + dx, y: p.pos.y + dy })),
         ...origOpps.map(o => ({ kind: 'opponent' as const, id: o.id, x: o.x + dx, y: o.y + dy })),
+        ...origBoxes.map(t => ({ kind: 'textbox' as const, id: t.id, x: t.x + dx, y: t.y + dy })),
         ...origArrows.map(a => ({ kind: 'arrow' as const, id: a.id, x1: a.x1 + dx, y1: a.y1 + dy, x2: a.x2 + dx, y2: a.y2 + dy, cx: a.cx + dx, cy: a.cy + dy, start_player_id: null, start_opponent_id: null })),
       ]
     }
@@ -676,9 +707,14 @@ export default function StrategyBoard({
               </div>
             )}
           </div>
-          <Button type="button" size="sm" variant="outline" onClick={onAddOpponent}>
-            <UserPlus className="w-3.5 h-3.5 mr-1.5" />Add Opponent
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button type="button" size="sm" variant="outline" onClick={onAddOpponent}>
+              <UserPlus className="w-3.5 h-3.5 mr-1.5" />Add Opponent
+            </Button>
+            <Button type="button" size="sm" variant="outline" onClick={onAddTextBox}>
+              <Type className="w-3.5 h-3.5 mr-1.5" />Add Text
+            </Button>
+          </div>
         </div>
       )}
 
@@ -878,6 +914,68 @@ export default function StrategyBoard({
             </div>
           )
         })}
+
+        {/* Text boxes: free-floating annotations, no roster backing and no
+            arrow-anchoring (see the drawArmed branch in handlePointerDown).
+            Keyed by id, not content: unlike opponents, text is expected to
+            change freely, so there's no stable content-based identity to key
+            on — a text box just fades in fresh on a new step rather than
+            sliding, which is an acceptable simplification for a decoration
+            layer. */}
+        {textBoxes.map(box => {
+          const { left, top } = toRendered(box.x, box.y, isDesktop)
+          const isDragSource = drag?.moved && drag.entity.kind === 'textbox' && drag.entity.id === box.id
+          const onTop = lastActiveKey === `textbox-${box.id}`
+          const isSelected = isSel('textbox', box.id)
+          const isEditing = editingTextBoxId === box.id
+          return (
+            <div
+              key={box.id}
+              onPointerDown={handlePointerDown({ kind: 'textbox', id: box.id }, 'field')}
+              className={`absolute -translate-x-1/2 -translate-y-1/2 touch-none animate-in fade-in duration-300 ${
+                allowed ? (drawArmed ? '' : 'cursor-grab') : ''
+              } ${isDragSource ? 'opacity-40' : 'transition-[left,top] ease-in-out'}`}
+              style={{ left: `${left}%`, top: `${top}%`, zIndex: onTop ? 20 : 10, transitionDuration: isDragSource ? undefined : `${transitionMs}ms` }}
+            >
+              <div className={`relative min-w-[70px] max-w-[160px] px-2 py-1 rounded-md ${isSelected ? 'ring-2 ring-primary ring-offset-2 ring-offset-background' : ''}`}>
+                {isEditing ? (
+                  <textarea
+                    autoFocus
+                    value={editingTextValue}
+                    onChange={e => setEditingTextValue(e.target.value)}
+                    onPointerDown={e => e.stopPropagation()}
+                    onClick={e => e.stopPropagation()}
+                    onBlur={commitTextBoxText}
+                    onKeyDown={e => {
+                      if (e.key === 'Escape') { e.preventDefault(); setEditingTextBoxId(null) }
+                    }}
+                    rows={2}
+                    className="w-full text-[11px] bg-background border border-primary rounded px-1 text-foreground resize-none"
+                  />
+                ) : (
+                  <span className="block text-[11px] text-foreground whitespace-pre-wrap break-words select-none">
+                    {box.text || <span className="italic text-muted-foreground">Text</span>}
+                  </span>
+                )}
+                {allowed && isSelected && !isEditing && (
+                  <button
+                    type="button"
+                    aria-label="Edit text"
+                    onPointerDown={e => e.stopPropagation()}
+                    onClick={e => {
+                      e.stopPropagation()
+                      setEditingTextValue(box.text)
+                      setEditingTextBoxId(box.id)
+                    }}
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-background border border-border flex items-center justify-center text-muted-foreground hover:text-foreground shadow"
+                  >
+                    <Pencil className="w-2.5 h-2.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+          )
+        })}
       </div>
 
       {/* Bench tray: everyone not placed in the current play. */}
@@ -926,6 +1024,18 @@ export default function StrategyBoard({
           style={{ left: pointerPosRef.current.x, top: pointerPosRef.current.y }}
         >
           <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-950 border-2 border-red-400 dark:border-red-700" />
+        </div>,
+        document.body
+      )}
+      {drag?.moved && drag.entity.kind === 'textbox' && createPortal(
+        <div
+          ref={ghostRef}
+          className="fixed z-50 -translate-x-1/2 -translate-y-1/2 pointer-events-none scale-105 drop-shadow-lg"
+          style={{ left: pointerPosRef.current.x, top: pointerPosRef.current.y }}
+        >
+          <div className="min-w-[70px] max-w-[160px] px-2 py-1 rounded-md text-[11px] text-foreground">
+            {textBoxes.find(t => t.id === drag.entity.id)?.text || 'Text'}
+          </div>
         </div>,
         document.body
       )}
