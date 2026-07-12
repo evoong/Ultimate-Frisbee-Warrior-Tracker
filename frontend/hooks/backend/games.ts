@@ -201,3 +201,93 @@ export function useRemoveFromLineup() {
   }, [])
   return useApiCall(fn)
 }
+
+export function useUpdateLineupRole() {
+  const fn = useCallback(async (params: { id: number; role: string | null }) => {
+    const { error } = await supabase.from('game_lineups').update({ role: params.role }).eq('id', params.id)
+    if (error) throw new Error(error.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { id: number; role: string | null }>(fn)
+}
+
+export type LineupGroup = { id: number; lineup_name: string; sort_order: number }
+
+export function useGetLineupGroups() {
+  const fn = useCallback(async (params: { gameId: number }) => {
+    const { data, error } = await supabase
+      .from('game_lineup_groups')
+      .select('id, lineup_name, sort_order')
+      .eq('game_id', params.gameId)
+      .order('sort_order')
+    if (error) throw new Error(error.message)
+    return (data ?? []) as LineupGroup[]
+  }, [])
+  return useApiCall<LineupGroup[], { gameId: number }>(fn)
+}
+
+export function useCreateLineupGroup() {
+  const fn = useCallback(async (params: { gameId: number; lineupName: string; sortOrder: number }) => {
+    const { data, error } = await supabase
+      .from('game_lineup_groups')
+      .upsert(
+        { game_id: params.gameId, lineup_name: params.lineupName, sort_order: params.sortOrder },
+        { onConflict: 'game_id,lineup_name', ignoreDuplicates: true },
+      )
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0] as LineupGroup | undefined
+  }, [])
+  return useApiCall<LineupGroup | undefined, { gameId: number; lineupName: string; sortOrder: number }>(fn)
+}
+
+// Renaming a group must also repoint its players: game_lineups.lineup_name
+// is a plain text match against game_lineup_groups.lineup_name, not a real
+// foreign key, so both rows need updating in the same action.
+export function useRenameLineupGroup() {
+  const fn = useCallback(async (params: { gameId: number; groupId: number; oldName: string; newName: string }) => {
+    const { error: groupError } = await supabase
+      .from('game_lineup_groups')
+      .update({ lineup_name: params.newName })
+      .eq('id', params.groupId)
+    if (groupError) throw new Error(groupError.message)
+    const { error: playersError } = await supabase
+      .from('game_lineups')
+      .update({ lineup_name: params.newName })
+      .eq('game_id', params.gameId)
+      .eq('lineup_name', params.oldName)
+    if (playersError) throw new Error(playersError.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { gameId: number; groupId: number; oldName: string; newName: string }>(fn)
+}
+
+export function useReorderLineupGroups() {
+  const fn = useCallback(async (params: { updates: { id: number; sortOrder: number }[] }) => {
+    await Promise.all(params.updates.map(u =>
+      supabase.from('game_lineup_groups').update({ sort_order: u.sortOrder }).eq('id', u.id)
+    ))
+    return true
+  }, [])
+  return useApiCall<boolean, { updates: { id: number; sortOrder: number }[] }>(fn)
+}
+
+// Deleting a lineup group removes its players from game_lineups too — an
+// empty group with nothing assigned to it has nothing left to keep.
+export function useDeleteLineupGroup() {
+  const fn = useCallback(async (params: { gameId: number; lineupName: string; groupId: number }) => {
+    const { error: playersError } = await supabase
+      .from('game_lineups')
+      .delete()
+      .eq('game_id', params.gameId)
+      .eq('lineup_name', params.lineupName)
+    if (playersError) throw new Error(playersError.message)
+    const { error: groupError } = await supabase
+      .from('game_lineup_groups')
+      .delete()
+      .eq('id', params.groupId)
+    if (groupError) throw new Error(groupError.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { gameId: number; lineupName: string; groupId: number }>(fn)
+}
