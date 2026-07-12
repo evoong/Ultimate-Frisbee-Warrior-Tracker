@@ -1269,7 +1269,7 @@ export default function Schedule() {
                                         <span className="truncate">{p.display_name}</span>
                                       </div>
                                       <span className="text-xs text-muted-foreground shrink-0 ml-2">
-                                        {s ? `${s.goals}G ${s.assists}A` : ''}
+                                        {s ? s.goals : 0}G {s ? s.assists : 0}A
                                       </span>
                                     </CommandItem>
                                   )
@@ -1396,7 +1396,7 @@ export default function Schedule() {
                                 <Badge variant="outline" className="text-xs text-muted-foreground shrink-0">{effectiveRole}</Badge>
                               ) : null}
                               <span className="text-xs text-muted-foreground shrink-0">
-                                {s ? `${s.goals}G ${s.assists}A` : ''}
+                                {s ? s.goals : 0}G {s ? s.assists : 0}A
                               </span>
                               {allowed && (
                                 <button onClick={() => handleRemoveFromLineup(e.player_id, e.lineup_name)} className="p-1 rounded hover:bg-destructive/10">
