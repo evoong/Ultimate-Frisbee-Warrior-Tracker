@@ -128,7 +128,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user, refreshSessionState]
   )
 
-  const allowed = currentOrgId != null && organizations.some(o => o.organization_id === currentOrgId)
+  // Soft launch (app not released yet): every signed-in user gets write
+  // access everywhere, matching the any-authenticated RLS in
+  // 017_open_access_for_now.sql. When isolation is wanted, restore this to
+  // membership in the current org:
+  //   currentOrgId != null && organizations.some(o => o.organization_id === currentOrgId)
+  const allowed = user != null
 
   return (
     <AuthContext.Provider

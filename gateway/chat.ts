@@ -55,23 +55,22 @@ async function insertChatLogs(config: ChatConfig, organizationId: number, rows: 
   }).catch(() => void 0)
 }
 
-// Verifies the caller's session cookie and that they belong to the given
-// organization. Chat needs per-organization scoping (unlike the coarser
-// "any organization" gate elsewhere), so this checks membership directly
-// rather than using createRequireAllowedUser.
+// Verifies the caller's session cookie. Soft launch (app not released
+// yet): any signed-in user may use chat against any organization, matching
+// the any-authenticated RLS in 017_open_access_for_now.sql. When isolation
+// is wanted, restore the membership check:
+//   if (!(await config.isOrgMember(email, organizationId))) return null
 async function requireOrgMember(
   config: ChatConfig,
   request: Request,
-  organizationId: number
+  _organizationId: number
 ): Promise<{ email: string } | null> {
   const url = new URL(request.url)
   const token = parseCookies(request)[cookieNames(url).accessToken]
   if (!token) return null
   const claims = await verifyAccessToken(token, config.jwksUrl, config.supabaseUrl)
   if (!claims) return null
-  const email = claims.email.toLowerCase()
-  if (!(await config.isOrgMember(email, organizationId))) return null
-  return { email }
+  return { email: claims.email.toLowerCase() }
 }
 
 type Stat = { goals: number; assists: number; turnovers: number }
