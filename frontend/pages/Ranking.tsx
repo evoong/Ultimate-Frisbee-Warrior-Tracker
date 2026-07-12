@@ -55,6 +55,7 @@ export default function Ranking() {
 }
 
 function PlayerRankings() {
+  const { currentOrgId } = useAuth()
   const { data: games, trigger: fetchGames } = useGetGames()
   const { data: allSeasons, trigger: fetchAllSeasons } = useGetAllSeasons()
   const { data: seasonsWithGames, trigger: fetchSeasonsWithGames } = useGetSeasons()
@@ -65,10 +66,11 @@ function PlayerRankings() {
   const [selectedGameIds, setSelectedGameIds] = useState<number[]>([])
 
   useEffect(() => {
-    fetchGames()
-    fetchAllSeasons()
-    fetchSeasonsWithGames()
-  }, [])
+    if (currentOrgId == null) return
+    fetchGames({ organizationId: currentOrgId })
+    fetchAllSeasons({ organizationId: currentOrgId })
+    fetchSeasonsWithGames({ organizationId: currentOrgId })
+  }, [currentOrgId])
 
   useEffect(() => {
     const s = seasonsWithGames as { id: number }[] | undefined
@@ -81,13 +83,14 @@ function PlayerRankings() {
   }, [seasonsWithGames, allSeasons, games])
 
   useEffect(() => {
-    if (filterType === 'all') fetchStats({})
+    if (currentOrgId == null) return
+    if (filterType === 'all') fetchStats({ organizationId: currentOrgId })
     else if (filterType === 'season') {
-      if (selectedSeasonIds.length > 0) fetchStats({ seasonIds: selectedSeasonIds })
-      else fetchStats({})
+      if (selectedSeasonIds.length > 0) fetchStats({ seasonIds: selectedSeasonIds, organizationId: currentOrgId })
+      else fetchStats({ organizationId: currentOrgId })
     }
-    else if (filterType === 'games' && selectedGameIds.length > 0) fetchStats({ gameIds: selectedGameIds })
-  }, [filterType, selectedSeasonIds, selectedGameIds])
+    else if (filterType === 'games' && selectedGameIds.length > 0) fetchStats({ gameIds: selectedGameIds, organizationId: currentOrgId })
+  }, [filterType, selectedSeasonIds, selectedGameIds, currentOrgId])
 
   const handleGameToggle = (gameId: number) => {
     setSelectedGameIds(prev => prev.includes(gameId) ? prev.filter(id => id !== gameId) : [...prev, gameId])
@@ -274,7 +277,7 @@ function PlayerRankings() {
 }
 
 function Standings() {
-  const { allowed } = useAuth()
+  const { allowed, currentOrgId } = useAuth()
   const { data: allSeasons, trigger: fetchAllSeasons } = useGetAllSeasons()
   const { data: league, loading: leagueLoading, error, trigger: fetchLeague } = useGetLeague()
 
@@ -297,7 +300,10 @@ function Standings() {
   const [renameValue, setRenameValue] = useState('')
   const [pointsDraft, setPointsDraft] = useState({ win: '2', tie: '1', loss: '0' })
 
-  useEffect(() => { fetchAllSeasons() }, [])
+  useEffect(() => {
+    if (currentOrgId == null) return
+    fetchAllSeasons({ organizationId: currentOrgId })
+  }, [currentOrgId])
 
   useEffect(() => {
     const seasons = allSeasons as Season[] | undefined
@@ -353,8 +359,8 @@ function Standings() {
   }
 
   const handleAddTeam = async () => {
-    if (!newTeamName.trim() || selectedSeasonId == null) return
-    await createTeam({ seasonId: selectedSeasonId, name: newTeamName })
+    if (!newTeamName.trim() || selectedSeasonId == null || currentOrgId == null) return
+    await createTeam({ seasonId: selectedSeasonId, name: newTeamName, organizationId: currentOrgId })
     setNewTeamName('')
     refresh()
   }

@@ -79,7 +79,7 @@ function formatWeekday(dateStr: string) {
 const OUTCOME_OPTIONS = ['Win', 'Loss', 'Tie', 'Default Win', 'Default Loss', 'Forfeit']
 
 export default function Schedule() {
-  const { allowed } = useAuth()
+  const { allowed, currentOrgId } = useAuth()
   const { data: games, loading, error, trigger: fetchGames } = useGetGames()
   const { data: events, loading: eventsLoading, trigger: fetchEvents } = useGetGameEvents()
   const { data: players, trigger: fetchPlayers } = useGetSeasonRoster()
@@ -198,36 +198,37 @@ export default function Schedule() {
   useEffect(() => {
     // fetchGames happens in the scheduleSeasonIds effect below (fires on mount too).
     // Player roster fetches happen in handleSelectGame, scoped to that game's season.
-    fetchSeasons()
-    fetchSeasonsMeta()
+    if (currentOrgId == null) return
+    fetchSeasons({ organizationId: currentOrgId })
+    fetchSeasonsMeta({ organizationId: currentOrgId })
     fetchEventTypes()
-    fetchSeasonsWithGames()
-    fetchJamConflicts()
-  }, [])
+    fetchSeasonsWithGames({ organizationId: currentOrgId })
+    fetchJamConflicts({ organizationId: currentOrgId })
+  }, [currentOrgId])
 
   const handleSyncJamNow = async () => {
     await syncJamNow()
-    fetchJamConflicts()
-    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined })
+    fetchJamConflicts({ organizationId: currentOrgId })
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentOrgId })
   }
 
   const handleCreateGameFromConflict = async (conflict: JamSyncConflict) => {
     const chosen = jamCreateSeasonChoice[conflict.id]
     await createGameFromConflict({ conflict, seasonId: chosen ? parseInt(chosen) : null })
-    fetchJamConflicts()
-    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined })
+    fetchJamConflicts({ organizationId: currentOrgId })
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentOrgId })
   }
 
   const handleLinkJamConflict = async (conflict: JamSyncConflict) => {
     if (!conflict.existing_game_id) return
     await linkConflictToGame({ conflict, gameId: conflict.existing_game_id })
-    fetchJamConflicts()
-    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined })
+    fetchJamConflicts({ organizationId: currentOrgId })
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentOrgId })
   }
 
   const handleDismissJamConflict = async (conflictId: number) => {
     await dismissConflict({ conflictId })
-    fetchJamConflicts()
+    fetchJamConflicts({ organizationId: currentOrgId })
   }
 
   useEffect(() => {
@@ -240,8 +241,9 @@ export default function Schedule() {
 
   // Reload games when season filter changes
   useEffect(() => {
-    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined })
-  }, [scheduleSeasonIds])
+    if (currentOrgId == null) return
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentOrgId })
+  }, [scheduleSeasonIds, currentOrgId])
 
   // Keep the "Add Players" target valid against the loaded groups: if the
   // currently selected name was just deleted (or hasn't loaded yet), fall
@@ -277,8 +279,8 @@ export default function Schedule() {
     const groups = await fetchLineupGroups({ gameId })
     if (groups && groups.length === 0) {
       await Promise.all([
-        createLineupGroup({ gameId, lineupName: 'Lineup 1', sortOrder: 0 }),
-        createLineupGroup({ gameId, lineupName: 'Lineup 2', sortOrder: 1 }),
+        createLineupGroup({ gameId, lineupName: 'Lineup 1', sortOrder: 0, organizationId: currentOrgId }),
+        createLineupGroup({ gameId, lineupName: 'Lineup 2', sortOrder: 1, organizationId: currentOrgId }),
       ])
       fetchLineupGroups({ gameId })
     }
@@ -292,10 +294,10 @@ export default function Schedule() {
     fetchAttendance({ gameId: game.id })
     if (game.season_id) {
       fetchPlayers({ seasonId: game.season_id })
-      fetchOtherPlayers({ seasonId: game.season_id })
-      fetchLineupSeasonStats({ seasonIds: [game.season_id] })
+      fetchOtherPlayers({ seasonId: game.season_id, organizationId: currentOrgId })
+      fetchLineupSeasonStats({ seasonIds: [game.season_id], organizationId: currentOrgId })
     } else {
-      fetchOtherPlayers({})
+      fetchOtherPlayers({ organizationId: currentOrgId })
     }
     setActiveTab('events')
     setEditingNotes(false)
@@ -319,9 +321,9 @@ export default function Schedule() {
   const refreshRoster = async () => {
     if (selectedGameSeasonId) {
       await fetchPlayers({ seasonId: selectedGameSeasonId })
-      await fetchOtherPlayers({ seasonId: selectedGameSeasonId })
+      await fetchOtherPlayers({ seasonId: selectedGameSeasonId, organizationId: currentOrgId })
     } else {
-      await fetchOtherPlayers({})
+      await fetchOtherPlayers({ organizationId: currentOrgId })
     }
   }
 
@@ -341,10 +343,11 @@ export default function Schedule() {
       organizer: newSeasonData.organizer || undefined,
       location: newSeasonData.location || undefined,
       default_game_time: newSeasonData.default_game_time || undefined,
+      organizationId: currentOrgId,
     }) as Season | undefined
     if (created) {
-      await fetchSeasons()
-      await fetchSeasonsMeta()
+      await fetchSeasons({ organizationId: currentOrgId })
+      await fetchSeasonsMeta({ organizationId: currentOrgId })
       setFormData(f => ({
         ...f,
         season_id: String(created.id),
@@ -379,18 +382,19 @@ export default function Schedule() {
       game_time: formData.game_time,
       game_type: formData.game_type,
       season_id: formData.season_id ? parseInt(formData.season_id) : null,
+      organizationId: currentOrgId,
     })
     setIsDialogOpen(false)
     setFormData({ opponent: '', game_date: '', game_time: '', game_type: 'Regular', season_id: '' })
     setShowNewSeason(false)
-    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined })
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentOrgId })
   }
 
   const handleDeleteGame = async (gameId: number) => {
     await deleteGame({ gameId })
     setDeleteConfirmId(null)
     setSelectedGame(null)
-    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined })
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentOrgId })
   }
 
   const handleSaveNotes = async () => {
@@ -437,13 +441,14 @@ export default function Schedule() {
     if (!selectedGame) return
     // Picking "— Opponent —" as scorer on a goal means the other team scored
     if (newEventType === 'Goal' && newScorerId === '__opponent__') {
-      await createOpponentGoal({ gameId: selectedGame.id })
+      await createOpponentGoal({ gameId: selectedGame.id, organizationId: currentOrgId })
     } else {
       await createGoal({
         gameId: selectedGame.id,
         playerId: resolveNewPlayerId(newScorerId),
         relatedPlayerId: resolveNewPlayerId(newAssisterId),
         eventType: newEventType,
+        organizationId: currentOrgId,
       })
     }
     fetchEvents({ gameId: selectedGame.id })
@@ -451,7 +456,7 @@ export default function Schedule() {
 
   const handleAddOpponentGoal = async () => {
     if (!selectedGame) return
-    await createOpponentGoal({ gameId: selectedGame.id })
+    await createOpponentGoal({ gameId: selectedGame.id, organizationId: currentOrgId })
     fetchEvents({ gameId: selectedGame.id })
   }
 
@@ -464,7 +469,7 @@ export default function Schedule() {
 
   const handleAddPlayer = async (name: string) => {
     if (!selectedGame) return
-    const result = await createPlayerForGame({ display_name: name, gameId: selectedGame.id, seasonId: selectedGameSeasonId })
+    const result = await createPlayerForGame({ display_name: name, gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentOrgId })
     if (result) {
       await refreshRoster()
       setNewScorerId((result as { id: number }).id.toString())
@@ -473,7 +478,7 @@ export default function Schedule() {
 
   const handleAddAssister = async (name: string) => {
     if (!selectedGame) return
-    const result = await createPlayerForGame({ display_name: name, gameId: selectedGame.id, seasonId: selectedGameSeasonId })
+    const result = await createPlayerForGame({ display_name: name, gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentOrgId })
     if (result) {
       await refreshRoster()
       setNewAssisterId((result as { id: number }).id.toString())
@@ -482,14 +487,14 @@ export default function Schedule() {
 
   const handleAddExistingScorer = async (playerId: string) => {
     if (!selectedGame) return
-    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGame.id, seasonId: selectedGameSeasonId })
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentOrgId })
     await refreshRoster()
     setNewScorerId(playerId)
   }
 
   const handleAddExistingAssister = async (playerId: string) => {
     if (!selectedGame) return
-    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGame.id, seasonId: selectedGameSeasonId })
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentOrgId })
     await refreshRoster()
     setNewAssisterId(playerId)
   }
@@ -506,14 +511,14 @@ export default function Schedule() {
 
   const handleAddPlayerToAttendance = async (name: string) => {
     if (!selectedGame) return
-    await createPlayerForGame({ display_name: name, gameId: selectedGame.id, seasonId: selectedGameSeasonId })
+    await createPlayerForGame({ display_name: name, gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentOrgId })
     await refreshRoster()
     fetchAttendance({ gameId: selectedGame.id })
   }
 
   const handleAddExistingPlayerToAttendance = async (playerId: string) => {
     if (!selectedGame) return
-    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGame.id, seasonId: selectedGameSeasonId })
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentOrgId })
     await refreshRoster()
     fetchAttendance({ gameId: selectedGame.id })
   }
@@ -523,7 +528,7 @@ export default function Schedule() {
     const currentGroupEntries = ((lineups as LineupEntry[] | undefined) ?? []).filter(e => e.lineup_name === lineupName)
     const nextSortOrder = currentGroupEntries.reduce((max, e) => Math.max(max, e.sort_order), -1) + 1
     await Promise.all([...lineupSelectedIds].map((playerId, i) =>
-      addToLineup({ gameId: selectedGame.id, player_id: playerId, lineup_name: lineupName, seasonId: selectedGame.season_id, sortOrder: nextSortOrder + i })
+      addToLineup({ gameId: selectedGame.id, player_id: playerId, lineup_name: lineupName, seasonId: selectedGame.season_id, sortOrder: nextSortOrder + i, organizationId: currentOrgId })
     ))
     setLineupSelectedIds(new Set())
     fetchLineups({ gameId: selectedGame.id })
@@ -541,7 +546,7 @@ export default function Schedule() {
     if (!selectedGame || !name.trim()) return
     const groups = (lineupGroups as LineupGroup[] | undefined) ?? []
     const nextSortOrder = groups.reduce((max, g) => Math.max(max, g.sort_order), -1) + 1
-    await createLineupGroup({ gameId: selectedGame.id, lineupName: name.trim(), sortOrder: nextSortOrder })
+    await createLineupGroup({ gameId: selectedGame.id, lineupName: name.trim(), sortOrder: nextSortOrder, organizationId: currentOrgId })
     setLineupName(name.trim())
     setLineupSelectedIds(new Set())
     setAddingLineupName(false)
@@ -1486,7 +1491,7 @@ export default function Schedule() {
                               checked={row.in}
                               disabled={!allowed}
                               onChange={async e => {
-                                await setAttendance({ gameId: selectedGame!.id, playerId: row.player_id, attending: e.target.checked })
+                                await setAttendance({ gameId: selectedGame!.id, playerId: row.player_id, attending: e.target.checked, organizationId: currentOrgId })
                                 fetchAttendance({ gameId: selectedGame!.id })
                               }}
                               className="accent-primary w-4 h-4 rounded cursor-pointer disabled:cursor-default"

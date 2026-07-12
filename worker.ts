@@ -21,8 +21,10 @@ interface Env {
 type ScheduledEvent = { cron: string; scheduledTime: number };
 type ExecutionContext = { waitUntil: (promise: Promise<unknown>) => void };
 
-// Allowlist membership, cached per-isolate for a minute (mirrors the Express
-// server's cache) so repeated chat calls don't hit Postgres every time.
+// Membership cache, per-isolate for a minute (mirrors the Express server's
+// cache) so repeated chat calls don't hit Postgres every time. "Allowed" now
+// means "belongs to at least one organization" (allowed_users was fully
+// replaced by organization_members in 016_organizations.sql).
 const allowlistCache = new Map<string, { allowed: boolean; expires: number }>()
 
 function createIsEmailAllowed(env: Env) {
@@ -30,13 +32,26 @@ function createIsEmailAllowed(env: Env) {
     const cached = allowlistCache.get(email)
     if (cached && cached.expires > Date.now()) return cached.allowed
     const res = await fetch(
-      `${env.SUPABASE_URL}/rest/v1/allowed_users?select=email&email=eq.${encodeURIComponent(email)}`,
+      `${env.SUPABASE_URL}/rest/v1/organization_members?select=email&email=eq.${encodeURIComponent(email)}&limit=1`,
       { headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: `Bearer ${env.SUPABASE_SECRET_KEY}` } }
     )
     const data: any = res.ok ? await res.json() : []
     const allowed = Array.isArray(data) && data.length > 0
     allowlistCache.set(email, { allowed, expires: Date.now() + 60_000 })
     return allowed
+  }
+}
+
+// True only when the email is a member of this specific organization — used
+// by the chat endpoints, which scope team context/logs to one organization.
+function createIsOrgMember(env: Env) {
+  return async (email: string, organizationId: number): Promise<boolean> => {
+    const res = await fetch(
+      `${env.SUPABASE_URL}/rest/v1/organization_members?select=email&email=eq.${encodeURIComponent(email)}&organization_id=eq.${organizationId}&limit=1`,
+      { headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: `Bearer ${env.SUPABASE_SECRET_KEY}` } }
+    )
+    const data: any = res.ok ? await res.json() : []
+    return Array.isArray(data) && data.length > 0
   }
 }
 
@@ -64,7 +79,7 @@ export default {
           supabaseSecretKey: env.SUPABASE_SECRET_KEY,
           geminiApiKey: env.GEMINI_API_KEY,
           geminiModel: env.GEMINI_MODEL,
-          isEmailAllowed: createIsEmailAllowed(env),
+          isOrgMember: createIsOrgMember(env),
         };
         if (url.pathname === "/api/chat" && request.method === "POST") {
           return handleChatRequest(chatConfig, request);

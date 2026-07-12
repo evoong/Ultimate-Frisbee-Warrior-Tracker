@@ -8,9 +8,16 @@ export interface AuthUser {
   email: string
 }
 
+export interface OrgMembership {
+  organization_id: number
+  name: string
+  role: 'owner' | 'member'
+  is_public: boolean
+}
+
 export interface SessionInfo {
   user: AuthUser | null
-  allowed: boolean
+  organizations: OrgMembership[]
 }
 
 async function post(path: string, body?: unknown): Promise<Response> {
@@ -33,9 +40,9 @@ async function readError(res: Response): Promise<string> {
 
 export async function getSession(): Promise<SessionInfo> {
   const res = await fetch('/auth/session', { credentials: 'include' })
-  if (!res.ok) return { user: null, allowed: false }
+  if (!res.ok) return { user: null, organizations: [] }
   const data = await res.json()
-  return { user: data.user ?? null, allowed: data.allowed === true }
+  return { user: data.user ?? null, organizations: Array.isArray(data.organizations) ? data.organizations : [] }
 }
 
 export async function login(email: string, password: string): Promise<AuthUser> {

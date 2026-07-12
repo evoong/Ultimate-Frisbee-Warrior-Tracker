@@ -36,8 +36,8 @@ function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P
 }
 
 export function useGetGames() {
-  const fn = useCallback(async (params?: { seasonIds?: number[] }) => {
-    let query = supabase.from('games').select('*').order('game_date', { ascending: false })
+  const fn = useCallback(async (params?: { organizationId: number | null; seasonIds?: number[] }) => {
+    let query = supabase.from('games').select('*').eq('organization_id', params?.organizationId).order('game_date', { ascending: false })
     if (params?.seasonIds && params.seasonIds.length > 0) {
       query = query.in('season_id', params.seasonIds)
     }
@@ -66,7 +66,7 @@ export function useGetGames() {
       return s ? { ...g, our_score: s.our, their_score: s.their } : g
     }) as any[]
   }, [])
-  return useApiCall<any[], { seasonIds?: number[] }>(fn)
+  return useApiCall<any[], { organizationId: number | null; seasonIds?: number[] }>(fn)
 }
 
 // Every game we play is also a matchup in the league schedule. Database
@@ -75,10 +75,11 @@ export function useGetGames() {
 // insert/update/delete, so all creation paths (this hook, Jam calendar
 // sync, conflict resolution) stay consistent without app plumbing.
 export function useCreateGame() {
-  const fn = useCallback(async (params: { opponent: string; game_date: string; game_time: string; game_type: string; season_id?: number | null; notes?: string }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; opponent: string; game_date: string; game_time: string; game_type: string; season_id?: number | null; notes?: string }) => {
+    const { organizationId, ...rest } = params
     const { data, error } = await supabase
       .from('games')
-      .insert(params)
+      .insert({ ...rest, organization_id: organizationId })
       .select()
     if (error) throw new Error(error.message)
     return data?.[0]
@@ -136,10 +137,11 @@ export function useGetLineups() {
 }
 
 export function useAddToLineup() {
-  const fn = useCallback(async (params: { gameId: number; player_id: number; lineup_name?: string; seasonId?: number | null; sortOrder?: number }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; gameId: number; player_id: number; lineup_name?: string; seasonId?: number | null; sortOrder?: number }) => {
     const { data, error } = await supabase
       .from('game_lineups')
       .insert({
+        organization_id: params.organizationId,
         game_id: params.gameId,
         player_id: params.player_id,
         lineup_name: params.lineup_name ?? 'Starting',
@@ -155,7 +157,7 @@ export function useAddToLineup() {
     if (params.seasonId) {
       const { error: spError } = await supabase
         .from('season_players')
-        .upsert({ player_id: params.player_id, season_id: params.seasonId }, { onConflict: 'season_id,player_id', ignoreDuplicates: true })
+        .upsert({ organization_id: params.organizationId, player_id: params.player_id, season_id: params.seasonId }, { onConflict: 'season_id,player_id', ignoreDuplicates: true })
       if (spError) throw new Error(spError.message)
     }
     // See useCreatePlayerForGame (players.ts): a row for this specific game
@@ -163,7 +165,7 @@ export function useAddToLineup() {
     // shows them immediately rather than only from the next game onward.
     const { error: gaError } = await supabase
       .from('game_attendance')
-      .upsert({ game_id: params.gameId, player_id: params.player_id, in: true }, { onConflict: 'game_id,player_id', ignoreDuplicates: true })
+      .upsert({ organization_id: params.organizationId, game_id: params.gameId, player_id: params.player_id, in: true }, { onConflict: 'game_id,player_id', ignoreDuplicates: true })
     if (gaError) throw new Error(gaError.message)
     return data?.[0]
   }, [])
@@ -227,18 +229,18 @@ export function useGetLineupGroups() {
 }
 
 export function useCreateLineupGroup() {
-  const fn = useCallback(async (params: { gameId: number; lineupName: string; sortOrder: number }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; gameId: number; lineupName: string; sortOrder: number }) => {
     const { data, error } = await supabase
       .from('game_lineup_groups')
       .upsert(
-        { game_id: params.gameId, lineup_name: params.lineupName, sort_order: params.sortOrder },
+        { organization_id: params.organizationId, game_id: params.gameId, lineup_name: params.lineupName, sort_order: params.sortOrder },
         { onConflict: 'game_id,lineup_name', ignoreDuplicates: true },
       )
       .select()
     if (error) throw new Error(error.message)
     return data?.[0] as LineupGroup | undefined
   }, [])
-  return useApiCall<LineupGroup | undefined, { gameId: number; lineupName: string; sortOrder: number }>(fn)
+  return useApiCall<LineupGroup | undefined, { organizationId: number | null; gameId: number; lineupName: string; sortOrder: number }>(fn)
 }
 
 // Renaming a group must also repoint its players: game_lineups.lineup_name

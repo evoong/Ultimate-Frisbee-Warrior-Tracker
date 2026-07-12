@@ -122,8 +122,15 @@ async function pkcePair(): Promise<{ verifier: string; challenge: string }> {
   return { verifier, challenge: base64url(new Uint8Array(digest)) }
 }
 
-async function checkAllowed(config: GatewayConfig, accessToken: string): Promise<boolean> {
-  const res = await fetch(`${config.supabaseUrl}/rest/v1/rpc/is_allowed`, {
+export interface OrgMembership {
+  organization_id: number
+  name: string
+  role: string
+  is_public: boolean
+}
+
+async function getOrganizations(config: GatewayConfig, accessToken: string): Promise<OrgMembership[]> {
+  const res = await fetch(`${config.supabaseUrl}/rest/v1/rpc/my_organizations`, {
     method: 'POST',
     headers: {
       apikey: config.publishableKey,
@@ -132,8 +139,9 @@ async function checkAllowed(config: GatewayConfig, accessToken: string): Promise
     },
     body: '{}',
   })
-  if (!res.ok) return false
-  return (await res.json()) === true
+  if (!res.ok) return []
+  const data = await res.json()
+  return Array.isArray(data) ? data : []
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -305,8 +313,8 @@ export async function handleAuthRequest(
       if (status !== 200 || !data?.id) {
         return json({ user: null }, 401, clearSessionCookies(url))
       }
-      const allowed = await checkAllowed(config, accessToken)
-      return json({ user: { id: data.id, email: data.email }, allowed }, 200, setCookies)
+      const organizations = await getOrganizations(config, accessToken)
+      return json({ user: { id: data.id, email: data.email }, organizations }, 200, setCookies)
     }
 
     case 'POST /auth/passkeys/registration/options': {

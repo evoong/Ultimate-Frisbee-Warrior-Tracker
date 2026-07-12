@@ -37,34 +37,37 @@ function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P
 }
 
 export function useGetSeasons() {
-  const fn = useCallback(async () => {
+  const fn = useCallback(async (params: { organizationId: number | null }) => {
     const { data, error } = await supabase
       .from('seasons')
       .select('*')
+      .eq('organization_id', params.organizationId)
       .order('year', { ascending: false })
     if (error) throw new Error(error.message)
     return data as any[]
   }, [])
-  return useApiCall<any[]>(fn)
+  return useApiCall<any[], { organizationId: number | null }>(fn)
 }
 
 export function useGetAllSeasons() {
-  const fn = useCallback(async () => {
+  const fn = useCallback(async (params: { organizationId: number | null }) => {
     const { data, error } = await supabase
       .from('seasons')
       .select('*')
+      .eq('organization_id', params.organizationId)
       .order('year', { ascending: false })
     if (error) throw new Error(error.message)
     return data as any[]
   }, [])
-  return useApiCall<any[]>(fn)
+  return useApiCall<any[], { organizationId: number | null }>(fn)
 }
 
 export function useGetSeasonsMeta() {
-  const fn = useCallback(async () => {
+  const fn = useCallback(async (params: { organizationId: number | null }) => {
     const { data, error } = await supabase
       .from('seasons')
       .select('id, name, year, organizer, location')
+      .eq('organization_id', params.organizationId)
       .order('year', { ascending: false })
     if (error) throw new Error(error.message)
     const rows = (data ?? []) as { name: string | null; year: number | null; organizer: string | null; location: string | null }[]
@@ -76,17 +79,19 @@ export function useGetSeasonsMeta() {
       locations: uniq(rows.map(r => r.location)),
     }
   }, [])
-  return useApiCall(fn)
+  return useApiCall<{ organizers: any[]; names: any[]; years: any[]; locations: any[] }, { organizationId: number | null }>(fn)
 }
 
 export function useCreateSeason() {
   const fn = useCallback(async (params: {
+    organizationId: number | null;
     name: string; year: number; location?: string; league_name?: string;
     organizer?: string; default_game_time?: string
   }) => {
+    const { organizationId, ...rest } = params
     const { data, error } = await supabase
       .from('seasons')
-      .insert(params)
+      .insert({ ...rest, organization_id: organizationId })
       .select()
     if (error) throw new Error(error.message)
     return data?.[0]
@@ -95,10 +100,10 @@ export function useCreateSeason() {
 }
 
 export function useGetPlayerStats() {
-  const fn = useCallback(async (params?: { seasonIds?: number[]; gameIds?: number[] }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; seasonIds?: number[]; gameIds?: number[] }) => {
     // Resolve the games in scope first so events/attendance can be filtered
     // server-side (supabase caps unfiltered fetches at 1000 rows).
-    let gamesQuery = supabase.from('games').select('id, season_id')
+    let gamesQuery = supabase.from('games').select('id, season_id').eq('organization_id', params.organizationId)
     if (params?.seasonIds && params.seasonIds.length > 0) {
       gamesQuery = gamesQuery.in('season_id', params.seasonIds)
     }
@@ -123,6 +128,7 @@ export function useGetPlayerStats() {
     const { data: players, error: playersError } = await supabase
       .from('players')
       .select('id, display_name')
+      .eq('organization_id', params.organizationId)
 
     if (playersError) throw new Error(playersError.message)
 
@@ -213,14 +219,14 @@ export function useGetPlayerStats() {
 
     return result
   }, [])
-  return useApiCall<any[], { seasonIds?: number[]; gameIds?: number[] }>(fn)
+  return useApiCall<any[], { organizationId: number | null; seasonIds?: number[]; gameIds?: number[] }>(fn)
 }
 
 export function useGetCumulativeStats() {
-  const fn = useCallback(async (params?: { seasonId?: number }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; seasonId?: number }) => {
     // Fetch the season's games first so events can be filtered server-side
     // (supabase caps unfiltered fetches at 1000 rows)
-    let gamesQuery = supabase.from('games').select('id, opponent, game_date, season_id')
+    let gamesQuery = supabase.from('games').select('id, opponent, game_date, season_id').eq('organization_id', params.organizationId)
     if (params?.seasonId != null) gamesQuery = gamesQuery.eq('season_id', params.seasonId)
     const { data: games, error: gamesError } = await gamesQuery
     if (gamesError) throw new Error(gamesError.message)
@@ -241,6 +247,7 @@ export function useGetCumulativeStats() {
     const { data: players, error: playersError } = await supabase
       .from('players')
       .select('id, display_name')
+      .eq('organization_id', params.organizationId)
 
     if (playersError) throw new Error(playersError.message)
 
@@ -283,5 +290,5 @@ export function useGetCumulativeStats() {
     })
     return rows
   }, [])
-  return useApiCall<any[], { seasonId?: number }>(fn)
+  return useApiCall<any[], { organizationId: number | null; seasonId?: number }>(fn)
 }

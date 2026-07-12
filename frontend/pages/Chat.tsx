@@ -54,17 +54,18 @@ export default function Chat() {
   const [clearing, setClearing] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const sessionId = useRef(getSessionId())
-  const { allowed } = useAuth()
+  const { allowed, currentOrgId } = useAuth()
 
   useEffect(() => {
-    fetch(`/api/chat/history?session_id=${sessionId.current}`)
+    if (currentOrgId == null) return
+    fetch(`/api/chat/history?session_id=${sessionId.current}&organization_id=${currentOrgId}`)
       .then(r => r.json())
       .then((data: { role: string; content: string }[]) => {
         setMessages(data.map(d => ({ role: d.role as 'user' | 'assistant', content: d.content })))
         setHistoryLoaded(true)
       })
       .catch(() => setHistoryLoaded(true))
-  }, [])
+  }, [currentOrgId])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -72,7 +73,7 @@ export default function Chat() {
 
   const sendMessage = async () => {
     const text = input.trim()
-    if (!text || loading) return
+    if (!text || loading || currentOrgId == null) return
     setInput('')
     const newMessages: Message[] = [...messages, { role: 'user', content: text }]
     setMessages(newMessages)
@@ -85,6 +86,7 @@ export default function Chat() {
           message: text,
           session_id: sessionId.current,
           history: newMessages.slice(0, -1).map(m => ({ role: m.role, content: m.content })),
+          organization_id: currentOrgId,
         }),
       })
       const data = await res.json()
@@ -97,9 +99,10 @@ export default function Chat() {
   }
 
   const clearHistory = async () => {
+    if (currentOrgId == null) return
     setClearing(true)
     try {
-      await fetch(`/api/chat/history?session_id=${sessionId.current}`, { method: 'DELETE' })
+      await fetch(`/api/chat/history?session_id=${sessionId.current}&organization_id=${currentOrgId}`, { method: 'DELETE' })
       setMessages([])
     } finally {
       setClearing(false)

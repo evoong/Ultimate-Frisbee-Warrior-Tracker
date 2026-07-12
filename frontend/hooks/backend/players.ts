@@ -37,12 +37,13 @@ function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P
 }
 
 export function useGetPlayers() {
-  const fn = useCallback(async (params?: { seasonIds?: number[] }) => {
-    if (!params?.seasonIds || params.seasonIds.length === 0) {
+  const fn = useCallback(async (params: { organizationId: number | null; seasonIds?: number[] }) => {
+    if (!params.seasonIds || params.seasonIds.length === 0) {
       // No season filter - return all players, is_sub is the global default
       const { data, error } = await supabase
         .from('players')
         .select('*')
+        .eq('organization_id', params.organizationId)
         .order('display_name')
       if (error) throw new Error(error.message)
       return data as any[]
@@ -78,7 +79,7 @@ export function useGetPlayers() {
     if (error) throw new Error(error.message)
     return (data as any[]).map(p => ({ ...p, is_sub: subByPlayer.get(p.id) ?? p.is_sub }))
   }, [])
-  return useApiCall<any[], { seasonIds?: number[] }>(fn)
+  return useApiCall<any[], { organizationId: number | null; seasonIds?: number[] }>(fn)
 }
 
 export function useGetSeasonRoster() {
@@ -106,19 +107,20 @@ export function useGetSeasonRoster() {
 
 export function useCreatePlayer() {
   const fn = useCallback(async (params: {
+    organizationId: number | null;
     display_name: string; first_name?: string; last_name?: string;
     gender_match?: string; phone?: string; number?: number; position?: string; is_sub?: boolean; season_ids?: number[]
   }) => {
     // season_ids lives in the season_players junction table, not on players
-    const { season_ids, ...playerFields } = params
+    const { season_ids, organizationId, ...playerFields } = params
     const { data, error } = await supabase
       .from('players')
-      .insert(playerFields)
+      .insert({ ...playerFields, organization_id: organizationId })
       .select()
     if (error) throw new Error(error.message)
     const player = data?.[0]
     if (player && season_ids && season_ids.length > 0) {
-      const rows = season_ids.map(sid => ({ player_id: (player as any).id, season_id: sid }))
+      const rows = season_ids.map(sid => ({ organization_id: organizationId, player_id: (player as any).id, season_id: sid }))
       const { error: spError } = await supabase.from('season_players').insert(rows)
       if (spError) throw new Error(spError.message)
     }
@@ -128,11 +130,12 @@ export function useCreatePlayer() {
 }
 
 export function useGetPlayersNotInSeason() {
-  const fn = useCallback(async (params?: { gameId?: number; seasonId?: number }) => {
-    if (!params?.seasonId) {
+  const fn = useCallback(async (params: { organizationId: number | null; gameId?: number; seasonId?: number }) => {
+    if (!params.seasonId) {
       const { data, error } = await supabase
         .from('players')
         .select('*')
+        .eq('organization_id', params.organizationId)
         .order('display_name')
       if (error) throw new Error(error.message)
       return data as any[]
@@ -154,6 +157,7 @@ export function useGetPlayersNotInSeason() {
       const { data, error } = await supabase
         .from('players')
         .select('*')
+        .eq('organization_id', params.organizationId)
         .order('display_name')
       if (error) throw new Error(error.message)
       return data as any[]
@@ -165,21 +169,22 @@ export function useGetPlayersNotInSeason() {
     const { data, error } = await supabase
       .from('players')
       .select('*')
+      .eq('organization_id', params.organizationId)
       .not('id', 'in', `(${playerIds.join(',')})`)
       .order('display_name')
 
     if (error) throw new Error(error.message)
     return data as any[]
   }, [])
-  return useApiCall<any[], { gameId?: number; seasonId?: number }>(fn)
+  return useApiCall<any[], { organizationId: number | null; gameId?: number; seasonId?: number }>(fn)
 }
 
 export function useCreatePlayerForGame() {
-  const fn = useCallback(async (params: { gameId: number; seasonId?: number | null; display_name: string; position?: string; gender_match?: string }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; gameId: number; seasonId?: number | null; display_name: string; position?: string; gender_match?: string }) => {
     // Players created mid-game from Schedule/live scoring are subs
     const { data: playerData, error: playerError } = await supabase
       .from('players')
-      .insert({ display_name: params.display_name, position: params.position, gender_match: params.gender_match, is_sub: true })
+      .insert({ organization_id: params.organizationId, display_name: params.display_name, position: params.position, gender_match: params.gender_match, is_sub: true })
       .select()
     if (playerError) throw new Error(playerError.message)
 
@@ -188,7 +193,7 @@ export function useCreatePlayerForGame() {
 
     const { data, error } = await supabase
       .from('game_lineups')
-      .insert({ game_id: params.gameId, player_id: playerId, lineup_name: 'Starting' })
+      .insert({ organization_id: params.organizationId, game_id: params.gameId, player_id: playerId, lineup_name: 'Starting' })
       .select()
     if (error) throw new Error(error.message)
 
@@ -197,7 +202,7 @@ export function useCreatePlayerForGame() {
     // applied (Schedule, Strategy, ...), instead of being invisible
     // everywhere except this one game's lineup tab.
     if (params.seasonId) {
-      const { error: spError } = await supabase.from('season_players').insert({ player_id: playerId, season_id: params.seasonId, is_sub: true })
+      const { error: spError } = await supabase.from('season_players').insert({ organization_id: params.organizationId, player_id: playerId, season_id: params.seasonId, is_sub: true })
       if (spError) throw new Error(spError.message)
     }
     // A new game backfills game_attendance for the season roster at that
@@ -207,7 +212,7 @@ export function useCreatePlayerForGame() {
     // picks them up immediately instead of only from the next game onward.
     const { error: gaError } = await supabase
       .from('game_attendance')
-      .upsert({ game_id: params.gameId, player_id: playerId, in: true }, { onConflict: 'game_id,player_id', ignoreDuplicates: true })
+      .upsert({ organization_id: params.organizationId, game_id: params.gameId, player_id: playerId, in: true }, { onConflict: 'game_id,player_id', ignoreDuplicates: true })
     if (gaError) throw new Error(gaError.message)
     return data?.[0]
   }, [])
@@ -243,10 +248,10 @@ export function useDeleteSubPlayer() {
 }
 
 export function useAddPlayerToGame() {
-  const fn = useCallback(async (params: { gameId: number; playerId: number; seasonId?: number | null }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; gameId: number; playerId: number; seasonId?: number | null }) => {
     const { data, error } = await supabase
       .from('game_lineups')
-      .insert({ game_id: params.gameId, player_id: params.playerId, lineup_name: 'Starting' })
+      .insert({ organization_id: params.organizationId, game_id: params.gameId, player_id: params.playerId, lineup_name: 'Starting' })
       .select()
     if (error) throw new Error(error.message)
 
@@ -261,7 +266,7 @@ export function useAddPlayerToGame() {
     if (params.seasonId) {
       const { error: spError } = await supabase
         .from('season_players')
-        .upsert({ player_id: params.playerId, season_id: params.seasonId, is_sub: true }, { onConflict: 'season_id,player_id', ignoreDuplicates: true })
+        .upsert({ organization_id: params.organizationId, player_id: params.playerId, season_id: params.seasonId, is_sub: true }, { onConflict: 'season_id,player_id', ignoreDuplicates: true })
       if (spError) throw new Error(spError.message)
     }
     // See useCreatePlayerForGame: a row for this specific game so the
@@ -269,7 +274,7 @@ export function useAddPlayerToGame() {
     // immediately rather than only from the next game onward.
     const { error: gaError } = await supabase
       .from('game_attendance')
-      .upsert({ game_id: params.gameId, player_id: params.playerId, in: true }, { onConflict: 'game_id,player_id', ignoreDuplicates: true })
+      .upsert({ organization_id: params.organizationId, game_id: params.gameId, player_id: params.playerId, in: true }, { onConflict: 'game_id,player_id', ignoreDuplicates: true })
     if (gaError) throw new Error(gaError.message)
     return data?.[0]
   }, [])
@@ -317,7 +322,7 @@ export function useUpdatePlayerPosition() {
 }
 
 export function useUpdatePlayerSeasons() {
-  const fn = useCallback(async (params: { playerId: number; seasonIds: number[]; subsBySeasonId?: Record<number, boolean> }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; playerId: number; seasonIds: number[]; subsBySeasonId?: Record<number, boolean> }) => {
     // Diff against existing memberships so jersey_number/active on removed rows are dropped
     const { data: existing, error: fetchError } = await supabase
       .from('season_players')
@@ -342,7 +347,7 @@ export function useUpdatePlayerSeasons() {
       // inserts player_id/season_id for new rows), leaving jersey_number/
       // active on already-existing rows untouched.
       const rows = params.seasonIds.map(sid => ({
-        player_id: params.playerId, season_id: sid, is_sub: params.subsBySeasonId?.[sid] ?? false,
+        organization_id: params.organizationId, player_id: params.playerId, season_id: sid, is_sub: params.subsBySeasonId?.[sid] ?? false,
       }))
       const { error: upsertError } = await supabase
         .from('season_players')
@@ -367,7 +372,7 @@ export function useUpdatePlayerSeasons() {
         .in('season_id', fullPlayerSeasonIds)
       if (gamesError) throw new Error(gamesError.message)
       const attendanceRows = ((seasonGames ?? []) as { id: number }[]).map(g => ({
-        game_id: g.id, player_id: params.playerId, in: true,
+        organization_id: params.organizationId, game_id: g.id, player_id: params.playerId, in: true,
       }))
       if (attendanceRows.length > 0) {
         const { error: gaError } = await supabase

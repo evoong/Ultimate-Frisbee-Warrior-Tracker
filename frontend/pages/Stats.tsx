@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useAuth } from '../contexts/AuthContext'
 import { useGetGames } from '../hooks/backend/games'
 import { useGetPlayers } from '../hooks/backend/players'
 import { useGetPlayerStats, useGetSeasons, useGetCumulativeStats, useGetAllSeasons } from '../hooks/backend/stats'
@@ -56,6 +57,7 @@ function seasonLabel(s: { name: string; year: number; organizer: string | null }
 }
 
 export default function Stats() {
+  const { currentOrgId } = useAuth()
   const { data: games, trigger: fetchGames } = useGetGames()
   const { data: seasons, trigger: fetchSeasons } = useGetSeasons()
   const { data: allSeasons, trigger: fetchAllSeasons } = useGetAllSeasons()
@@ -73,10 +75,11 @@ export default function Stats() {
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<number[]>([])
 
   useEffect(() => {
-    fetchGames()
-    fetchSeasons()
-    fetchAllSeasons()
-  }, [])
+    if (currentOrgId == null) return
+    fetchGames({ organizationId: currentOrgId })
+    fetchSeasons({ organizationId: currentOrgId })
+    fetchAllSeasons({ organizationId: currentOrgId })
+  }, [currentOrgId])
 
   // Default both filters to the latest Jam season that's actually been played
   useEffect(() => {
@@ -95,24 +98,26 @@ export default function Stats() {
   }, [seasons, allSeasons, games])
 
   useEffect(() => {
-    if (filterType === 'all') fetchStats({})
+    if (currentOrgId == null) return
+    if (filterType === 'all') fetchStats({ organizationId: currentOrgId })
     else if (filterType === 'season') {
-      if (selectedSeasonIds.length > 0) fetchStats({ seasonIds: selectedSeasonIds })
-      else fetchStats({})
+      if (selectedSeasonIds.length > 0) fetchStats({ seasonIds: selectedSeasonIds, organizationId: currentOrgId })
+      else fetchStats({ organizationId: currentOrgId })
     }
-    else if (filterType === 'games' && selectedGameIds.length > 0) fetchStats({ gameIds: selectedGameIds })
-  }, [filterType, selectedSeasonIds, selectedGameIds])
+    else if (filterType === 'games' && selectedGameIds.length > 0) fetchStats({ gameIds: selectedGameIds, organizationId: currentOrgId })
+  }, [filterType, selectedSeasonIds, selectedGameIds, currentOrgId])
 
   useEffect(() => {
+    if (currentOrgId == null) return
     if (cumulativeSeasonId && cumulativeSeasonId !== '__all__') {
-      fetchCumulative({ seasonId: parseInt(cumulativeSeasonId) })
-      fetchProgressionRoster({ seasonIds: [parseInt(cumulativeSeasonId)] })
+      fetchCumulative({ seasonId: parseInt(cumulativeSeasonId), organizationId: currentOrgId })
+      fetchProgressionRoster({ seasonIds: [parseInt(cumulativeSeasonId)], organizationId: currentOrgId })
     } else {
-      fetchCumulative({})
-      fetchProgressionRoster({})
+      fetchCumulative({ organizationId: currentOrgId })
+      fetchProgressionRoster({ organizationId: currentOrgId })
     }
     setSelectedPlayerIds([])
-  }, [cumulativeSeasonId])
+  }, [cumulativeSeasonId, currentOrgId])
 
   const handleGameToggle = (gameId: number) => {
     setSelectedGameIds(prev => prev.includes(gameId) ? prev.filter(id => id !== gameId) : [...prev, gameId])
