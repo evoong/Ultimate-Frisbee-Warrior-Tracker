@@ -21,38 +21,20 @@ interface Env {
 type ScheduledEvent = { cron: string; scheduledTime: number };
 type ExecutionContext = { waitUntil: (promise: Promise<unknown>) => void };
 
-// Membership cache, per-isolate for a minute (mirrors the Express server's
-// cache) so repeated chat calls don't hit Postgres every time. "Allowed" now
-// means "belongs to at least one organization" (allowed_users was fully
-// replaced by organization_members in 016_organizations.sql).
-const allowlistCache = new Map<string, { allowed: boolean; expires: number }>()
-
-function createIsEmailAllowed(env: Env) {
-  return async (email: string): Promise<boolean> => {
-    const cached = allowlistCache.get(email)
-    if (cached && cached.expires > Date.now()) return cached.allowed
-    const res = await fetch(
-      `${env.SUPABASE_URL}/rest/v1/organization_members?select=email&email=eq.${encodeURIComponent(email)}&limit=1`,
-      { headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: `Bearer ${env.SUPABASE_SECRET_KEY}` } }
-    )
-    const data: any = res.ok ? await res.json() : []
-    const allowed = Array.isArray(data) && data.length > 0
-    allowlistCache.set(email, { allowed, expires: Date.now() + 60_000 })
-    return allowed
-  }
+// "Allowed" means "belongs to at least one organization" (allowed_users was
+// fully replaced by organization_members in 016_organizations.sql).
+// Soft launch (app not released yet): always true, so any signed-in user
+// passes; the session cookie itself is still verified by the callers. When
+// isolation is wanted, restore the organization_members lookups (see
+// server/index.ts's isEmailAllowed/isOrgMember for the same pattern):
+//   /rest/v1/organization_members?select=email&email=eq.<email>&limit=1
+//   /rest/v1/organization_members?...&organization_id=eq.<id>&limit=1
+function createIsEmailAllowed(_env: Env) {
+  return async (_email: string): Promise<boolean> => true
 }
 
-// True only when the email is a member of this specific organization — used
-// by the chat endpoints, which scope team context/logs to one organization.
-function createIsOrgMember(env: Env) {
-  return async (email: string, organizationId: number): Promise<boolean> => {
-    const res = await fetch(
-      `${env.SUPABASE_URL}/rest/v1/organization_members?select=email&email=eq.${encodeURIComponent(email)}&organization_id=eq.${organizationId}&limit=1`,
-      { headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: `Bearer ${env.SUPABASE_SECRET_KEY}` } }
-    )
-    const data: any = res.ok ? await res.json() : []
-    return Array.isArray(data) && data.length > 0
-  }
+function createIsOrgMember(_env: Env) {
+  return async (_email: string, _organizationId: number): Promise<boolean> => true
 }
 
 export default {
