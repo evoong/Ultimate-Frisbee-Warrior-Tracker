@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 
-export type StrategyPlay = { id: number; name: string; created_at: string; game_id: number | null }
+export type StrategyPlay = { id: number; name: string; created_at: string; updated_at: string; game_id: number | null }
 export type StrategyStep = { id: number; play_id: number; step_number: number }
 export type StrategyPosition = { player_id: number; x: number; y: number }
 export type StrategyOpponentMarker = { id: number; label: string; x: number; y: number }
@@ -67,7 +67,7 @@ export function useGetStrategyPlays() {
       .from('strategy_plays')
       .select('*')
       .eq('organization_id', params.organizationId)
-      .order('created_at')
+      .order('updated_at', { ascending: false })
     if (error) throw new Error(error.message)
     return (data ?? []) as StrategyPlay[]
   }, [])

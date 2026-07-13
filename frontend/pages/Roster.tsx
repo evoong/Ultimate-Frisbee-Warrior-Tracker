@@ -3,6 +3,7 @@ import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlaye
 import { useGetAllSeasons, useGetSeasons } from '../hooks/backend/stats'
 import { useSetAttendance } from '../hooks/backend/attendance'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
+import { isPastGame } from '../lib/gameOrder'
 import { POSITIONS } from '../lib/positions'
 import { useAuth } from '../contexts/AuthContext'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
@@ -23,7 +24,7 @@ type Player = {
   id: number; display_name: string; first_name: string | null; last_name: string | null
   gender_match: string | null; phone: string | null; is_sub: boolean; position: string | null; photo_url: string | null; number: number | null
 }
-type GameStat = { game_id: number; opponent: string; game_date: string; game_type: string; season_id: number | null; in: boolean; goals: string; assists: string; turnovers: string }
+type GameStat = { game_id: number; opponent: string; game_date: string; game_time: string | null; game_type: string; season_id: number | null; in: boolean; goals: string; assists: string; turnovers: string }
 type Season = { id: number; name: string; year: number; organizer: string | null; start_date: string | null; end_date: string | null }
 type PlayerSeason = { id: number; name: string; year: number; organizer: string | null; active: boolean; is_sub: boolean }
 
@@ -234,9 +235,11 @@ export default function Roster() {
     seasonFilters.includes(g.season_id?.toString() ?? '')
   )
 
-  // Only count games the player attended — matches the per-game rows, which show '—' when out
+  // Only count games the player attended that have actually happened — a
+  // game merely marked "attending" in advance shouldn't dilute the average.
+  // Matches the per-game rows, which show '—' when out.
   const summary = filteredStats.reduce(
-    (acc, g) => g.in
+    (acc, g) => g.in && isPastGame(g)
       ? { goals: acc.goals + parseInt(g.goals), assists: acc.assists + parseInt(g.assists), turnovers: acc.turnovers + parseInt(g.turnovers), games: acc.games + 1 }
       : acc,
     { goals: 0, assists: 0, turnovers: 0, games: 0 }

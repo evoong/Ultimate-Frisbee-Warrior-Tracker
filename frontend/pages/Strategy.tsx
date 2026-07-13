@@ -41,7 +41,7 @@ const TRANSITION_SPEEDS = [
   { label: 'Fast', ms: 350 },
   { label: 'Off', ms: 0 },
 ] as const
-const DEFAULT_TRANSITION_MS: number = 700
+const DEFAULT_TRANSITION_MS: number = 1200
 
 function loadTransitionMs(): number {
   const stored = Number(localStorage.getItem(TRANSITION_SPEED_KEY))
@@ -355,18 +355,27 @@ export default function Strategy() {
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
   }
 
-  // A 'run' arrow anchored to a player drives that player's position in the
-  // next step (if one already exists) — its head is where they end up.
-  // Dragging them there afterward just overwrites it like any other
-  // position, no different from a player with no arrow at all. Opponent
-  // anchors don't get this propagation: opponent markers have no
-  // persistent cross-step identity to upsert a position against (they're
-  // matched by label at step-creation time only, see handleAddStep).
-  const propagateRunArrowToNextStep = async (arrow: { arrow_type: 'run' | 'throw'; start_player_id: number | null | undefined; x2: number; y2: number }) => {
-    if (arrow.arrow_type !== 'run' || arrow.start_player_id == null) return
+  // A 'run' arrow anchored to a player or opponent drives that entity's
+  // position in the next step (if one already exists) — its head is where
+  // they end up. Dragging them there afterward just overwrites it like any
+  // other position, no different from an entity with no arrow at all.
+  // Opponent markers have no persistent cross-step id (they're step-scoped
+  // rows matched only by label, see handleAddStep), so propagating to them
+  // means looking up the next step's marker with the same label and
+  // updating it directly, instead of the upsert-by-id players get.
+  const propagateRunArrowToNextStep = async (arrow: { arrow_type: 'run' | 'throw'; start_player_id: number | null | undefined; start_opponent_id: number | null | undefined; x2: number; y2: number }) => {
+    if (arrow.arrow_type !== 'run') return
     const nextStep = stepList[stepIndex + 1]
     if (!nextStep) return
-    await upsertPosition({ stepId: nextStep.id, playerId: arrow.start_player_id, x: arrow.x2, y: arrow.y2, organizationId: currentOrgId })
+    if (arrow.start_player_id != null) {
+      await upsertPosition({ stepId: nextStep.id, playerId: arrow.start_player_id, x: arrow.x2, y: arrow.y2, organizationId: currentOrgId })
+    } else if (arrow.start_opponent_id != null) {
+      const label = opponents.find(o => o.id === arrow.start_opponent_id)?.label
+      if (!label) return
+      const nextOpponents = await fetchOpponents({ stepId: nextStep.id })
+      const target = nextOpponents?.find(o => o.label === label)
+      if (target) await updateOpponent({ id: target.id, x: arrow.x2, y: arrow.y2 })
+    }
   }
 
   const handleCreateArrow = async (arrow: { x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id: number | null; start_opponent_id: number | null }) => {
@@ -394,7 +403,8 @@ export default function Strategy() {
     const updated = arrows.find(a => a.id === arrow.id)
     if (updated) {
       const startPlayerId = arrow.start_player_id !== undefined ? arrow.start_player_id : updated.start_player_id
-      await propagateRunArrowToNextStep({ arrow_type: updated.arrow_type, start_player_id: startPlayerId, x2: arrow.x2, y2: arrow.y2 })
+      const startOpponentId = arrow.start_opponent_id !== undefined ? arrow.start_opponent_id : updated.start_opponent_id
+      await propagateRunArrowToNextStep({ arrow_type: updated.arrow_type, start_player_id: startPlayerId, start_opponent_id: startOpponentId, x2: arrow.x2, y2: arrow.y2 })
     }
   }
 
@@ -794,6 +804,7 @@ export default function Strategy() {
               <Select
                 value={selectedPlayId !== null ? String(selectedPlayId) : undefined}
                 onValueChange={v => setSelectedPlayId(Number(v))}
+                onOpenChange={open => { if (open) fetchPlays({ organizationId: currentOrgId }) }}
               >
                 <SelectTrigger className="flex-1 bg-card text-foreground border-border">
                   <SelectValue placeholder="Select a play" />
@@ -859,33 +870,33 @@ export default function Strategy() {
             {/* Step-level controls: numbered tabs, prev/next, add/delete step. */}
             {selectedPlay && stepList.length > 0 && (
               <div className="flex items-center gap-1.5 flex-wrap">
-                <Button variant="outline" size="icon" className="h-7 w-7" aria-label="Previous step" disabled={stepIndex <= 0}
+                <Button variant="outline" size="icon" className="h-10 w-10 sm:h-7 sm:w-7" aria-label="Previous step" disabled={stepIndex <= 0}
                   onClick={() => setSelectedStepId(stepList[stepIndex - 1]!.id)}>
-                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <ChevronLeft className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                 </Button>
                 {stepList.map((step, i) => (
                   <Button
                     key={step.id}
                     size="sm"
                     variant={step.id === selectedStepId ? 'default' : 'outline'}
-                    className="h-7 w-7 p-0 text-xs"
+                    className="h-10 w-10 sm:h-7 sm:w-7 p-0 text-sm sm:text-xs"
                     onClick={() => setSelectedStepId(step.id)}
                   >
                     {i + 1}
                   </Button>
                 ))}
-                <Button variant="outline" size="icon" className="h-7 w-7" aria-label="Next step" disabled={stepIndex === -1 || stepIndex >= stepList.length - 1}
+                <Button variant="outline" size="icon" className="h-10 w-10 sm:h-7 sm:w-7" aria-label="Next step" disabled={stepIndex === -1 || stepIndex >= stepList.length - 1}
                   onClick={() => setSelectedStepId(stepList[stepIndex + 1]!.id)}>
-                  <ChevronRight className="w-3.5 h-3.5" />
+                  <ChevronRight className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                 </Button>
                 {allowed && (
                   <>
-                    <Button variant="outline" size="icon" className="h-7 w-7" aria-label="Add step" onClick={handleAddStep}>
-                      <Plus className="w-3.5 h-3.5" />
+                    <Button variant="outline" size="icon" className="h-10 w-10 sm:h-7 sm:w-7" aria-label="Add step" onClick={handleAddStep}>
+                      <Plus className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                     </Button>
-                    <Button variant="outline" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" aria-label="Delete step"
+                    <Button variant="outline" size="icon" className="h-10 w-10 sm:h-7 sm:w-7 text-destructive hover:text-destructive" aria-label="Delete step"
                       disabled={stepList.length <= 1} onClick={handleDeleteStep}>
-                      <X className="w-3.5 h-3.5" />
+                      <X className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                     </Button>
                   </>
                 )}

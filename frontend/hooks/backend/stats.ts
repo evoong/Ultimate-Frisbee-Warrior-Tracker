@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { isTurnoverEvent } from '../../lib/eventUtils'
+import { isPastGame } from '../../lib/gameOrder'
 
 type HookResult<T, P = void> = {
   data: T | undefined
@@ -103,7 +104,7 @@ export function useGetPlayerStats() {
   const fn = useCallback(async (params: { organizationId: number | null; seasonIds?: number[]; gameIds?: number[] }) => {
     // Resolve the games in scope first so events/attendance can be filtered
     // server-side (supabase caps unfiltered fetches at 1000 rows).
-    let gamesQuery = supabase.from('games').select('id, season_id').eq('organization_id', params.organizationId)
+    let gamesQuery = supabase.from('games').select('id, season_id, game_date, game_time').eq('organization_id', params.organizationId)
     if (params?.seasonIds && params.seasonIds.length > 0) {
       gamesQuery = gamesQuery.in('season_id', params.seasonIds)
     }
@@ -115,6 +116,12 @@ export function useGetPlayerStats() {
       : params?.seasonIds && params.seasonIds.length > 0
         ? (games ?? []).map((g: any) => g.id)
         : null
+
+    // games_played (and the G/gm, A/gm averages derived from it) should only
+    // count games that have actually happened, not ones merely marked
+    // attending in advance. Same calendar-day "past" definition as
+    // Schedule's Upcoming/Played split (see lib/gameOrder.ts).
+    const playedGameIds = new Set((games ?? []).filter((g: any) => isPastGame(g)).map((g: any) => g.id))
 
     let eventsQuery = supabase
       .from('game_events')
@@ -205,9 +212,7 @@ export function useGetPlayerStats() {
     // Convert to array and calculate additional fields
     const result = Array.from(statsMap.values()).map((s: any) => {
       const attended = attendanceMap.get(s.player_id) ?? new Set<number>()
-      const gamesPlayed = filteredGameIds
-        ? [...attended].filter(gid => filteredGameIds.has(gid)).length
-        : attended.size
+      const gamesPlayed = [...attended].filter(gid => playedGameIds.has(gid) && (!filteredGameIds || filteredGameIds.has(gid))).length
       return { ...s, games_played: gamesPlayed, ga_rank: 0 }
     })
 

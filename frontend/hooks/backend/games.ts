@@ -136,8 +136,54 @@ export function useGetLineups() {
   return useApiCall<any[], { gameId: number }>(fn)
 }
 
+// Finds the season's game immediately before this one (by date, then time to
+// break same-day ties) and, if it has lineup groups set up, returns that
+// structure so a brand-new game's lineups can be auto-seeded from it (see
+// Schedule.tsx's ensureLineupSeeded). Returns null if there's no earlier
+// game in the season, or the earlier one was never lineup'd.
+export function useGetPreviousGameLineups() {
+  const fn = useCallback(async (params: { organizationId: number | null; seasonId: number; gameId: number }) => {
+    const { data: seasonGames, error: gamesError } = await supabase
+      .from('games')
+      .select('id, game_date, game_time')
+      .eq('organization_id', params.organizationId)
+      .eq('season_id', params.seasonId)
+    if (gamesError) throw new Error(gamesError.message)
+
+    const sorted = ((seasonGames ?? []) as { id: number; game_date: string; game_time: string | null }[])
+      .sort((a, b) => `${a.game_date}T${a.game_time ?? '00:00:00'}`.localeCompare(`${b.game_date}T${b.game_time ?? '00:00:00'}`))
+    const idx = sorted.findIndex(g => g.id === params.gameId)
+    const previousGame = idx > 0 ? sorted[idx - 1] : null
+    if (!previousGame) return null
+
+    const { data: groups, error: groupsError } = await supabase
+      .from('game_lineup_groups')
+      .select('lineup_name, sort_order')
+      .eq('game_id', previousGame.id)
+      .order('sort_order')
+    if (groupsError) throw new Error(groupsError.message)
+    if (!groups || groups.length === 0) return null
+
+    const { data: entries, error: entriesError } = await supabase
+      .from('game_lineups')
+      .select('player_id, lineup_name, sort_order')
+      .eq('game_id', previousGame.id)
+      .order('sort_order')
+    if (entriesError) throw new Error(entriesError.message)
+
+    return {
+      groups: groups as { lineup_name: string; sort_order: number }[],
+      entries: (entries ?? []) as { player_id: number; lineup_name: string; sort_order: number }[],
+    }
+  }, [])
+  return useApiCall<
+    { groups: { lineup_name: string; sort_order: number }[]; entries: { player_id: number; lineup_name: string; sort_order: number }[] } | null,
+    { organizationId: number | null; seasonId: number; gameId: number }
+  >(fn)
+}
+
 export function useAddToLineup() {
-  const fn = useCallback(async (params: { organizationId: number | null; gameId: number; player_id: number; lineup_name?: string; seasonId?: number | null; sortOrder?: number }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; gameId: number; player_id: number; lineup_name?: string; seasonId?: number | null; sortOrder?: number; role?: string | null }) => {
     const { data, error } = await supabase
       .from('game_lineups')
       .insert({
@@ -146,6 +192,7 @@ export function useAddToLineup() {
         player_id: params.player_id,
         lineup_name: params.lineup_name ?? 'Starting',
         ...(params.sortOrder != null ? { sort_order: params.sortOrder } : {}),
+        ...(params.role !== undefined ? { role: params.role } : {}),
       })
       .select()
     if (error) throw new Error(error.message)
@@ -161,11 +208,15 @@ export function useAddToLineup() {
       if (spError) throw new Error(spError.message)
     }
     // See useCreatePlayerForGame (players.ts): a row for this specific game
-    // so the Attendance tab (which lists existing rows, not the roster)
-    // shows them immediately rather than only from the next game onward.
+    // so attendance (derived from lineup membership) reflects them
+    // immediately. Must actually overwrite on conflict (not
+    // ignoreDuplicates): a stale pre-existing row (e.g. from the
+    // game-creation backfill trigger, or a previous removal) defaulting to
+    // `in: false` would otherwise survive untouched, leaving them "in a
+    // lineup" but not attending.
     const { error: gaError } = await supabase
       .from('game_attendance')
-      .upsert({ organization_id: params.organizationId, game_id: params.gameId, player_id: params.player_id, in: true }, { onConflict: 'game_id,player_id', ignoreDuplicates: true })
+      .upsert({ organization_id: params.organizationId, game_id: params.gameId, player_id: params.player_id, in: true }, { onConflict: 'game_id,player_id' })
     if (gaError) throw new Error(gaError.message)
     return data?.[0]
   }, [])
@@ -177,6 +228,22 @@ export function useUpdateLineupSortOrder() {
     const { data, error } = await supabase
       .from('game_lineups')
       .update({ sort_order: params.sortOrder })
+      .eq('id', params.id)
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0]
+  }, [])
+  return useApiCall(fn)
+}
+
+// Moves an existing lineup entry to a different lineup group (drag-between-
+// lineups), updating in place rather than delete+re-insert so the row's id
+// and role assignment survive the move.
+export function useMoveLineupEntry() {
+  const fn = useCallback(async (params: { id: number; lineupName: string; sortOrder: number }) => {
+    const { data, error } = await supabase
+      .from('game_lineups')
+      .update({ lineup_name: params.lineupName, sort_order: params.sortOrder })
       .eq('id', params.id)
       .select()
     if (error) throw new Error(error.message)
@@ -292,4 +359,104 @@ export function useDeleteLineupGroup() {
     return true
   }, [])
   return useApiCall<boolean, { gameId: number; lineupName: string; groupId: number }>(fn)
+}
+
+export type LineupTemplate = { id: number; name: string }
+
+export function useGetLineupTemplates() {
+  const fn = useCallback(async (params: { organizationId: number | null; seasonId: number }) => {
+    const { data, error } = await supabase
+      .from('lineup_templates')
+      .select('id, name')
+      .eq('organization_id', params.organizationId)
+      .eq('season_id', params.seasonId)
+      .order('name')
+    if (error) throw new Error(error.message)
+    return data as LineupTemplate[]
+  }, [])
+  return useApiCall<LineupTemplate[], { organizationId: number | null; seasonId: number }>(fn)
+}
+
+export function useGetLineupTemplateDetail() {
+  const fn = useCallback(async (params: { templateId: number }) => {
+    const { data: groups, error: groupsError } = await supabase
+      .from('lineup_template_groups')
+      .select('lineup_name, sort_order')
+      .eq('template_id', params.templateId)
+      .order('sort_order')
+    if (groupsError) throw new Error(groupsError.message)
+    const { data: players, error: playersError } = await supabase
+      .from('lineup_template_players')
+      .select('lineup_name, player_id, sort_order, role')
+      .eq('template_id', params.templateId)
+      .order('sort_order')
+    if (playersError) throw new Error(playersError.message)
+    return {
+      groups: (groups ?? []) as { lineup_name: string; sort_order: number }[],
+      players: (players ?? []) as { lineup_name: string; player_id: number; sort_order: number; role: string | null }[],
+    }
+  }, [])
+  return useApiCall<
+    { groups: { lineup_name: string; sort_order: number }[]; players: { lineup_name: string; player_id: number; sort_order: number; role: string | null }[] },
+    { templateId: number }
+  >(fn)
+}
+
+// Saving is "create or overwrite by name": a template is identified by
+// (season_id, name), so re-saving under a name that already exists for
+// this season replaces its groups/players rather than erroring or
+// duplicating. Groups/players are matched by lineup_name text, not a
+// group foreign key (same shape as game_lineup_groups/game_lineups), so
+// both child tables need clearing explicitly before the fresh insert.
+export function useSaveLineupTemplate() {
+  const fn = useCallback(async (params: {
+    organizationId: number | null
+    seasonId: number
+    name: string
+    groups: { lineup_name: string; sort_order: number }[]
+    players: { lineup_name: string; player_id: number; sort_order: number; role: string | null }[]
+  }) => {
+    const { data: templateRows, error: templateError } = await supabase
+      .from('lineup_templates')
+      .upsert({ organization_id: params.organizationId, season_id: params.seasonId, name: params.name }, { onConflict: 'season_id,name' })
+      .select()
+    if (templateError) throw new Error(templateError.message)
+    const templateId = templateRows?.[0]?.id
+    if (!templateId) throw new Error('Failed to save lineup template')
+
+    const { error: delGroupsError } = await supabase.from('lineup_template_groups').delete().eq('template_id', templateId)
+    if (delGroupsError) throw new Error(delGroupsError.message)
+    const { error: delPlayersError } = await supabase.from('lineup_template_players').delete().eq('template_id', templateId)
+    if (delPlayersError) throw new Error(delPlayersError.message)
+
+    if (params.groups.length > 0) {
+      const { error: groupsError } = await supabase.from('lineup_template_groups').insert(
+        params.groups.map(g => ({ template_id: templateId, organization_id: params.organizationId, lineup_name: g.lineup_name, sort_order: g.sort_order }))
+      )
+      if (groupsError) throw new Error(groupsError.message)
+    }
+    if (params.players.length > 0) {
+      const { error: playersError } = await supabase.from('lineup_template_players').insert(
+        params.players.map(p => ({ template_id: templateId, organization_id: params.organizationId, lineup_name: p.lineup_name, player_id: p.player_id, sort_order: p.sort_order, role: p.role }))
+      )
+      if (playersError) throw new Error(playersError.message)
+    }
+    return templateId as number
+  }, [])
+  return useApiCall<number, {
+    organizationId: number | null
+    seasonId: number
+    name: string
+    groups: { lineup_name: string; sort_order: number }[]
+    players: { lineup_name: string; player_id: number; sort_order: number; role: string | null }[]
+  }>(fn)
+}
+
+export function useDeleteLineupTemplate() {
+  const fn = useCallback(async (params: { templateId: number }) => {
+    const { error } = await supabase.from('lineup_templates').delete().eq('id', params.templateId)
+    if (error) throw new Error(error.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { templateId: number }>(fn)
 }
