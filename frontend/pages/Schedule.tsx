@@ -1016,31 +1016,6 @@ export default function Schedule() {
         </Card>
         </FadeIn>
 
-        {/* Box score */}
-        {playerStats.length > 0 && (
-          <Card className="bg-card text-card-foreground border-border">
-            <CardHeader><CardTitle className="text-base">Box Score</CardTitle></CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                <div className="flex items-center gap-3 px-3 text-xs text-muted-foreground font-medium">
-                  <div className="flex-1">Player</div>
-                  <div className="w-10 text-center text-green-600 dark:text-green-400">G</div>
-                  <div className="w-10 text-center text-blue-600 dark:text-blue-400">A</div>
-                  <div className="w-10 text-center text-orange-600 dark:text-orange-400">TO</div>
-                </div>
-                {playerStats.map(p => (
-                  <div key={p.name} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-background">
-                    <div className="flex-1 font-medium text-foreground text-sm">{p.name}</div>
-                    <div className="w-10 text-center font-bold text-green-600 dark:text-green-400">{p.goals}</div>
-                    <div className="w-10 text-center font-bold text-blue-600 dark:text-blue-400">{p.assists}</div>
-                    <div className="w-10 text-center font-bold text-orange-600 dark:text-orange-400">{p.turnovers}</div>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
         {/* Tab bar */}
         <div className="flex gap-1 bg-muted rounded-lg p-1">
           {[
@@ -1660,6 +1635,31 @@ export default function Schedule() {
                   )}
                 </div>
               )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Box score */}
+        {playerStats.length > 0 && (
+          <Card className="bg-card text-card-foreground border-border">
+            <CardHeader><CardTitle className="text-base">Box Score</CardTitle></CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                <div className="flex items-center gap-3 px-3 text-xs text-muted-foreground font-medium">
+                  <div className="flex-1">Player</div>
+                  <div className="w-10 text-center text-green-600 dark:text-green-400">G</div>
+                  <div className="w-10 text-center text-blue-600 dark:text-blue-400">A</div>
+                  <div className="w-10 text-center text-orange-600 dark:text-orange-400">TO</div>
+                </div>
+                {playerStats.map(p => (
+                  <div key={p.name} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-background">
+                    <div className="flex-1 font-medium text-foreground text-sm">{p.name}</div>
+                    <div className="w-10 text-center font-bold text-green-600 dark:text-green-400">{p.goals}</div>
+                    <div className="w-10 text-center font-bold text-blue-600 dark:text-blue-400">{p.assists}</div>
+                    <div className="w-10 text-center font-bold text-orange-600 dark:text-orange-400">{p.turnovers}</div>
+                  </div>
+                ))}
+              </div>
             </CardContent>
           </Card>
         )}
