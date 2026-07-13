@@ -27,7 +27,7 @@ import GenderTag, { GenderRatio } from '../components/GenderTag'
 import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
 import { useAuth } from '../contexts/AuthContext'
-import { Calendar, Plus, Minus, Trophy, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Target, TrendingUp, PlusCircle, Trash2, Edit2, Save, X, Users, LayoutList, CalendarDays, StickyNote, ClipboardCheck, AlertTriangle, RefreshCw, ArrowLeftRight, Undo2, Check, ChevronsUpDown, GripVertical } from 'lucide-react'
+import { Calendar, Plus, Minus, Trophy, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Target, TrendingUp, PlusCircle, Trash2, Edit2, Save, X, Users, LayoutList, CalendarDays, StickyNote, ClipboardCheck, AlertTriangle, RefreshCw, ArrowLeftRight, Undo2, Check, ChevronsUpDown, GripVertical, Table2 } from 'lucide-react'
 
 // A game counts as "imminent" from 30 minutes before its start time to 30
 // minutes after, the window where you're about to score it or already are.
@@ -125,7 +125,7 @@ export default function Schedule() {
   const { trigger: dismissConflict } = useDismissConflict()
   const [jamCreateSeasonChoice, setJamCreateSeasonChoice] = useState<Record<number, string>>({})
   const [selectedGame, setSelectedGame] = useState<Game | null>(null)
-  const [activeTab, setActiveTab] = useState<'events' | 'lineups' | 'attendance' | 'notes'>('events')
+  const [activeTab, setActiveTab] = useState<'events' | 'boxscore' | 'lineups' | 'attendance' | 'notes'>('events')
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list')
   const [calendarDate, setCalendarDate] = useState(() => new Date())
 
@@ -595,6 +595,7 @@ export default function Schedule() {
     await createPlayerForGame({ display_name: name, gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentOrgId })
     await refreshRoster()
     fetchAttendance({ gameId: selectedGame.id })
+    fetchLineups({ gameId: selectedGame.id })
   }
 
   const handleAddExistingPlayerToAttendance = async (playerId: string) => {
@@ -602,6 +603,7 @@ export default function Schedule() {
     await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentOrgId })
     await refreshRoster()
     fetchAttendance({ gameId: selectedGame.id })
+    fetchLineups({ gameId: selectedGame.id })
   }
 
   const handleAddToLineup = async () => {
@@ -1020,6 +1022,7 @@ export default function Schedule() {
         <div className="flex gap-1 bg-muted rounded-lg p-1">
           {[
             { key: 'events' as const, icon: LayoutList, label: 'Events' },
+            { key: 'boxscore' as const, icon: Table2, label: 'Box Score' },
             { key: 'lineups' as const, icon: Users, label: 'Lineups' },
             { key: 'attendance' as const, icon: ClipboardCheck, label: 'Attendance' },
             { key: 'notes' as const, icon: StickyNote, label: 'Notes' },
@@ -1640,26 +1643,34 @@ export default function Schedule() {
         )}
 
         {/* Box score */}
-        {playerStats.length > 0 && (
+        {activeTab === 'boxscore' && (
           <Card className="bg-card text-card-foreground border-border">
             <CardHeader><CardTitle className="text-base">Box Score</CardTitle></CardHeader>
             <CardContent>
-              <div className="space-y-2">
-                <div className="flex items-center gap-3 px-3 text-xs text-muted-foreground font-medium">
-                  <div className="flex-1">Player</div>
-                  <div className="w-10 text-center text-green-600 dark:text-green-400">G</div>
-                  <div className="w-10 text-center text-blue-600 dark:text-blue-400">A</div>
-                  <div className="w-10 text-center text-orange-600 dark:text-orange-400">TO</div>
-                </div>
-                {playerStats.map(p => (
-                  <div key={p.name} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-background">
-                    <div className="flex-1 font-medium text-foreground text-sm">{p.name}</div>
-                    <div className="w-10 text-center font-bold text-green-600 dark:text-green-400">{p.goals}</div>
-                    <div className="w-10 text-center font-bold text-blue-600 dark:text-blue-400">{p.assists}</div>
-                    <div className="w-10 text-center font-bold text-orange-600 dark:text-orange-400">{p.turnovers}</div>
-                  </div>
-                ))}
-              </div>
+              {playerStats.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">No events recorded for this game.</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-muted-foreground font-medium">
+                      <th className="text-left font-medium px-3 pb-2">Player</th>
+                      <th className="w-10 text-center font-medium text-green-600 dark:text-green-400 pb-2">G</th>
+                      <th className="w-10 text-center font-medium text-blue-600 dark:text-blue-400 pb-2">A</th>
+                      <th className="w-10 text-center font-medium text-orange-600 dark:text-orange-400 pb-2">TO</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {playerStats.map(p => (
+                      <tr key={p.name} className="border-t border-border">
+                        <td className="px-3 py-2 font-medium text-foreground">{p.name}</td>
+                        <td className="w-10 text-center font-bold text-green-600 dark:text-green-400">{p.goals}</td>
+                        <td className="w-10 text-center font-bold text-blue-600 dark:text-blue-400">{p.assists}</td>
+                        <td className="w-10 text-center font-bold text-orange-600 dark:text-orange-400">{p.turnovers}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </CardContent>
           </Card>
         )}

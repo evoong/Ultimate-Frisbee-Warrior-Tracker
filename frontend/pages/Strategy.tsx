@@ -41,7 +41,7 @@ const TRANSITION_SPEEDS = [
   { label: 'Fast', ms: 350 },
   { label: 'Off', ms: 0 },
 ] as const
-const DEFAULT_TRANSITION_MS: number = 700
+const DEFAULT_TRANSITION_MS: number = 1200
 
 function loadTransitionMs(): number {
   const stored = Number(localStorage.getItem(TRANSITION_SPEED_KEY))
@@ -794,6 +794,7 @@ export default function Strategy() {
               <Select
                 value={selectedPlayId !== null ? String(selectedPlayId) : undefined}
                 onValueChange={v => setSelectedPlayId(Number(v))}
+                onOpenChange={open => { if (open) fetchPlays({ organizationId: currentOrgId }) }}
               >
                 <SelectTrigger className="flex-1 bg-card text-foreground border-border">
                   <SelectValue placeholder="Select a play" />
@@ -859,33 +860,33 @@ export default function Strategy() {
             {/* Step-level controls: numbered tabs, prev/next, add/delete step. */}
             {selectedPlay && stepList.length > 0 && (
               <div className="flex items-center gap-1.5 flex-wrap">
-                <Button variant="outline" size="icon" className="h-7 w-7" aria-label="Previous step" disabled={stepIndex <= 0}
+                <Button variant="outline" size="icon" className="h-10 w-10 sm:h-7 sm:w-7" aria-label="Previous step" disabled={stepIndex <= 0}
                   onClick={() => setSelectedStepId(stepList[stepIndex - 1]!.id)}>
-                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <ChevronLeft className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                 </Button>
                 {stepList.map((step, i) => (
                   <Button
                     key={step.id}
                     size="sm"
                     variant={step.id === selectedStepId ? 'default' : 'outline'}
-                    className="h-7 w-7 p-0 text-xs"
+                    className="h-10 w-10 sm:h-7 sm:w-7 p-0 text-sm sm:text-xs"
                     onClick={() => setSelectedStepId(step.id)}
                   >
                     {i + 1}
                   </Button>
                 ))}
-                <Button variant="outline" size="icon" className="h-7 w-7" aria-label="Next step" disabled={stepIndex === -1 || stepIndex >= stepList.length - 1}
+                <Button variant="outline" size="icon" className="h-10 w-10 sm:h-7 sm:w-7" aria-label="Next step" disabled={stepIndex === -1 || stepIndex >= stepList.length - 1}
                   onClick={() => setSelectedStepId(stepList[stepIndex + 1]!.id)}>
-                  <ChevronRight className="w-3.5 h-3.5" />
+                  <ChevronRight className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                 </Button>
                 {allowed && (
                   <>
-                    <Button variant="outline" size="icon" className="h-7 w-7" aria-label="Add step" onClick={handleAddStep}>
-                      <Plus className="w-3.5 h-3.5" />
+                    <Button variant="outline" size="icon" className="h-10 w-10 sm:h-7 sm:w-7" aria-label="Add step" onClick={handleAddStep}>
+                      <Plus className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                     </Button>
-                    <Button variant="outline" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" aria-label="Delete step"
+                    <Button variant="outline" size="icon" className="h-10 w-10 sm:h-7 sm:w-7 text-destructive hover:text-destructive" aria-label="Delete step"
                       disabled={stepList.length <= 1} onClick={handleDeleteStep}>
-                      <X className="w-3.5 h-3.5" />
+                      <X className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                     </Button>
                   </>
                 )}

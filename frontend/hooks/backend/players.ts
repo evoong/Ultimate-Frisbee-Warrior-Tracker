@@ -430,7 +430,7 @@ export function useGetPlayerGameStats() {
     // Fetch game details for all attended games
     const { data: games, error: gamesError } = await supabase
       .from('games')
-      .select('id, opponent, game_date, game_type, season_id')
+      .select('id, opponent, game_date, game_time, game_type, season_id')
       .in('id', attendedGameIds)
     if (gamesError) throw new Error(gamesError.message)
 
@@ -459,6 +459,7 @@ export function useGetPlayerGameStats() {
         game_id: gameId,
         opponent: g?.opponent ?? 'Unknown',
         game_date: g?.game_date ?? '',
+        game_time: g?.game_time ?? null,
         game_type: g?.game_type ?? '',
         season_id: g?.season_id ?? null,
         in: attendanceByGame.get(gameId) ?? true,
