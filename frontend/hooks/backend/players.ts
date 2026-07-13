@@ -180,7 +180,7 @@ export function useGetPlayersNotInSeason() {
 }
 
 export function useCreatePlayerForGame() {
-  const fn = useCallback(async (params: { organizationId: number | null; gameId: number; seasonId?: number | null; display_name: string; position?: string; gender_match?: string }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; gameId: number; seasonId?: number | null; display_name: string; position?: string; gender_match?: string; lineupName?: string }) => {
     // Players created mid-game from Schedule/live scoring are subs
     const { data: playerData, error: playerError } = await supabase
       .from('players')
@@ -193,7 +193,7 @@ export function useCreatePlayerForGame() {
 
     const { data, error } = await supabase
       .from('game_lineups')
-      .insert({ organization_id: params.organizationId, game_id: params.gameId, player_id: playerId, lineup_name: 'Starting' })
+      .insert({ organization_id: params.organizationId, game_id: params.gameId, player_id: playerId, lineup_name: params.lineupName ?? 'Starting' })
       .select()
     if (error) throw new Error(error.message)
 
@@ -208,11 +208,12 @@ export function useCreatePlayerForGame() {
     // A new game backfills game_attendance for the season roster at that
     // moment (see trg_backfill_game_attendance), but that only fires once
     // at game creation; a player joining later needs its own row so
-    // Schedule's Attendance tab (which lists existing rows, not the roster)
-    // picks them up immediately instead of only from the next game onward.
+    // attendance (derived from lineup membership) picks them up immediately
+    // instead of only from the next game onward. Must actually overwrite on
+    // conflict (not ignoreDuplicates): see useAddToLineup (games.ts) for why.
     const { error: gaError } = await supabase
       .from('game_attendance')
-      .upsert({ organization_id: params.organizationId, game_id: params.gameId, player_id: playerId, in: true }, { onConflict: 'game_id,player_id', ignoreDuplicates: true })
+      .upsert({ organization_id: params.organizationId, game_id: params.gameId, player_id: playerId, in: true }, { onConflict: 'game_id,player_id' })
     if (gaError) throw new Error(gaError.message)
     return data?.[0]
   }, [])
@@ -248,10 +249,10 @@ export function useDeleteSubPlayer() {
 }
 
 export function useAddPlayerToGame() {
-  const fn = useCallback(async (params: { organizationId: number | null; gameId: number; playerId: number; seasonId?: number | null }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; gameId: number; playerId: number; seasonId?: number | null; lineupName?: string }) => {
     const { data, error } = await supabase
       .from('game_lineups')
-      .insert({ organization_id: params.organizationId, game_id: params.gameId, player_id: params.playerId, lineup_name: 'Starting' })
+      .insert({ organization_id: params.organizationId, game_id: params.gameId, player_id: params.playerId, lineup_name: params.lineupName ?? 'Starting' })
       .select()
     if (error) throw new Error(error.message)
 
@@ -269,12 +270,13 @@ export function useAddPlayerToGame() {
         .upsert({ organization_id: params.organizationId, player_id: params.playerId, season_id: params.seasonId, is_sub: true }, { onConflict: 'season_id,player_id', ignoreDuplicates: true })
       if (spError) throw new Error(spError.message)
     }
-    // See useCreatePlayerForGame: a row for this specific game so the
-    // Attendance tab (which lists existing rows, not the roster) shows them
-    // immediately rather than only from the next game onward.
+    // See useCreatePlayerForGame: a row for this specific game so attendance
+    // (derived from lineup membership) reflects them immediately. Must
+    // actually overwrite on conflict (not ignoreDuplicates): see
+    // useAddToLineup (games.ts) for why.
     const { error: gaError } = await supabase
       .from('game_attendance')
-      .upsert({ organization_id: params.organizationId, game_id: params.gameId, player_id: params.playerId, in: true }, { onConflict: 'game_id,player_id', ignoreDuplicates: true })
+      .upsert({ organization_id: params.organizationId, game_id: params.gameId, player_id: params.playerId, in: true }, { onConflict: 'game_id,player_id' })
     if (gaError) throw new Error(gaError.message)
     return data?.[0]
   }, [])
