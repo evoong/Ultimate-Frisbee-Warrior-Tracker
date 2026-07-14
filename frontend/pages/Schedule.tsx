@@ -1689,7 +1689,7 @@ export default function Schedule() {
 
               {/* Lineup groups */}
               {orderedGroups.length > 0 && (
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {orderedGroups.map(g => {
                   const entries = lineupByGroup[g.lineup_name] ?? []
                   const isGroupDragging = dragGroupId === g.id
