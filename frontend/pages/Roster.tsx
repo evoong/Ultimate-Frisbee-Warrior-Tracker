@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlayer, useGetPlayerGameStats, useSetGameAttendance, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer } from '../hooks/backend/players'
+import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlayer, useGetPlayerGameStats, useSetGameAttendance, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer, useGetSeasonRoster, useCopyPlayersToSeason, useRemovePlayersFromSeason } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons } from '../hooks/backend/stats'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
 import { isPastGame } from '../lib/gameOrder'
@@ -17,7 +17,7 @@ import { Label } from '../lib/shadcn/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
 import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
-import { Phone, Search, ChevronLeft, ChevronRight, Users, TrendingUp, Trophy, Trash2, Camera, Edit2, Save, X, Plus, Hash } from 'lucide-react'
+import { Phone, Search, ChevronLeft, ChevronRight, Users, TrendingUp, Trophy, Trash2, Camera, Edit2, Save, X, Plus, UserCog, LayoutGrid, List } from 'lucide-react'
 
 type Player = {
   id: number; display_name: string; first_name: string | null; last_name: string | null
@@ -28,6 +28,7 @@ type Season = { id: number; name: string; year: number; organizer: string | null
 type PlayerSeason = { id: number; name: string; year: number; organizer: string | null; active: boolean; is_sub: boolean }
 
 const GENDERS = ['Man', 'Woman']
+const ROSTER_VIEW_KEY = 'ufwt_roster_view'
 
 function seasonLabel(s: { name: string; year: number; organizer: string | null }) {
   return [s.organizer, s.name, s.year].filter(Boolean).join(' ')
@@ -66,8 +67,13 @@ export default function Roster() {
   const { trigger: uploadPhoto, loading: uploadingPhoto } = useUploadPlayerPhoto()
   const { trigger: updatePlayerSeasons } = useUpdatePlayerSeasons()
   const { trigger: createPlayer } = useCreatePlayer()
+  const { data: allOrgPlayersRaw, trigger: fetchAllOrgPlayers } = useGetPlayers()
+  const { trigger: fetchManageSeasonRoster } = useGetSeasonRoster()
+  const { trigger: copyPlayersToSeason } = useCopyPlayersToSeason()
+  const { trigger: removePlayersFromSeason } = useRemovePlayersFromSeason()
 
   const players = rawPlayers as Player[] | undefined
+  const allOrgPlayers = allOrgPlayersRaw as Player[] | undefined
 
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
@@ -77,6 +83,17 @@ export default function Roster() {
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
 
+  // List view: "cards" (full detail) or "compact" (dense rows) — a
+  // per-device viewing preference, same convention as Strategy's transition
+  // speed and Stats' column widths, so switching to compact to scan a big
+  // roster without scrolling sticks across visits.
+  const [viewMode, setViewMode] = useState<'cards' | 'compact'>(() => {
+    const stored = localStorage.getItem(ROSTER_VIEW_KEY)
+    return stored === 'compact' ? 'compact' : 'cards'
+  })
+  const [genderFilter, setGenderFilter] = useState<'all' | 'Man' | 'Woman'>('all')
+  const [positionFilter, setPositionFilter] = useState<string>('all')
+
   // Edit mode
   const [editing, setEditing] = useState(false)
   const [editFields, setEditFields] = useState({ display_name: '', number: '', gender_match: '', phone: '', position: '' })
@@ -84,8 +101,16 @@ export default function Roster() {
   const [selectedSeasonIds, setSelectedSeasonIds] = useState<number[]>([])
   const [selectedSeasonSubs, setSelectedSeasonSubs] = useState<Record<number, boolean>>({})
 
-  // New player dialog
-  const [showNewPlayer, setShowNewPlayer] = useState(false)
+  // Manage Roster dialog: batch add/remove players on one season via a
+  // single checklist (checked = on the season, unchecked = not), filterable
+  // by season and by name, with changes only applied on Save.
+  const [showManageRoster, setShowManageRoster] = useState(false)
+  const [manageSeasonId, setManageSeasonId] = useState<number | null>(null)
+  const [manageSearch, setManageSearch] = useState('')
+  const [manageChecked, setManageChecked] = useState<Set<number>>(new Set())
+  const [manageOriginal, setManageOriginal] = useState<Set<number>>(new Set())
+  const [manageSaving, setManageSaving] = useState(false)
+  const [showCreateForm, setShowCreateForm] = useState(false)
   const [newPlayerData, setNewPlayerData] = useState({ display_name: '', number: '', gender_match: '', position: '', season_ids: [] as number[] })
   const [creatingPlayer, setCreatingPlayer] = useState(false)
 
@@ -109,6 +134,33 @@ export default function Roster() {
     if (currentOrgId == null) return
     fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
   }, [rosterSeasonIds, currentOrgId])
+
+  useEffect(() => {
+    // Org-wide roster (no season filter), independent of rosterSeasonIds:
+    // the candidate pool for the Manage Roster checklist, which needs to
+    // offer players regardless of which season(s) the page itself is
+    // currently filtered to.
+    if (currentOrgId == null) return
+    fetchAllOrgPlayers({ organizationId: currentOrgId })
+  }, [currentOrgId])
+
+  useEffect(() => { localStorage.setItem(ROSTER_VIEW_KEY, viewMode) }, [viewMode])
+
+  useEffect(() => {
+    // Loading a season into the Manage Roster dialog seeds both the pending
+    // (manageChecked) and baseline (manageOriginal) sets from its actual
+    // current membership, so Save only needs to diff against something real.
+    if (manageSeasonId == null) return
+    let cancelled = false
+    ;(async () => {
+      const data = await fetchManageSeasonRoster({ seasonId: manageSeasonId })
+      if (cancelled) return
+      const ids = new Set(((data as Player[] | undefined) ?? []).map(p => p.id))
+      setManageChecked(ids)
+      setManageOriginal(ids)
+    })()
+    return () => { cancelled = true }
+  }, [manageSeasonId])
 
   useEffect(() => {
     // Default the stats filter to every active season whenever a player's
@@ -215,20 +267,95 @@ export default function Roster() {
       position: newPlayerData.position || undefined,
       season_ids: newPlayerData.season_ids,
       organizationId: currentOrgId,
-    })
+    }) as Player | undefined
     setCreatingPlayer(false)
     if (!created) {
-      setUploadError(null)
       alert('Failed to create player. Please try again.')
       return
     }
-    setShowNewPlayer(false)
+    // The new player is already a member of manageSeasonId (it's in
+    // season_ids above), so reflect that in the checklist immediately
+    // instead of waiting for a refetch.
+    if (manageSeasonId != null && newPlayerData.season_ids.includes(manageSeasonId)) {
+      setManageChecked(prev => new Set(prev).add(created.id))
+      setManageOriginal(prev => new Set(prev).add(created.id))
+    }
+    setShowCreateForm(false)
     setNewPlayerData({ display_name: '', number: '', gender_match: '', position: '', season_ids: [] })
-    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
+    setManageSearch('')
+    fetchAllOrgPlayers({ organizationId: currentOrgId })
   }
 
-  const filteredPlayers = players?.filter(p => (p.display_name ?? '').toLowerCase().includes(searchQuery.toLowerCase()))
+  // Opens the inline create-player card inside Manage Roster, prefilled with
+  // whatever was just searched for and defaulting to the season being managed.
+  const handleOpenCreateForm = () => {
+    setNewPlayerData({ display_name: manageSearch.trim(), number: '', gender_match: '', position: '', season_ids: manageSeasonId != null ? [manageSeasonId] : [] })
+    setShowCreateForm(true)
+  }
+
+  const handleOpenManageRoster = () => {
+    setManageSeasonId(rosterSeasonIds.length === 1 ? rosterSeasonIds[0]! : (allSeasonsArr[0]?.id ?? null))
+    setManageSearch('')
+    setShowCreateForm(false)
+    setShowManageRoster(true)
+  }
+
+  const toggleManagePlayer = (playerId: number) => {
+    setManageChecked(prev => {
+      const next = new Set(prev)
+      if (next.has(playerId)) next.delete(playerId); else next.add(playerId)
+      return next
+    })
+  }
+
+  const handleSaveManageRoster = async () => {
+    if (manageSeasonId == null) return
+    const toAdd = [...manageChecked].filter(id => !manageOriginal.has(id))
+    const toRemove = [...manageOriginal].filter(id => !manageChecked.has(id))
+    if (toAdd.length === 0 && toRemove.length === 0) { setShowManageRoster(false); return }
+    setManageSaving(true)
+    await Promise.all([
+      toAdd.length > 0 ? copyPlayersToSeason({ organizationId: currentOrgId, playerIds: toAdd, targetSeasonId: manageSeasonId, isSub: false }) : Promise.resolve(),
+      toRemove.length > 0 ? removePlayersFromSeason({ seasonId: manageSeasonId, playerIds: toRemove }) : Promise.resolve(),
+    ])
+    setManageSaving(false)
+    setShowManageRoster(false)
+    fetchAllOrgPlayers({ organizationId: currentOrgId })
+    if (rosterSeasonIds.length === 0 || rosterSeasonIds.includes(manageSeasonId)) {
+      fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
+    }
+  }
+
+  // Subs sort to the bottom (stable otherwise, so the existing
+  // alphabetical-by-name order from useGetPlayers is preserved within each
+  // group) — they're on the roster but not part of the regular lineup, so
+  // scanning for who's actually playing shouldn't require scrolling past them.
+  const filteredPlayers = players?.filter(p =>
+    (p.display_name ?? '').toLowerCase().includes(searchQuery.toLowerCase()) &&
+    (genderFilter === 'all' || p.gender_match === genderFilter) &&
+    (positionFilter === 'all' || p.position === positionFilter)
+  ).sort((a, b) => Number(a.is_sub) - Number(b.is_sub))
   const allSeasonsArr = (allSeasons as Season[] | undefined) ?? []
+
+  // Gender composition of the current season filter, excluding subs (unaffected
+  // by the gender/position/search quick filters below), so the counts reflect
+  // the regular roster's makeup while doubling as filter chips.
+  const nonSubPlayers = (players ?? []).filter(p => !p.is_sub)
+  const genderCounts = nonSubPlayers.reduce(
+    (acc, p) => {
+      if (p.gender_match === 'Man') acc.Man++
+      else if (p.gender_match === 'Woman') acc.Woman++
+      else acc.Unset++
+      return acc
+    },
+    { Man: 0, Woman: 0, Unset: 0 }
+  )
+
+  // Manage Roster's checklist: every org player matching the dialog's own
+  // search box, regardless of the page's own season filter above.
+  const manageSearchTrimmed = manageSearch.trim()
+  const manageCandidates = (allOrgPlayers ?? []).filter(p => (p.display_name ?? '').toLowerCase().includes(manageSearchTrimmed.toLowerCase()))
+  const managePendingCount = [...manageChecked].filter(id => !manageOriginal.has(id)).length + [...manageOriginal].filter(id => !manageChecked.has(id)).length
 
   const filteredStats = ((gameStats as GameStat[] | undefined) ?? []).filter(g =>
     seasonFilters.includes(g.season_id?.toString() ?? '')
@@ -617,12 +744,30 @@ export default function Roster() {
         <h1 className="text-2xl font-bold text-foreground">Roster</h1>
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">{filteredPlayers?.length || 0} of {players?.length || 0}</span>
+          {/* View mode toggle: cards (full detail) vs compact (dense rows,
+              fits far more of a large roster on screen without scrolling). */}
+          <div className="flex bg-muted rounded-lg p-0.5">
+            <button
+              onClick={() => setViewMode('cards')}
+              title="Card view"
+              className={`p-1.5 rounded-md transition-colors ${viewMode === 'cards' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground'}`}
+            >
+              <LayoutGrid className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setViewMode('compact')}
+              title="Compact view"
+              className={`p-1.5 rounded-md transition-colors ${viewMode === 'compact' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground'}`}
+            >
+              <List className="w-4 h-4" />
+            </button>
+          </div>
           {allowed && (
             <button
-              onClick={() => setShowNewPlayer(true)}
+              onClick={handleOpenManageRoster}
               className="flex items-center gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-2 text-sm font-medium transition-colors"
             >
-              <Plus className="w-4 h-4" />Add
+              <UserCog className="w-4 h-4" />Manage Roster
             </button>
           )}
         </div>
@@ -636,119 +781,252 @@ export default function Roster() {
         placeholder="All Seasons"
       />
 
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input
-          type="text"
-          placeholder="Search players..."
-          value={searchQuery}
-          onChange={e => setSearchQuery(e.target.value)}
-          className="pl-10 bg-card text-foreground border-border"
-        />
-      </div>
-
-      <div className="grid grid-cols-1 gap-3">
-        {filteredPlayers?.map((player, index) => (
-          <FadeIn key={player.id} delay={index * 40}>
-            <Card onClick={() => handleSelectPlayer(player)}
-              className="bg-card text-card-foreground border-border cursor-pointer hover:bg-accent/50 active:scale-[0.99] transition-all"
-            >
-              <CardContent className="p-4">
-                <div className="flex items-center gap-4">
-                  <PlayerAvatar photoUrl={player.photo_url} name={player.display_name} genderMatch={player.gender_match} size="md" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-foreground text-lg truncate">{player.display_name}</span>
-                      {player.is_sub && <Badge variant="secondary" className="text-xs shrink-0">Sub</Badge>}
-                      {player.number != null && <Badge variant="outline" className="text-xs font-mono shrink-0">#{player.number}</Badge>}
-                    </div>
-                    <div className="flex items-center gap-3 mt-1 flex-wrap">
-                      {player.position && <span className="text-sm text-muted-foreground">{player.position}</span>}
-                      {player.gender_match && <span className="text-sm text-muted-foreground">{player.gender_match}</span>}
-                      {player.phone && (
-                        <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                          <Phone className="w-3 h-3" />{player.phone}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <ChevronRight className="w-5 h-5 text-muted-foreground shrink-0" />
-                </div>
-              </CardContent>
-            </Card>
-          </FadeIn>
-        ))}
-
-        {filteredPlayers?.length === 0 && (
-          <FadeIn>
-            <Card className="bg-card text-card-foreground border-border">
-              <CardContent className="py-12 text-center">
-                <Users className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
-                <p className="text-muted-foreground">No players found</p>
-              </CardContent>
-            </Card>
-          </FadeIn>
+      {/* Gender breakdown, doubling as a quick filter — click a count to
+          narrow the list to just that gender, click again to clear it. */}
+      <div className="flex items-center gap-2">
+        <Badge
+          variant={genderFilter === 'all' ? 'default' : 'secondary'}
+          className="cursor-pointer"
+          onClick={() => setGenderFilter('all')}
+        >
+          All {nonSubPlayers.length}
+        </Badge>
+        <Badge
+          variant={genderFilter === 'Man' ? 'default' : 'secondary'}
+          className="cursor-pointer"
+          onClick={() => setGenderFilter(prev => (prev === 'Man' ? 'all' : 'Man'))}
+        >
+          Man {genderCounts.Man}
+        </Badge>
+        <Badge
+          variant={genderFilter === 'Woman' ? 'default' : 'secondary'}
+          className="cursor-pointer"
+          onClick={() => setGenderFilter(prev => (prev === 'Woman' ? 'all' : 'Woman'))}
+        >
+          Woman {genderCounts.Woman}
+        </Badge>
+        {genderCounts.Unset > 0 && (
+          <span className="text-xs text-muted-foreground">{genderCounts.Unset} not set</span>
         )}
       </div>
 
-      {/* New Player Dialog */}
-      <Dialog open={showNewPlayer} onOpenChange={setShowNewPlayer}>
-        <DialogContent className="bg-card text-card-foreground">
-          <DialogHeader><DialogTitle>Add New Player</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1">
-              <Label className="text-xs">Display Name *</Label>
-              <Input value={newPlayerData.display_name} onChange={e => setNewPlayerData(d => ({ ...d, display_name: e.target.value }))} placeholder="Player name" className="bg-background border-border" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label className="text-xs">Jersey #</Label>
-                <Input type="number" value={newPlayerData.number} onChange={e => setNewPlayerData(d => ({ ...d, number: e.target.value }))} placeholder="Optional" className="bg-background border-border h-9 text-sm" />
+      <div className="flex gap-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            type="text"
+            placeholder="Search players..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="pl-10 bg-card text-foreground border-border"
+          />
+        </div>
+        <Select value={positionFilter} onValueChange={setPositionFilter}>
+          <SelectTrigger className="w-36 shrink-0 bg-card text-foreground border-border"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Positions</SelectItem>
+            {POSITIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {viewMode === 'compact' ? (
+        <div className="rounded-lg border border-border divide-y divide-border overflow-hidden">
+          {filteredPlayers?.map((player, index) => (
+            <FadeIn
+              key={player.id}
+              delay={index * 20}
+              onClick={() => handleSelectPlayer(player)}
+              className="flex items-center gap-3 px-3 py-2 bg-card hover:bg-accent/50 cursor-pointer transition-colors"
+            >
+              <PlayerAvatar photoUrl={player.photo_url} name={player.display_name} genderMatch={player.gender_match} size="sm" />
+              <div className="flex-1 min-w-0 flex items-center gap-2">
+                <span className="font-medium text-foreground truncate">{player.display_name}</span>
+                {player.is_sub && <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">Sub</Badge>}
               </div>
+              {player.position && <span className="text-xs text-muted-foreground shrink-0 hidden sm:inline w-20 truncate">{player.position}</span>}
+              {player.number != null && <span className="text-xs text-muted-foreground font-mono shrink-0 w-8 text-right">#{player.number}</span>}
+              <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+            </FadeIn>
+          ))}
+
+          {filteredPlayers?.length === 0 && (
+            <div className="py-12 text-center">
+              <Users className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
+              <p className="text-muted-foreground">No players found</p>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-3">
+          {filteredPlayers?.map((player, index) => (
+            <FadeIn key={player.id} delay={index * 40}>
+              <Card onClick={() => handleSelectPlayer(player)}
+                className="bg-card text-card-foreground border-border cursor-pointer hover:bg-accent/50 active:scale-[0.99] transition-all"
+              >
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-4">
+                    <PlayerAvatar photoUrl={player.photo_url} name={player.display_name} genderMatch={player.gender_match} size="md" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-foreground text-lg truncate">{player.display_name}</span>
+                        {player.is_sub && <Badge variant="secondary" className="text-xs shrink-0">Sub</Badge>}
+                        {player.number != null && <Badge variant="outline" className="text-xs font-mono shrink-0">#{player.number}</Badge>}
+                      </div>
+                      <div className="flex items-center gap-3 mt-1 flex-wrap">
+                        {player.position && <span className="text-sm text-muted-foreground">{player.position}</span>}
+                        {player.gender_match && <span className="text-sm text-muted-foreground">{player.gender_match}</span>}
+                        {player.phone && (
+                          <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                            <Phone className="w-3 h-3" />{player.phone}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <ChevronRight className="w-5 h-5 text-muted-foreground shrink-0" />
+                  </div>
+                </CardContent>
+              </Card>
+            </FadeIn>
+          ))}
+
+          {filteredPlayers?.length === 0 && (
+            <FadeIn>
+              <Card className="bg-card text-card-foreground border-border">
+                <CardContent className="py-12 text-center">
+                  <Users className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
+                  <p className="text-muted-foreground">No players found</p>
+                </CardContent>
+              </Card>
+            </FadeIn>
+          )}
+        </div>
+      )}
+
+      {/* Manage Roster dialog: one batch checklist for a chosen season —
+          check a player to add them, uncheck to remove, filter the list by
+          name, then apply everything at once with Save. */}
+      <Dialog open={showManageRoster} onOpenChange={setShowManageRoster}>
+        <DialogContent className="bg-card text-card-foreground max-w-md">
+          <DialogHeader><DialogTitle>Manage Roster</DialogTitle></DialogHeader>
+
+          {!showCreateForm ? (
+            <div className="space-y-3">
               <div className="space-y-1">
-                <Label className="text-xs">Gender</Label>
-                <Select value={newPlayerData.gender_match || '__none__'} onValueChange={v => setNewPlayerData(d => ({ ...d, gender_match: v === '__none__' ? '' : v }))}>
-                  <SelectTrigger className="h-9 text-sm bg-background border-border text-foreground"><SelectValue /></SelectTrigger>
+                <Label className="text-xs">Season</Label>
+                <Select
+                  value={manageSeasonId != null ? String(manageSeasonId) : ''}
+                  onValueChange={v => setManageSeasonId(parseInt(v))}
+                >
+                  <SelectTrigger className="h-9 text-sm bg-background border-border text-foreground"><SelectValue placeholder="Select season" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="__none__">Not set</SelectItem>
-                    {GENDERS.map(g => <SelectItem key={g} value={g}>{g}</SelectItem>)}
+                    {allSeasonsArr.map(s => <SelectItem key={s.id} value={String(s.id)}>{seasonLabel(s)}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
+
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  type="text"
+                  placeholder="Search players..."
+                  value={manageSearch}
+                  onChange={e => setManageSearch(e.target.value)}
+                  className="pl-10 h-9 text-sm bg-background border-border"
+                />
+              </div>
+
+              <div className="max-h-72 overflow-y-auto space-y-1 border border-border rounded-md p-2">
+                {manageCandidates.length === 0 ? (
+                  <div className="py-6 text-center space-y-3">
+                    <p className="text-sm text-muted-foreground">No player named "{manageSearchTrimmed}" yet.</p>
+                    <Button onClick={handleOpenCreateForm} size="sm" className="bg-primary text-primary-foreground hover:bg-primary/90">
+                      <Plus className="w-3.5 h-3.5 mr-1.5" />Create "{manageSearchTrimmed}"
+                    </Button>
+                  </div>
+                ) : (
+                  manageCandidates.map(p => (
+                    <label key={p.id} className="flex items-center gap-2 cursor-pointer hover:bg-accent rounded px-2 py-1.5 transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={manageChecked.has(p.id)}
+                        onChange={() => toggleManagePlayer(p.id)}
+                        className="w-3.5 h-3.5 rounded shrink-0"
+                      />
+                      <span className="text-sm text-foreground flex-1 truncate">{p.display_name}</span>
+                      {p.gender_match && <span className="text-xs text-muted-foreground shrink-0">{p.gender_match}</span>}
+                    </label>
+                  ))
+                )}
+              </div>
+
+              <Button
+                onClick={handleSaveManageRoster}
+                disabled={manageSeasonId == null || manageSaving}
+                className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
+              >
+                {manageSaving ? 'Saving…' : managePendingCount > 0 ? `Save Changes (${managePendingCount})` : 'Done'}
+              </Button>
             </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Position</Label>
-              <Select value={newPlayerData.position || '__none__'} onValueChange={v => setNewPlayerData(d => ({ ...d, position: v === '__none__' ? '' : v }))}>
-                <SelectTrigger className="h-9 text-sm bg-background border-border text-foreground"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">Not set</SelectItem>
-                  {POSITIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Seasons</Label>
-              <div className="max-h-32 overflow-y-auto space-y-1 border border-border rounded-md p-2">
-                {allSeasonsArr.map(s => (
-                  <label key={s.id} className="flex items-center gap-2 cursor-pointer hover:bg-accent rounded px-2 py-1 transition-colors">
-                    <input
-                      type="checkbox"
-                      checked={newPlayerData.season_ids.includes(s.id)}
-                      onChange={() => setNewPlayerData(d => ({
-                        ...d,
-                        season_ids: d.season_ids.includes(s.id) ? d.season_ids.filter(id => id !== s.id) : [...d.season_ids, s.id]
-                      }))}
-                      className="w-3.5 h-3.5 rounded"
-                    />
-                    <span className="text-sm text-foreground">{seasonLabel(s)}</span>
-                  </label>
-                ))}
+          ) : (
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label className="text-xs">Display Name *</Label>
+                <Input value={newPlayerData.display_name} onChange={e => setNewPlayerData(d => ({ ...d, display_name: e.target.value }))} placeholder="Player name" className="bg-background border-border" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">Jersey #</Label>
+                  <Input type="number" value={newPlayerData.number} onChange={e => setNewPlayerData(d => ({ ...d, number: e.target.value }))} placeholder="Optional" className="bg-background border-border h-9 text-sm" />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Gender</Label>
+                  <Select value={newPlayerData.gender_match || '__none__'} onValueChange={v => setNewPlayerData(d => ({ ...d, gender_match: v === '__none__' ? '' : v }))}>
+                    <SelectTrigger className="h-9 text-sm bg-background border-border text-foreground"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">Not set</SelectItem>
+                      {GENDERS.map(g => <SelectItem key={g} value={g}>{g}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Position</Label>
+                <Select value={newPlayerData.position || '__none__'} onValueChange={v => setNewPlayerData(d => ({ ...d, position: v === '__none__' ? '' : v }))}>
+                  <SelectTrigger className="h-9 text-sm bg-background border-border text-foreground"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Not set</SelectItem>
+                    {POSITIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Seasons</Label>
+                <div className="max-h-32 overflow-y-auto space-y-1 border border-border rounded-md p-2">
+                  {allSeasonsArr.map(s => (
+                    <label key={s.id} className="flex items-center gap-2 cursor-pointer hover:bg-accent rounded px-2 py-1 transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={newPlayerData.season_ids.includes(s.id)}
+                        onChange={() => setNewPlayerData(d => ({
+                          ...d,
+                          season_ids: d.season_ids.includes(s.id) ? d.season_ids.filter(id => id !== s.id) : [...d.season_ids, s.id]
+                        }))}
+                        className="w-3.5 h-3.5 rounded"
+                      />
+                      <span className="text-sm text-foreground">{seasonLabel(s)}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <Button onClick={handleCreatePlayer} disabled={!newPlayerData.display_name || creatingPlayer} className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90">
+                  {creatingPlayer ? 'Creating…' : 'Create Player'}
+                </Button>
+                <Button variant="outline" onClick={() => setShowCreateForm(false)}>Cancel</Button>
               </div>
             </div>
-            <Button onClick={handleCreatePlayer} disabled={!newPlayerData.display_name || creatingPlayer} className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
-              {creatingPlayer ? 'Creating…' : 'Create Player'}
-            </Button>
-          </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import Schedule from './pages/Schedule'
 import Roster from './pages/Roster'
-import Ranking from './pages/Ranking'
 import Stats from './pages/Stats'
 import Strategy from './pages/Strategy'
 import Chat from './pages/Chat'
@@ -75,7 +74,6 @@ export default function App() {
     <>
       {activeTab === 'schedule' && <Schedule />}
       {activeTab === 'roster' && <Roster />}
-      {activeTab === 'ranking' && <Ranking />}
       {activeTab === 'stats' && <Stats />}
       {activeTab === 'strategy' && <Strategy />}
       {activeTab === 'chat' && <Chat />}

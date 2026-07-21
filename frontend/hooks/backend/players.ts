@@ -506,6 +506,41 @@ export function useSetGameAttendance() {
   return useApiCall<void, { organizationId: number | null; gameId: number; playerId: number; seasonId: number | null; attending: boolean }>(fn)
 }
 
+// Adds one or more existing players to a season they aren't yet part of.
+// Roster's "Manage Roster" dialog uses this to apply newly-checked players
+// from its batch checklist. ignoreDuplicates so re-adding someone who's
+// already a member of the target season leaves their existing Player/Sub
+// status untouched, same convention as useAddPlayerToGame.
+export function useCopyPlayersToSeason() {
+  const fn = useCallback(async (params: { organizationId: number | null; playerIds: number[]; targetSeasonId: number; isSub: boolean }) => {
+    if (params.playerIds.length === 0) return
+    const rows = params.playerIds.map(playerId => ({
+      organization_id: params.organizationId, player_id: playerId, season_id: params.targetSeasonId, is_sub: params.isSub,
+    }))
+    const { error } = await supabase
+      .from('season_players')
+      .upsert(rows, { onConflict: 'season_id,player_id', ignoreDuplicates: true })
+    if (error) throw new Error(error.message)
+  }, [])
+  return useApiCall<void, { organizationId: number | null; playerIds: number[]; targetSeasonId: number; isSub: boolean }>(fn)
+}
+
+// Inverse of useCopyPlayersToSeason: bulk-removes players from a season,
+// used to apply newly-unchecked players from the same batch checklist. Only
+// deletes the season_players membership row, not the player itself.
+export function useRemovePlayersFromSeason() {
+  const fn = useCallback(async (params: { seasonId: number; playerIds: number[] }) => {
+    if (params.playerIds.length === 0) return
+    const { error } = await supabase
+      .from('season_players')
+      .delete()
+      .eq('season_id', params.seasonId)
+      .in('player_id', params.playerIds)
+    if (error) throw new Error(error.message)
+  }, [])
+  return useApiCall<void, { seasonId: number; playerIds: number[] }>(fn)
+}
+
 export function useGetPlayerSeasons() {
   const fn = useCallback(async (params: { playerId: number }) => {
     const { data, error } = await supabase
