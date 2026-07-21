@@ -4,6 +4,7 @@ import { useGetGames } from '../hooks/backend/games'
 import { useGetPlayers } from '../hooks/backend/players'
 import { useGetPlayerStats, useGetSeasons, useGetCumulativeStats, useGetAllSeasons } from '../hooks/backend/stats'
 import { getLatestJamSeasonWithPlayedGame } from '../lib/seasonUtils'
+import { isPastGame } from '../lib/gameOrder'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
 import { Label } from '../lib/shadcn/label'
@@ -27,7 +28,7 @@ type CumulativeRow = {
 }
 type Season = { id: number; name: string; year: number; organizer: string | null; start_date: string | null; end_date: string | null }
 type StatsSeasonRow = { id: number; name: string; year: number; organizer: string | null; game_count: string }
-type Game = { id: number; opponent: string; game_date: string; season_id: number | null }
+type Game = { id: number; opponent: string; game_date: string; game_time: string | null; season_id: number | null }
 
 type ChartTab = 'combined' | 'goals' | 'assists' | 'turnovers'
 type CumulativeStat = 'ga' | 'goals' | 'assists' | 'turnovers'
@@ -250,9 +251,8 @@ export default function Stats() {
   const statsArr = stats as PlayerStat[] | undefined
   // Averages are team totals per game, so divide by the number of games in the
   // current filter that have been played — not the sum of every player's games_played
-  const todayStr = new Date().toISOString().slice(0, 10)
   const gamesInFilter = ((games as Game[] | undefined) ?? []).filter(g => {
-    if (g.game_date > todayStr) return false
+    if (!isPastGame(g)) return false
     if (filterType === 'season' && selectedSeasonIds.length > 0) return g.season_id != null && selectedSeasonIds.includes(g.season_id)
     if (filterType === 'games' && selectedGameIds.length > 0) return selectedGameIds.includes(g.id)
     return true

@@ -177,10 +177,9 @@ export function useGetStrategyPositions() {
   return useApiCall<StrategyPosition[], { stepId: number }>(fn)
 }
 
-// Upsert so moving an already-placed player writes the same row (see
-// useSetAttendance for the same onConflict pattern). Returns true so the
-// caller can tell success from a failed trigger (which returns undefined),
-// letting the page revert its optimistic update.
+// Upsert so moving an already-placed player writes the same row. Returns
+// true so the caller can tell success from a failed trigger (which returns
+// undefined), letting the page revert its optimistic update.
 export function useUpsertStrategyPosition() {
   const fn = useCallback(async (params: { organizationId: number | null; stepId: number; playerId: number; x: number; y: number }) => {
     const { error } = await supabase
