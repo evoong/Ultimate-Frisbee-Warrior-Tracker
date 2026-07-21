@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlayer, useGetPlayerGameStats, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer } from '../hooks/backend/players'
+import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlayer, useGetPlayerGameStats, useSetGameAttendance, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons } from '../hooks/backend/stats'
-import { useSetAttendance } from '../hooks/backend/attendance'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
 import { isPastGame } from '../lib/gameOrder'
 import { POSITIONS } from '../lib/positions'
@@ -57,6 +56,7 @@ export default function Roster() {
   const { allowed, currentOrgId } = useAuth()
   const { data: rawPlayers, loading, error, trigger: fetchPlayers } = useGetPlayers()
   const { data: gameStats, loading: statsLoading, trigger: fetchGameStats } = useGetPlayerGameStats()
+  const { trigger: setGameAttendance } = useSetGameAttendance()
   const { data: allSeasons, trigger: fetchAllSeasons } = useGetAllSeasons()
   const { data: seasonsWithGames, trigger: fetchSeasonsWithGames } = useGetSeasons()
   const { data: playerSeasons, trigger: fetchPlayerSeasons } = useGetPlayerSeasons()
@@ -66,7 +66,6 @@ export default function Roster() {
   const { trigger: uploadPhoto, loading: uploadingPhoto } = useUploadPlayerPhoto()
   const { trigger: updatePlayerSeasons } = useUpdatePlayerSeasons()
   const { trigger: createPlayer } = useCreatePlayer()
-  const { trigger: setAttendance } = useSetAttendance()
 
   const players = rawPlayers as Player[] | undefined
 
@@ -235,9 +234,9 @@ export default function Roster() {
     seasonFilters.includes(g.season_id?.toString() ?? '')
   )
 
-  // Only count games the player attended that have actually happened — a
-  // game merely marked "attending" in advance shouldn't dilute the average.
-  // Matches the per-game rows, which show '—' when out.
+  // Only count games the player was actually in a lineup for, that have
+  // also already happened — a game they're not in, or an upcoming game
+  // they're already lined up for, shouldn't dilute the average.
   const summary = filteredStats.reduce(
     (acc, g) => g.in && isPastGame(g)
       ? { goals: acc.goals + parseInt(g.goals), assists: acc.assists + parseInt(g.assists), turnovers: acc.turnovers + parseInt(g.turnovers), games: acc.games + 1 }
@@ -552,7 +551,7 @@ export default function Roster() {
                         checked={stat.in}
                         disabled={!allowed}
                         onChange={async e => {
-                          await setAttendance({ gameId: stat.game_id, playerId: selectedPlayer.id, attending: e.target.checked, organizationId: currentOrgId })
+                          await setGameAttendance({ gameId: stat.game_id, playerId: selectedPlayer.id, seasonId: stat.season_id, attending: e.target.checked, organizationId: currentOrgId })
                           fetchGameStats({ playerId: selectedPlayer.id })
                         }}
                         className={`accent-primary w-4 h-4 ${allowed ? 'cursor-pointer' : 'cursor-default'}`}

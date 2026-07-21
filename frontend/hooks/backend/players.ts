@@ -205,16 +205,6 @@ export function useCreatePlayerForGame() {
       const { error: spError } = await supabase.from('season_players').insert({ organization_id: params.organizationId, player_id: playerId, season_id: params.seasonId, is_sub: true })
       if (spError) throw new Error(spError.message)
     }
-    // A new game backfills game_attendance for the season roster at that
-    // moment (see trg_backfill_game_attendance), but that only fires once
-    // at game creation; a player joining later needs its own row so
-    // attendance (derived from lineup membership) picks them up immediately
-    // instead of only from the next game onward. Must actually overwrite on
-    // conflict (not ignoreDuplicates): see useAddToLineup (games.ts) for why.
-    const { error: gaError } = await supabase
-      .from('game_attendance')
-      .upsert({ organization_id: params.organizationId, game_id: params.gameId, player_id: playerId, in: true }, { onConflict: 'game_id,player_id' })
-    if (gaError) throw new Error(gaError.message)
     return data?.[0]
   }, [])
   return useApiCall(fn)
@@ -237,12 +227,6 @@ export function useDeleteSubPlayer() {
         .eq('player_id', params.playerId)
       if (spError) throw new Error(spError.message)
     }
-    const { error: gaError } = await supabase
-      .from('game_attendance')
-      .delete()
-      .eq('game_id', params.gameId)
-      .eq('player_id', params.playerId)
-    if (gaError) throw new Error(gaError.message)
     return data?.[0]
   }, [])
   return useApiCall(fn)
@@ -270,14 +254,6 @@ export function useAddPlayerToGame() {
         .upsert({ organization_id: params.organizationId, player_id: params.playerId, season_id: params.seasonId, is_sub: true }, { onConflict: 'season_id,player_id', ignoreDuplicates: true })
       if (spError) throw new Error(spError.message)
     }
-    // See useCreatePlayerForGame: a row for this specific game so attendance
-    // (derived from lineup membership) reflects them immediately. Must
-    // actually overwrite on conflict (not ignoreDuplicates): see
-    // useAddToLineup (games.ts) for why.
-    const { error: gaError } = await supabase
-      .from('game_attendance')
-      .upsert({ organization_id: params.organizationId, game_id: params.gameId, player_id: params.playerId, in: true }, { onConflict: 'game_id,player_id' })
-    if (gaError) throw new Error(gaError.message)
     return data?.[0]
   }, [])
   return useApiCall(fn)
@@ -356,33 +332,6 @@ export function useUpdatePlayerSeasons() {
         .upsert(rows, { onConflict: 'season_id,player_id' })
       if (upsertError) throw new Error(upsertError.message)
     }
-
-    // A player promoted to full-player (is_sub: false) for a season is
-    // expected to attend every game in that season by default, same as
-    // the rest of the roster. Games created while they were a sub (or
-    // before they joined) never got a game_attendance row for them, so
-    // without this they'd be invisible in the Attendance tab (which lists
-    // existing rows, not the roster) for every one of those games until
-    // added back game-by-game via "Add player". Backfill the missing rows
-    // for this season's existing games, mirroring the per-game upsert
-    // useCreatePlayerForGame/useAddToLineup already do for a single game.
-    const fullPlayerSeasonIds = params.seasonIds.filter(sid => !(params.subsBySeasonId?.[sid] ?? false))
-    if (fullPlayerSeasonIds.length > 0) {
-      const { data: seasonGames, error: gamesError } = await supabase
-        .from('games')
-        .select('id')
-        .in('season_id', fullPlayerSeasonIds)
-      if (gamesError) throw new Error(gamesError.message)
-      const attendanceRows = ((seasonGames ?? []) as { id: number }[]).map(g => ({
-        organization_id: params.organizationId, game_id: g.id, player_id: params.playerId, in: true,
-      }))
-      if (attendanceRows.length > 0) {
-        const { error: gaError } = await supabase
-          .from('game_attendance')
-          .upsert(attendanceRows, { onConflict: 'game_id,player_id', ignoreDuplicates: true })
-        if (gaError) throw new Error(gaError.message)
-      }
-    }
   }, [])
   return useApiCall(fn)
 }
@@ -416,31 +365,41 @@ export function useUploadPlayerPhoto() {
 
 export function useGetPlayerGameStats() {
   const fn = useCallback(async (params: { playerId: number }) => {
-    // Fetch all game_attendance rows for this player (in = true or false)
-    const { data: attendance, error: attendanceError } = await supabase
-      .from('game_attendance')
-      .select('game_id, in')
+    // Every game in every season this player belongs to appears here (not
+    // just ones they were placed in a lineup for), so Roster's per-game
+    // breakdown can show — and let you toggle — attendance for a game they
+    // haven't been added to yet. `in` reflects live game_lineups membership;
+    // attendance has no separate backing table (see useGetGameAttendance).
+    const { data: seasonRows, error: seasonError } = await supabase
+      .from('season_players')
+      .select('season_id')
       .eq('player_id', params.playerId)
-    if (attendanceError) throw new Error(attendanceError.message)
+    if (seasonError) throw new Error(seasonError.message)
+    const seasonIds = [...new Set(((seasonRows ?? []) as { season_id: number }[]).map(r => r.season_id))]
+    if (seasonIds.length === 0) return []
 
-    const attendanceByGame = new Map<number, boolean>(
-      ((attendance ?? []) as any[]).map((r: any) => [r.game_id as number, r.in as boolean])
-    )
-    const attendedGameIds = [...attendanceByGame.keys()]
-    if (attendedGameIds.length === 0) return []
-
-    // Fetch game details for all attended games
     const { data: games, error: gamesError } = await supabase
       .from('games')
       .select('id, opponent, game_date, game_time, game_type, season_id')
-      .in('id', attendedGameIds)
+      .in('season_id', seasonIds)
     if (gamesError) throw new Error(gamesError.message)
+    const gameIds = (games ?? []).map((g: any) => g.id)
+    if (gameIds.length === 0) return []
+
+    const { data: lineupRows, error: lineupError } = await supabase
+      .from('game_lineups')
+      .select('game_id')
+      .eq('player_id', params.playerId)
+      .in('game_id', gameIds)
+    if (lineupError) throw new Error(lineupError.message)
+    const inGameIds = new Set(((lineupRows ?? []) as { game_id: number }[]).map(r => r.game_id))
 
     // Fetch events where this player scored
     const { data: scoringEvents, error } = await supabase
       .from('game_events')
       .select('game_id, event_type')
       .eq('player_id', params.playerId)
+      .in('game_id', gameIds)
     if (error) throw new Error(error.message)
 
     // Fetch Goal events where this player assisted
@@ -449,22 +408,20 @@ export function useGetPlayerGameStats() {
       .select('game_id, event_type')
       .eq('related_player_id', params.playerId)
       .eq('event_type', 'Goal')
+      .in('game_id', gameIds)
     if (assistError) throw new Error(assistError.message)
 
-    const gamesMap = new Map((games ?? []).map((g: any) => [g.id, g]))
-
-    // Seed every game (in or out) with zeroes so all season games appear
+    // Seed every season game with zeroes so games with no recorded events still appear
     const statsMap = new Map<number, any>()
-    attendedGameIds.forEach((gameId: number) => {
-      const g = gamesMap.get(gameId)
-      statsMap.set(gameId, {
-        game_id: gameId,
-        opponent: g?.opponent ?? 'Unknown',
-        game_date: g?.game_date ?? '',
-        game_time: g?.game_time ?? null,
-        game_type: g?.game_type ?? '',
-        season_id: g?.season_id ?? null,
-        in: attendanceByGame.get(gameId) ?? true,
+    ;(games ?? []).forEach((g: any) => {
+      statsMap.set(g.id, {
+        game_id: g.id,
+        opponent: g.opponent ?? 'Unknown',
+        game_date: g.game_date ?? '',
+        game_time: g.game_time ?? null,
+        game_type: g.game_type ?? '',
+        season_id: g.season_id ?? null,
+        in: inGameIds.has(g.id),
         goals: 0,
         assists: 0,
         turnovers: 0,
@@ -486,6 +443,67 @@ export function useGetPlayerGameStats() {
     return [...statsMap.values()].sort((a, b) => b.game_date.localeCompare(a.game_date)) as any[]
   }, [])
   return useApiCall<any[], { playerId: number }>(fn)
+}
+
+// Roster's per-game breakdown lets you toggle whether a player was in a
+// specific game's lineup directly, since attendance has no separate write
+// path anymore (see useGetGameAttendance) — this IS how you edit attendance
+// now. Checking someone "in" places them in the game's first lineup group
+// (by sort_order), creating one first if the game has none yet, same
+// fallback other mid-game adds use (see Schedule.tsx's defaultLineupName).
+// Unchecking removes every lineup entry they have for that game.
+export function useSetGameAttendance() {
+  const fn = useCallback(async (params: { organizationId: number | null; gameId: number; playerId: number; seasonId: number | null; attending: boolean }) => {
+    if (!params.attending) {
+      const { error } = await supabase
+        .from('game_lineups')
+        .delete()
+        .eq('game_id', params.gameId)
+        .eq('player_id', params.playerId)
+      if (error) throw new Error(error.message)
+      return
+    }
+
+    const { data: groups, error: groupsError } = await supabase
+      .from('game_lineup_groups')
+      .select('lineup_name')
+      .eq('game_id', params.gameId)
+      .order('sort_order')
+      .limit(1)
+    if (groupsError) throw new Error(groupsError.message)
+
+    let lineupName = groups?.[0]?.lineup_name as string | undefined
+    if (!lineupName) {
+      const { data: newGroup, error: createError } = await supabase
+        .from('game_lineup_groups')
+        .insert({ game_id: params.gameId, organization_id: params.organizationId, lineup_name: 'Line 1', sort_order: 0 })
+        .select()
+      if (createError) throw new Error(createError.message)
+      lineupName = newGroup?.[0]?.lineup_name ?? 'Line 1'
+    }
+
+    const { error: insertError } = await supabase
+      .from('game_lineups')
+      .upsert(
+        { organization_id: params.organizationId, game_id: params.gameId, player_id: params.playerId, lineup_name: lineupName },
+        { onConflict: 'game_id,player_id,lineup_name', ignoreDuplicates: true }
+      )
+    if (insertError) throw new Error(insertError.message)
+
+    // Also join the game's season roster, same as useAddToLineup: without
+    // this a player marked "in" straight from Roster (rather than through
+    // the game's own Lineups tab) stays invisible to season-scoped filters.
+    if (params.seasonId) {
+      const { error: spError } = await supabase
+        .from('season_players')
+        .upsert(
+          { organization_id: params.organizationId, player_id: params.playerId, season_id: params.seasonId },
+          { onConflict: 'season_id,player_id', ignoreDuplicates: true }
+        )
+      if (spError) throw new Error(spError.message)
+    }
+  }, [])
+  return useApiCall<void, { organizationId: number | null; gameId: number; playerId: number; seasonId: number | null; attending: boolean }>(fn)
 }
 
 export function useGetPlayerSeasons() {

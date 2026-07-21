@@ -143,15 +143,18 @@ export function useGetPlayerStats() {
 
     const filtered = events
 
-    // games_played = games the player actually attended (in = true)
-    let attendanceQuery = supabase
-      .from('game_attendance')
+    // games_played = games the player was placed in a lineup for. Read
+    // straight from game_lineups (the source of truth attendance is derived
+    // from — see CLAUDE.md's "Lineups (attendance is derived from them)")
+    // rather than game_attendance, so this can't drift from what the
+    // Lineups tab actually shows even if attendance sync ever lags.
+    let lineupQuery = supabase
+      .from('game_lineups')
       .select('game_id, player_id')
-      .eq('in', true)
-    if (scopedGameIds) attendanceQuery = attendanceQuery.in('game_id', scopedGameIds)
-    const { data: attendanceRows } = await attendanceQuery
+    if (scopedGameIds) lineupQuery = lineupQuery.in('game_id', scopedGameIds)
+    const { data: lineupRows } = await lineupQuery
     const attendanceMap = new Map<number, Set<number>>() // player_id → Set<game_id>
-    ;(attendanceRows ?? []).forEach((r: any) => {
+    ;(lineupRows ?? []).forEach((r: any) => {
       if (!attendanceMap.has(r.player_id)) attendanceMap.set(r.player_id, new Set())
       attendanceMap.get(r.player_id)!.add(r.game_id)
     })

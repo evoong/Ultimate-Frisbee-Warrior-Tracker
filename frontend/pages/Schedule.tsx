@@ -3,7 +3,7 @@ import { useGetGames, useCreateGame, useUpdateGame, useDeleteGame, useGetLineups
 import { useGetGameEvents, useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useUpdateEventTimestamp, useGetEventTypes } from '../hooks/backend/events'
 import { useGetSeasonRoster, useGetPlayersNotInSeason, useCreatePlayerForGame, useDeleteSubPlayer, useAddPlayerToGame } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons, useCreateSeason, useGetSeasonsMeta, useGetPlayerStats } from '../hooks/backend/stats'
-import { useGetGameAttendance, useSetAttendance } from '../hooks/backend/attendance'
+import { useGetGameAttendance } from '../hooks/backend/attendance'
 import { useGetJamSyncConflicts, useSyncJamNow, useCreateGameFromConflict, useLinkConflictToGame, useDismissConflict, type JamSyncConflict } from '../hooks/backend/jamSync'
 import { useGetLeagueTeams } from '../hooks/backend/league'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
@@ -136,7 +136,6 @@ export default function Schedule() {
 
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const { data: attendanceRows, trigger: fetchAttendance } = useGetGameAttendance()
-  const { trigger: setAttendance } = useSetAttendance()
 
   const { data: jamConflicts, trigger: fetchJamConflicts } = useGetJamSyncConflicts()
   const { trigger: syncJamNow, loading: syncingJam } = useSyncJamNow()
@@ -819,20 +818,12 @@ export default function Schedule() {
   const handleDeleteLineupGroup = async (group: LineupGroup) => {
     if (!selectedGame) return
     // Deleting a group drops every player placed in it (see
-    // useDeleteLineupGroup), so anyone who has no OTHER lineup entry in this
-    // game loses their attendance too, same as removing them one at a time.
-    const affectedPlayerIds = ((lineups as LineupEntry[] | undefined) ?? [])
-      .filter(e => e.lineup_name === group.lineup_name)
-      .map(e => e.player_id)
+    // useDeleteLineupGroup). Attendance has no separate write side anymore
+    // (see useGetGameAttendance) — it's just re-read from game_lineups.
     await deleteLineupGroup({ gameId: selectedGame.id, lineupName: group.lineup_name, groupId: group.id })
     fetchLineupGroups({ gameId: selectedGame.id })
-    const remaining = await fetchLineups({ gameId: selectedGame.id })
-    const stillInAnotherLineup = new Set((remaining ?? []).map((e: LineupEntry) => e.player_id))
-    const toClear = affectedPlayerIds.filter(id => !stillInAnotherLineup.has(id))
-    if (toClear.length > 0) {
-      await Promise.all(toClear.map(playerId => setAttendance({ gameId: selectedGame.id, playerId, attending: false, organizationId: currentOrgId })))
-      fetchAttendance({ gameId: selectedGame.id })
-    }
+    fetchLineups({ gameId: selectedGame.id })
+    fetchAttendance({ gameId: selectedGame.id })
   }
 
   const handleRenameLineupGroup = async (group: LineupGroup, newName: string, existingNames: string[]) => {
@@ -846,18 +837,14 @@ export default function Schedule() {
   }
 
 
-  // Removing a player from a lineup group also clears their attendance once
-  // they have no lineup entry left in this game at all (attendance is
-  // derived from lineup membership, not tracked separately anymore).
+  // Attendance has no separate write side (see useGetGameAttendance) — it's
+  // just re-read from game_lineups, so removing someone from their last
+  // lineup entry here is all that's needed for them to read as not attending.
   const handleRemoveFromLineup = async (playerId: number, lineupGroup: string) => {
     if (!selectedGame) return
     await removeFromLineup({ gameId: selectedGame.id, playerId, lineup_name: lineupGroup })
-    const remaining = await fetchLineups({ gameId: selectedGame.id })
-    const stillInAnotherLineup = (remaining ?? []).some((e: LineupEntry) => e.player_id === playerId)
-    if (!stillInAnotherLineup) {
-      await setAttendance({ gameId: selectedGame.id, playerId, attending: false, organizationId: currentOrgId })
-      fetchAttendance({ gameId: selectedGame.id })
-    }
+    fetchLineups({ gameId: selectedGame.id })
+    fetchAttendance({ gameId: selectedGame.id })
   }
 
   // Drag a lineup row to reorder players within their group, or drop it onto
@@ -1081,15 +1068,16 @@ export default function Schedule() {
   const newEventPlayerOptions = [{ id: '__opponent__', label: 'Opponent' }, ...playerOptions]
   const isNewEventGoalLike = ['Goal', 'Caught OB'].includes(newEventType)
 
-  // Scorer/assister quick-select should only offer players marked present for
-  // this game. A missing row defaults to "attending" for a full roster
-  // player (their row may just not exist yet), but NOT for a sub: a sub's
-  // game_attendance row is only ever created when they're explicitly added
-  // to a specific game (see useCreatePlayerForGame/useAddPlayerToGame), so
-  // no row for a sub means they were never part of this game, not that
-  // they're attending by default. The Edit Event dialog still uses the full
-  // roster so past events referencing a player who's since been marked
-  // absent stay editable.
+  // Scorer/assister quick-select should only offer players placed in a
+  // lineup for this game (attendance is a pure read of lineup membership —
+  // see useGetGameAttendance). A missing row defaults to "attending" for a
+  // full roster player (they may just not have been placed in a lineup
+  // yet), but NOT for a sub: a sub is only ever part of a game once
+  // explicitly added to it (see useCreatePlayerForGame/useAddPlayerToGame),
+  // so no lineup row for a sub means they were never part of this game, not
+  // that they're attending by default. The Edit Event dialog still uses the
+  // full roster so past events referencing a player who's since been
+  // removed from the lineup stay editable.
   const attendingPlayerIds = new Set(
     ((players as Player[] | undefined) ?? [])
       .filter(p => {

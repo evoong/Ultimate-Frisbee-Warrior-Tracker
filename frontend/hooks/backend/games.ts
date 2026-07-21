@@ -207,17 +207,6 @@ export function useAddToLineup() {
         .upsert({ organization_id: params.organizationId, player_id: params.player_id, season_id: params.seasonId }, { onConflict: 'season_id,player_id', ignoreDuplicates: true })
       if (spError) throw new Error(spError.message)
     }
-    // See useCreatePlayerForGame (players.ts): a row for this specific game
-    // so attendance (derived from lineup membership) reflects them
-    // immediately. Must actually overwrite on conflict (not
-    // ignoreDuplicates): a stale pre-existing row (e.g. from the
-    // game-creation backfill trigger, or a previous removal) defaulting to
-    // `in: false` would otherwise survive untouched, leaving them "in a
-    // lineup" but not attending.
-    const { error: gaError } = await supabase
-      .from('game_attendance')
-      .upsert({ organization_id: params.organizationId, game_id: params.gameId, player_id: params.player_id, in: true }, { onConflict: 'game_id,player_id' })
-    if (gaError) throw new Error(gaError.message)
     return data?.[0]
   }, [])
   return useApiCall(fn)

@@ -177,10 +177,11 @@ export default function Strategy() {
 
   // Fetch attendance and that game's season roster whenever the selected
   // play's assigned game changes. Scoping to the season roster first matters:
-  // game_attendance only has rows for players actually on that season's
-  // roster, so filtering the *global* player list by attendance alone barely
-  // narrows anything (everyone else defaults to "attending" via row?.in ??
-  // true, same as Quick Score's convention, since they have no row at all).
+  // attendance (see useGetGameAttendance) only has rows for players actually
+  // placed in a lineup for that game, so filtering the *global* player list
+  // by attendance alone barely narrows anything (everyone else defaults to
+  // "attending" via row?.in ?? true, same as the Events tab's convention,
+  // since they have no row at all).
   useEffect(() => {
     if (currentOrgId == null) return
     if (selectedPlay?.game_id) {

@@ -35,50 +35,24 @@ function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P
   return { data, loading, error, trigger: trigger as HookResult<T, P>['trigger'] }
 }
 
-// Returns all rows for a game: { player_id, in }
+// Attendance is a pure read derived from lineup membership: a player
+// "attends" a game exactly when they're placed in any of its lineup groups.
+// This has no backing table of its own (game_attendance is retired) and no
+// write side — attend/un-attend happens by adding/removing someone from a
+// lineup (see useAddToLineup, useCreatePlayerForGame, useAddPlayerToGame,
+// and Schedule.tsx's handleRemoveFromLineup/handleDeleteLineupGroup).
+// Returns the same { player_id, in } shape callers already expect, always
+// `in: true` per row, since a row's presence in game_lineups is what "in"
+// means now — there is no "in: false" state to represent.
 export function useGetGameAttendance() {
   const fn = useCallback(async (params: { gameId: number }) => {
     const { data, error } = await supabase
-      .from('game_attendance')
-      .select('player_id, in')
+      .from('game_lineups')
+      .select('player_id')
       .eq('game_id', params.gameId)
     if (error) throw new Error(error.message)
-    return (data ?? []) as { player_id: number; in: boolean }[]
+    const playerIds = new Set(((data ?? []) as { player_id: number }[]).map(r => r.player_id))
+    return [...playerIds].map(player_id => ({ player_id, in: true })) as { player_id: number; in: boolean }[]
   }, [])
   return useApiCall<{ player_id: number; in: boolean }[], { gameId: number }>(fn)
-}
-
-// Upsert so players added to a season after the game was created (no backfilled row) still work
-export function useSetAttendance() {
-  const fn = useCallback(async (params: { organizationId: number | null; gameId: number; playerId: number; attending: boolean }) => {
-    const { error } = await supabase
-      .from('game_attendance')
-      .upsert(
-        { organization_id: params.organizationId, game_id: params.gameId, player_id: params.playerId, in: params.attending },
-        { onConflict: 'game_id,player_id' }
-      )
-    if (error) throw new Error(error.message)
-  }, [])
-  return useApiCall<void, { organizationId: number | null; gameId: number; playerId: number; attending: boolean }>(fn)
-}
-
-// Sets `in` for a specific set of playerIds in one update, sets everyone else to false
-export function useSetAllAttendance() {
-  const fn = useCallback(async (params: { gameId: number; attending: boolean; playerIds?: number[] }) => {
-    if (params.playerIds && params.playerIds.length > 0) {
-      const { error } = await supabase
-        .from('game_attendance')
-        .update({ in: params.attending })
-        .eq('game_id', params.gameId)
-        .in('player_id', params.playerIds)
-      if (error) throw new Error(error.message)
-    } else {
-      const { error } = await supabase
-        .from('game_attendance')
-        .update({ in: params.attending })
-        .eq('game_id', params.gameId)
-      if (error) throw new Error(error.message)
-    }
-  }, [])
-  return useApiCall<void, { gameId: number; attending: boolean; playerIds?: number[] }>(fn)
 }
