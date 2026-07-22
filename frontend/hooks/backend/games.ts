@@ -88,7 +88,10 @@ export function useCreateGame() {
 }
 
 export function useUpdateGame() {
-  const fn = useCallback(async (params: { gameId: number; notes?: string; outcome_override?: string | null; result?: string }) => {
+  const fn = useCallback(async (params: {
+    gameId: number; notes?: string; outcome_override?: string | null; result?: string
+    opponent?: string; game_date?: string; game_time?: string; game_type?: string; season_id?: number | null
+  }) => {
     const { gameId, ...body } = params
     const { data, error } = await supabase
       .from('games')

@@ -10,6 +10,7 @@ import { createGateway, createRequireAllowedUser } from "../gateway/index.js";
 import { nodeAdapter } from "../gateway/node-adapter.js";
 import { getVaultSecret } from "../gateway/secrets.js";
 import { runJamSync } from "../gateway/jamSync.js";
+import { CHAT_FUNCTION_DECLARATIONS, callChatFunction, type ActionsConfig } from "../gateway/gameActions.js";
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
@@ -276,7 +277,9 @@ ${eventTimelines.join("\n\n")}
 
 LANGUAGE STYLE: Respond ONLY in Jamaican Patois, in every message, no exceptions. Keep it warm and natural (e.g. "wah gwaan", "mi", "yuh", "di", "dem", "nuh", "ting"), but never let the patois obscure the actual answer — names, numbers, dates, and stats must stay exact and easy to read. If a question is complex, prioritize clarity: use simple patois phrasing over anything cute that risks confusing the user.
 
-Answer questions about the team, players, stats, and games. Be concise and friendly. When giving stats, reference the season and game breakdowns where relevant. If asked to do something you can't (like edit data), explain that the app UI should be used for that — still in patois.`;
+Answer questions about the team, players, stats, and games. Be concise and friendly. When giving stats, reference the season and game breakdowns where relevant.
+
+YOU CAN LOG DATA: you have tools to record a goal/event, undo the most recently logged event, and manage lineups for a game. Before calling any of these tools, first restate in plain patois exactly what you're about to do (who did what, and which game — use CURRENT DATE plus the game list above to say which game you mean, e.g. "tonight's game vs X" or "the June 7 game vs Y") and ask the user to confirm; only call the tool once the user actually confirms in a later message. If a player name is ambiguous or you can't find a matching game, ask instead of guessing. After a tool call, report back what actually happened (including any error) in patois, with the updated score if relevant — never claim something was logged unless the tool result confirms it.`;
 }
 
 // Retry transient Gemini errors (was tuned against gemma-4-31b-it, which
@@ -316,23 +319,48 @@ app.post("/api/chat", async (req, res) => {
       parts: [{ text: h.content }],
     }));
 
+    const actionsConfig: ActionsConfig = { supabaseUrl: process.env.SUPABASE_URL || "", supabaseSecretKey: process.env.SUPABASE_SECRET_KEY || "" };
+    const chat = genai.chats.create({
+      model: geminiModel,
+      history: chatHistory,
+      config: { systemInstruction: systemContext, tools: [{ functionDeclarations: CHAT_FUNCTION_DECLARATIONS }] },
+    });
+
+    // Retry transient Gemini errors, but only for this first turn: once a
+    // function-call round below has actually executed a real DB write,
+    // blindly retrying on a later transient error could log the same event
+    // twice, so anything past this point surfaces the error instead.
     const MAX_ATTEMPTS = 5;
-    let reply = "";
+    let response;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        const chat = genai.chats.create({
-          model: geminiModel,
-          history: chatHistory,
-          config: { systemInstruction: systemContext },
-        });
-        const response = await chat.sendMessage({ message });
-        reply = response.text ?? "";
+        response = await chat.sendMessage({ message });
         break;
       } catch (err) {
         if (attempt === MAX_ATTEMPTS || !isTransientGeminiError(err)) throw err;
         await sleep(600 * attempt);
       }
     }
+    if (!response) throw new Error("unreachable");
+
+    // The model confirms with the user in plain text before calling
+    // anything (see the system prompt's "YOU CAN LOG DATA" instructions),
+    // so a function call here means the user just confirmed.
+    const MAX_FUNCTION_ROUNDS = 4;
+    for (let round = 0; round < MAX_FUNCTION_ROUNDS; round++) {
+      const calls = response.functionCalls;
+      if (!calls || calls.length === 0) break;
+      const parts = await Promise.all(calls.map(async (call) => {
+        try {
+          const output = await callChatFunction(actionsConfig, organization_id, call.name!, call.args ?? {});
+          return { functionResponse: { name: call.name!, response: { output } } };
+        } catch (err) {
+          return { functionResponse: { name: call.name!, response: { error: err instanceof Error ? err.message : String(err) } } };
+        }
+      }));
+      response = await chat.sendMessage({ message: parts });
+    }
+    const reply = response.text ?? "";
 
     // Save both turns to chat_logs
     await supabase.from("chat_logs").insert([

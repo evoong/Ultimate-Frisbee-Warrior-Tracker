@@ -3,6 +3,15 @@
     "supabase": {
       "type": "http",
       "url": "https://mcp.supabase.com/mcp?project_ref=pyqngqyqwevfpaxcmfnd"
+    },
+    "ufwt": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "tsx",
+        "/Users/ericvoong/Documents/GitHub/Ultimate-Frisbee-Warrior-Tracker/mcp-server/index.ts"
+      ],
+      "env": {}
     }
   }
 }

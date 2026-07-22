@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useGetGames, useCreateGame, useUpdateGame, useDeleteGame, useGetLineups, useAddToLineup, useRemoveFromLineup, useMoveLineupEntry, useUpdateLineupSortOrder, useUpdateLineupRole, useGetLineupGroups, useCreateLineupGroup, useRenameLineupGroup, useReorderLineupGroups, useDeleteLineupGroup, useGetPreviousGameLineups, useGetLineupTemplates, useGetLineupTemplateDetail, useSaveLineupTemplate, useDeleteLineupTemplate, type LineupGroup, type LineupTemplate } from '../hooks/backend/games'
 import { useGetGameEvents, useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useUpdateEventTimestamp, useGetEventTypes } from '../hooks/backend/events'
 import { useGetSeasonRoster, useGetPlayersNotInSeason, useCreatePlayerForGame, useDeleteSubPlayer, useAddPlayerToGame } from '../hooks/backend/players'
-import { useGetAllSeasons, useGetSeasons, useCreateSeason, useGetSeasonsMeta, useGetPlayerStats } from '../hooks/backend/stats'
+import { useGetAllSeasons, useGetSeasons, useCreateSeason, useUpdateSeason, useGetSeasonsMeta, useGetPlayerStats } from '../hooks/backend/stats'
 import { useGetGameAttendance } from '../hooks/backend/attendance'
 import { useGetJamSyncConflicts, useSyncJamNow, useCreateGameFromConflict, useLinkConflictToGame, useDismissConflict, type JamSyncConflict } from '../hooks/backend/jamSync'
 import { useGetLeagueTeams } from '../hooks/backend/league'
@@ -36,14 +36,16 @@ const IMMINENT_WINDOW_MS = 30 * 60 * 1000
 // A game's detail view opens on a different default tab depending on how
 // close it is to game time: still-warming-up games open on Lineups (so
 // you're setting the lines, not scoring an empty board), the live-scoring
-// window (30 min before kickoff through 2 hours after) opens on Events, and
-// anything later than that opens on Box Score since scoring is long over.
-const POST_GAME_EVENTS_WINDOW_MS = 2 * 60 * 60 * 1000
+// window (10 min before kickoff through 1h10m after, roughly a game's
+// length plus a warm-up/cooldown buffer) opens on Events, and anything
+// later than that opens on Box Score since scoring is long over.
+const PRE_GAME_EVENTS_WINDOW_MS = 10 * 60 * 1000
+const POST_GAME_EVENTS_WINDOW_MS = 70 * 60 * 1000
 
 function defaultTabForGame(g: { game_date: string; game_time: string | null }): 'events' | 'boxscore' | 'lineups' {
   const start = gameStartsAt(g).getTime()
   const now = Date.now()
-  if (now < start - IMMINENT_WINDOW_MS) return 'lineups'
+  if (now < start - PRE_GAME_EVENTS_WINDOW_MS) return 'lineups'
   if (now <= start + POST_GAME_EVENTS_WINDOW_MS) return 'events'
   return 'boxscore'
 }
@@ -65,7 +67,7 @@ type Game = {
 }
 type GameEvent = { id: number; event_type: string; event_timestamp: string; player_id: number | null; related_player_id: number | null; notes: string | null }
 type Player = { id: number; display_name: string; position: string | null; gender_match: string | null; is_sub: boolean | null; photo_url: string | null }
-type Season = { id: number; name: string; year: number; organizer: string | null; default_game_time: string | null; start_date: string | null; end_date: string | null }
+type Season = { id: number; name: string; year: number; organizer: string | null; location: string | null; league_name: string | null; default_game_time: string | null; start_date: string | null; end_date: string | null }
 type SeasonMeta = { organizers: string[]; names: string[]; years: number[]; locations: string[] }
 type LineupEntry = { id: number; player_id: number; lineup_name: string; sort_order: number; role: string | null; display_name: string; position: string | null; gender_match: string | null; photo_url: string | null }
 
@@ -107,6 +109,7 @@ export default function Schedule() {
   const { trigger: deleteGame } = useDeleteGame()
   const { data: seasons, trigger: fetchSeasons } = useGetAllSeasons()
   const { trigger: createSeason } = useCreateSeason()
+  const { trigger: updateSeason } = useUpdateSeason()
   const { data: seasonsMeta, trigger: fetchSeasonsMeta } = useGetSeasonsMeta()
   const { data: seasonsWithGames, trigger: fetchSeasonsWithGames } = useGetSeasons()
   const { data: lineups, trigger: fetchLineups } = useGetLineups()
@@ -166,6 +169,25 @@ export default function Schedule() {
   // Delete game
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null)
 
+  // Edit game details (opponent, season, date/time, type) — a separate
+  // dialog from the outcome-override and notes inline editors below, since
+  // those are quick single-field edits while this covers everything set at
+  // creation time.
+  const [showEditGame, setShowEditGame] = useState(false)
+  const [editGameData, setEditGameData] = useState({ opponent: '', game_date: '', game_time: '', game_type: 'Regular', season_id: '' })
+  const [savingGame, setSavingGame] = useState(false)
+
+  // Edit season details. A season to edit is picked from a Select rather
+  // than needing its own entry point per season, mirroring Roster's "Manage
+  // Roster" pattern of one dialog that operates on whichever season is
+  // chosen inside it.
+  const [showEditSeason, setShowEditSeason] = useState(false)
+  const [editSeasonId, setEditSeasonId] = useState<number | null>(null)
+  const [editSeasonData, setEditSeasonData] = useState({
+    name: '', year: '', organizer: '', location: '', league_name: '', default_game_time: '', start_date: '', end_date: '',
+  })
+  const [savingSeason, setSavingSeason] = useState(false)
+
   // Edit event
   const [editingEventId, setEditingEventId] = useState<number | null>(null)
   const [editScorerId, setEditScorerId] = useState<string>('')
@@ -186,7 +208,7 @@ export default function Schedule() {
   // Add event. Scorer/assister persist across successive adds (rather than
   // clearing after each one) so scoring several points in a row for the same
   // player doesn't require re-picking them every time.
-  const [showAddEvent, setShowAddEvent] = useState(false)
+  const [showAddEvent, setShowAddEvent] = useState(true)
   const [newEventType, setNewEventType] = useState<string>('Goal')
   const [newScorerId, setNewScorerId] = useState<string>('')
   const [newAssisterId, setNewAssisterId] = useState<string>('')
@@ -316,7 +338,7 @@ export default function Schedule() {
     const imminent = g.find(gm => Math.abs(gameStartsAt(gm).getTime() - now) <= IMMINENT_WINDOW_MS)
     if (imminent) {
       autoOpenedRef.current = true
-      handleSelectGame(imminent, { openForScoring: true })
+      handleSelectGame(imminent)
     }
   }, [games])
 
@@ -475,7 +497,7 @@ export default function Schedule() {
     if (selectedGame?.season_id) fetchLineupTemplates({ organizationId: currentOrgId, seasonId: selectedGame.season_id })
   }
 
-  const handleSelectGame = async (game: Game, opts?: { openForScoring?: boolean }) => {
+  const handleSelectGame = async (game: Game) => {
     setSelectedGame(game)
     fetchEvents({ gameId: game.id })
     fetchAttendance({ gameId: game.id })
@@ -494,10 +516,9 @@ export default function Schedule() {
     setEditingOutcome(false)
     setNotesValue(game.notes ?? '')
     setOutcomeValue(game.outcome_override ?? '')
-    // A game opened because its start time is imminent (see the auto-select
-    // effect below) starts ready to score; one opened by browsing the list
-    // starts collapsed so glancing at past events doesn't require a scroll.
-    setShowAddEvent(!!opts?.openForScoring)
+    // Add Event starts expanded regardless of how the game was opened, so
+    // it's ready to score without an extra click.
+    setShowAddEvent(true)
     setNewEventType('Goal')
     setNewScorerId('')
     setNewAssisterId('')
@@ -587,6 +608,84 @@ export default function Schedule() {
     setDeleteConfirmId(null)
     setSelectedGame(null)
     fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentOrgId })
+  }
+
+  const handleOpenEditGame = () => {
+    if (!selectedGame) return
+    setEditGameData({
+      opponent: selectedGame.opponent,
+      game_date: selectedGame.game_date,
+      game_time: (selectedGame.game_time ?? '').slice(0, 5),
+      game_type: selectedGame.game_type || 'Regular',
+      season_id: selectedGame.season_id ? String(selectedGame.season_id) : '',
+    })
+    setShowEditGame(true)
+  }
+
+  const handleSaveEditGame = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedGame) return
+    setSavingGame(true)
+    try {
+      const updated = await updateGame({
+        gameId: selectedGame.id,
+        opponent: editGameData.opponent,
+        game_date: editGameData.game_date,
+        game_time: editGameData.game_time,
+        game_type: editGameData.game_type,
+        season_id: editGameData.season_id ? parseInt(editGameData.season_id) : null,
+      }) as Game | undefined
+      if (updated) {
+        setSelectedGame(updated)
+        setActiveTab(defaultTabForGame(updated))
+      }
+      setShowEditGame(false)
+      fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentOrgId })
+    } finally {
+      setSavingGame(false)
+    }
+  }
+
+  const handleOpenEditSeason = (seasonId?: number) => {
+    const allS = (seasons as Season[] | undefined) ?? []
+    const id = seasonId ?? (scheduleSeasonIds.length === 1 ? scheduleSeasonIds[0] : allS[0]?.id)
+    const s = allS.find(s => s.id === id)
+    if (!s) return
+    setEditSeasonId(s.id)
+    setEditSeasonData({
+      name: s.name, year: String(s.year), organizer: s.organizer ?? '', location: s.location ?? '',
+      league_name: s.league_name ?? '', default_game_time: (s.default_game_time ?? '').slice(0, 5),
+      start_date: s.start_date ?? '', end_date: s.end_date ?? '',
+    })
+    setShowEditSeason(true)
+  }
+
+  const handleEditSeasonSelect = (value: string) => {
+    handleOpenEditSeason(parseInt(value))
+  }
+
+  const handleSaveEditSeason = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (editSeasonId == null) return
+    setSavingSeason(true)
+    try {
+      await updateSeason({
+        seasonId: editSeasonId,
+        name: editSeasonData.name,
+        year: parseInt(editSeasonData.year),
+        organizer: editSeasonData.organizer || null,
+        location: editSeasonData.location || null,
+        league_name: editSeasonData.league_name || null,
+        default_game_time: editSeasonData.default_game_time || null,
+        start_date: editSeasonData.start_date || null,
+        end_date: editSeasonData.end_date || null,
+      })
+      setShowEditSeason(false)
+      fetchSeasons({ organizationId: currentOrgId })
+      fetchSeasonsMeta({ organizationId: currentOrgId })
+    } finally {
+      setSavingSeason(false)
+    }
   }
 
   const handleSaveNotes = async () => {
@@ -1171,13 +1270,22 @@ export default function Schedule() {
             <span className="text-sm font-medium">Back to Schedule</span>
           </button>
           {allowed && (
-            <button
-              onClick={() => setDeleteConfirmId(selectedGame.id)}
-              className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-destructive transition-colors"
-            >
-              <Trash2 className="w-4 h-4" />
-              Delete
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleOpenEditGame}
+                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Edit2 className="w-4 h-4" />
+                Edit
+              </button>
+              <button
+                onClick={() => setDeleteConfirmId(selectedGame.id)}
+                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-destructive transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete
+              </button>
+            </div>
           )}
         </div>
 
@@ -1896,6 +2004,53 @@ export default function Schedule() {
           </Card>
         )}
 
+        {/* Edit game details */}
+        <Dialog open={showEditGame} onOpenChange={setShowEditGame}>
+          <DialogContent className="bg-card text-card-foreground max-h-[90vh] overflow-y-auto">
+            <DialogHeader><DialogTitle>Edit Game</DialogTitle></DialogHeader>
+            <form onSubmit={handleSaveEditGame} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-opponent">Opponent</Label>
+                <Input id="edit-opponent" value={editGameData.opponent} onChange={e => setEditGameData({ ...editGameData, opponent: e.target.value })} required className="bg-background text-foreground" />
+              </div>
+              <div className="space-y-2">
+                <Label>Season</Label>
+                <Select value={editGameData.season_id || '__none__'} onValueChange={v => setEditGameData({ ...editGameData, season_id: v === '__none__' ? '' : v })}>
+                  <SelectTrigger className="bg-background text-foreground"><SelectValue placeholder="No season" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">No season</SelectItem>
+                    {(seasons as Season[] | undefined)?.map(s => (
+                      <SelectItem key={s.id} value={String(s.id)}>{seasonLabel(s)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-game_date">Date</Label>
+                  <Input id="edit-game_date" type="date" value={editGameData.game_date} onChange={e => setEditGameData({ ...editGameData, game_date: e.target.value })} required className="bg-background text-foreground" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-game_time">Time</Label>
+                  <Input id="edit-game_time" type="time" value={editGameData.game_time} onChange={e => setEditGameData({ ...editGameData, game_time: e.target.value })} required className="bg-background text-foreground" />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Game Type</Label>
+                <Select value={editGameData.game_type} onValueChange={value => setEditGameData({ ...editGameData, game_type: value })}>
+                  <SelectTrigger className="bg-background text-foreground"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {['Regular', 'Playoff', 'Tournament', 'Friendly'].map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button type="submit" disabled={savingGame} className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
+                {savingGame ? 'Saving…' : 'Save Changes'}
+              </Button>
+            </form>
+          </DialogContent>
+        </Dialog>
+
         {/* Delete confirm */}
         <Dialog open={deleteConfirmId !== null} onOpenChange={open => !open && setDeleteConfirmId(null)}>
           <DialogContent className="bg-card text-card-foreground">
@@ -2245,12 +2400,25 @@ export default function Schedule() {
       </div>
 
       {/* Season filter */}
-      <SeasonMultiSelect
-        seasons={(seasons as Season[] | undefined) ?? []}
-        selectedIds={scheduleSeasonIds}
-        onChange={setScheduleSeasonIds}
-        placeholder="All Seasons"
-      />
+      <div className="flex gap-2">
+        <div className="flex-1">
+          <SeasonMultiSelect
+            seasons={(seasons as Season[] | undefined) ?? []}
+            selectedIds={scheduleSeasonIds}
+            onChange={setScheduleSeasonIds}
+            placeholder="All Seasons"
+          />
+        </div>
+        {allowed && (seasons as Season[] | undefined)?.length ? (
+          <button
+            onClick={() => handleOpenEditSeason()}
+            title="Edit season details"
+            className="flex items-center justify-center w-9 h-9 shrink-0 rounded-md border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+          >
+            <Edit2 className="w-4 h-4" />
+          </button>
+        ) : null}
+      </div>
 
       {/* Calendar sync: anything the automatic daily sync from a
           calendar_sources feed couldn't confidently auto-create lands here
@@ -2434,6 +2602,66 @@ export default function Schedule() {
             <Button variant="outline" onClick={() => setDeleteConfirmId(null)} className="flex-1">Cancel</Button>
             <Button onClick={() => deleteConfirmId && handleDeleteGame(deleteConfirmId)} className="flex-1 bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete Game</Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit season details. One dialog operating on whichever season is
+          picked in its own Select, rather than a per-season entry point. */}
+      <Dialog open={showEditSeason} onOpenChange={setShowEditSeason}>
+        <DialogContent className="bg-card text-card-foreground max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Edit Season</DialogTitle></DialogHeader>
+          <div className="space-y-2">
+            <Label>Season</Label>
+            <Select value={editSeasonId != null ? String(editSeasonId) : ''} onValueChange={handleEditSeasonSelect}>
+              <SelectTrigger className="bg-background text-foreground"><SelectValue placeholder="Select season" /></SelectTrigger>
+              <SelectContent>
+                {(seasons as Season[] | undefined)?.map(s => (
+                  <SelectItem key={s.id} value={String(s.id)}>{seasonLabel(s)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {editSeasonId != null && (
+            <form onSubmit={handleSaveEditSeason} className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-season-organizer">Organizer</Label>
+                  <Input id="edit-season-organizer" value={editSeasonData.organizer} onChange={e => setEditSeasonData({ ...editSeasonData, organizer: e.target.value })} className="bg-background text-foreground" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-season-name">League / Season Name</Label>
+                  <Input id="edit-season-name" value={editSeasonData.name} onChange={e => setEditSeasonData({ ...editSeasonData, name: e.target.value })} required className="bg-background text-foreground" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-season-year">Year</Label>
+                  <Input id="edit-season-year" type="number" value={editSeasonData.year} onChange={e => setEditSeasonData({ ...editSeasonData, year: e.target.value })} required className="bg-background text-foreground" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-season-location">Location</Label>
+                  <Input id="edit-season-location" value={editSeasonData.location} onChange={e => setEditSeasonData({ ...editSeasonData, location: e.target.value })} className="bg-background text-foreground" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-season-start">Start Date</Label>
+                  <Input id="edit-season-start" type="date" value={editSeasonData.start_date} onChange={e => setEditSeasonData({ ...editSeasonData, start_date: e.target.value })} className="bg-background text-foreground" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-season-end">End Date</Label>
+                  <Input id="edit-season-end" type="date" value={editSeasonData.end_date} onChange={e => setEditSeasonData({ ...editSeasonData, end_date: e.target.value })} className="bg-background text-foreground" />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-season-default-time">Default Game Start Time</Label>
+                <Input id="edit-season-default-time" type="time" value={editSeasonData.default_game_time} onChange={e => setEditSeasonData({ ...editSeasonData, default_game_time: e.target.value })} className="bg-background text-foreground" />
+              </div>
+              <Button type="submit" disabled={savingSeason} className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
+                {savingSeason ? 'Saving…' : 'Save Changes'}
+              </Button>
+            </form>
+          )}
         </DialogContent>
       </Dialog>
     </div>

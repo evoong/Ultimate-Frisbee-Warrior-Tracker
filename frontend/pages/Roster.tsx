@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlayer, useGetPlayerGameStats, useSetGameAttendance, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer, useGetSeasonRoster, useCopyPlayersToSeason, useRemovePlayersFromSeason } from '../hooks/backend/players'
-import { useGetAllSeasons, useGetSeasons } from '../hooks/backend/stats'
+import { useGetAllSeasons, useGetSeasons, useCreateSeason } from '../hooks/backend/stats'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
 import { isPastGame } from '../lib/gameOrder'
 import { POSITIONS } from '../lib/positions'
@@ -71,6 +71,7 @@ export default function Roster() {
   const { trigger: fetchManageSeasonRoster } = useGetSeasonRoster()
   const { trigger: copyPlayersToSeason } = useCopyPlayersToSeason()
   const { trigger: removePlayersFromSeason } = useRemovePlayersFromSeason()
+  const { trigger: createSeason } = useCreateSeason()
 
   const players = rawPlayers as Player[] | undefined
   const allOrgPlayers = allOrgPlayersRaw as Player[] | undefined
@@ -113,6 +114,13 @@ export default function Roster() {
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [newPlayerData, setNewPlayerData] = useState({ display_name: '', number: '', gender_match: '', position: '', season_ids: [] as number[] })
   const [creatingPlayer, setCreatingPlayer] = useState(false)
+
+  // Create a new season from the season filter's "Create new season…" row,
+  // since the roster is often set up before the season's first game exists
+  // in Schedule (there'd otherwise be no season to add players to yet).
+  const [showCreateSeason, setShowCreateSeason] = useState(false)
+  const [newSeasonData, setNewSeasonData] = useState({ name: '', year: new Date().getFullYear().toString(), organizer: '', location: '' })
+  const [creatingSeason, setCreatingSeason] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -298,6 +306,27 @@ export default function Roster() {
     setManageSearch('')
     setShowCreateForm(false)
     setShowManageRoster(true)
+  }
+
+  const handleCreateSeason = async () => {
+    if (!newSeasonData.name || !newSeasonData.year) return
+    setCreatingSeason(true)
+    const created = await createSeason({
+      organizationId: currentOrgId,
+      name: newSeasonData.name,
+      year: parseInt(newSeasonData.year),
+      organizer: newSeasonData.organizer || undefined,
+      location: newSeasonData.location || undefined,
+    }) as Season | undefined
+    setCreatingSeason(false)
+    if (!created) {
+      alert('Failed to create season. Please try again.')
+      return
+    }
+    await fetchAllSeasons({ organizationId: currentOrgId })
+    setRosterSeasonIds([created.id])
+    setShowCreateSeason(false)
+    setNewSeasonData({ name: '', year: new Date().getFullYear().toString(), organizer: '', location: '' })
   }
 
   const toggleManagePlayer = (playerId: number) => {
@@ -779,6 +808,7 @@ export default function Roster() {
         selectedIds={rosterSeasonIds}
         onChange={setRosterSeasonIds}
         placeholder="All Seasons"
+        onCreateNew={() => setShowCreateSeason(true)}
       />
 
       {/* Gender breakdown, doubling as a quick filter — click a count to
@@ -858,32 +888,29 @@ export default function Roster() {
           )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
           {filteredPlayers?.map((player, index) => (
             <FadeIn key={player.id} delay={index * 40}>
               <Card onClick={() => handleSelectPlayer(player)}
-                className="bg-card text-card-foreground border-border cursor-pointer hover:bg-accent/50 active:scale-[0.99] transition-all"
+                className="bg-card text-card-foreground border-border cursor-pointer hover:bg-accent/50 active:scale-[0.99] transition-all h-full"
               >
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-4">
-                    <PlayerAvatar photoUrl={player.photo_url} name={player.display_name} genderMatch={player.gender_match} size="md" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-foreground text-lg truncate">{player.display_name}</span>
-                        {player.is_sub && <Badge variant="secondary" className="text-xs shrink-0">Sub</Badge>}
-                        {player.number != null && <Badge variant="outline" className="text-xs font-mono shrink-0">#{player.number}</Badge>}
-                      </div>
-                      <div className="flex items-center gap-3 mt-1 flex-wrap">
-                        {player.position && <span className="text-sm text-muted-foreground">{player.position}</span>}
-                        {player.gender_match && <span className="text-sm text-muted-foreground">{player.gender_match}</span>}
-                        {player.phone && (
-                          <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                            <Phone className="w-3 h-3" />{player.phone}
-                          </div>
-                        )}
-                      </div>
+                <CardContent className="p-4 flex flex-col items-center text-center gap-2">
+                  <PlayerAvatar photoUrl={player.photo_url} name={player.display_name} genderMatch={player.gender_match} size="lg" />
+                  <div className="min-w-0 w-full">
+                    <span className="font-semibold text-foreground truncate block">{player.display_name}</span>
+                    <div className="flex items-center justify-center gap-1 mt-1 flex-wrap">
+                      {player.is_sub && <Badge variant="secondary" className="text-xs shrink-0">Sub</Badge>}
+                      {player.number != null && <Badge variant="outline" className="text-xs font-mono shrink-0">#{player.number}</Badge>}
                     </div>
-                    <ChevronRight className="w-5 h-5 text-muted-foreground shrink-0" />
+                    <div className="flex flex-col items-center gap-0.5 mt-1.5 text-sm text-muted-foreground">
+                      {player.position && <span>{player.position}</span>}
+                      {player.gender_match && <span>{player.gender_match}</span>}
+                      {player.phone && (
+                        <div className="flex items-center gap-1">
+                          <Phone className="w-3 h-3" />{player.phone}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -891,7 +918,7 @@ export default function Roster() {
           ))}
 
           {filteredPlayers?.length === 0 && (
-            <FadeIn>
+            <FadeIn className="col-span-full">
               <Card className="bg-card text-card-foreground border-border">
                 <CardContent className="py-12 text-center">
                   <Users className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
@@ -1027,6 +1054,40 @@ export default function Roster() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Season: reached from the season filter's "Create new
+          season…" row, since the roster is often set up before that
+          season's first game exists in Schedule. */}
+      <Dialog open={showCreateSeason} onOpenChange={setShowCreateSeason}>
+        <DialogContent className="bg-card text-card-foreground max-w-md">
+          <DialogHeader><DialogTitle>Create Season</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs">Organizer</Label>
+                <Input value={newSeasonData.organizer} onChange={e => setNewSeasonData(d => ({ ...d, organizer: e.target.value }))} placeholder="Optional" className="h-9 text-sm bg-background border-border" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Name *</Label>
+                <Input value={newSeasonData.name} onChange={e => setNewSeasonData(d => ({ ...d, name: e.target.value }))} placeholder="e.g. Summer" className="h-9 text-sm bg-background border-border" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs">Year *</Label>
+                <Input type="number" value={newSeasonData.year} onChange={e => setNewSeasonData(d => ({ ...d, year: e.target.value }))} className="h-9 text-sm bg-background border-border" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Location</Label>
+                <Input value={newSeasonData.location} onChange={e => setNewSeasonData(d => ({ ...d, location: e.target.value }))} placeholder="Optional" className="h-9 text-sm bg-background border-border" />
+              </div>
+            </div>
+            <Button onClick={handleCreateSeason} disabled={!newSeasonData.name || !newSeasonData.year || creatingSeason} className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
+              {creatingSeason ? 'Creating…' : 'Create Season'}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

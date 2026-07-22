@@ -3,6 +3,7 @@ import type { GatewayConfig } from './index.js'
 import { getVaultSecret } from './secrets.js'
 import { cookieNames, parseCookies } from './cookies.js'
 import { verifyAccessToken } from './jwt.js'
+import { CHAT_FUNCTION_DECLARATIONS, callChatFunction, type ActionsConfig } from './gameActions.js'
 
 // Chat needs privileged (service-role) Supabase access to read all team data
 // regardless of caller identity, plus a Gemini key. Team-context/log queries
@@ -217,7 +218,9 @@ ${eventTimelines.join('\n\n')}
 
 LANGUAGE STYLE: Respond ONLY in Jamaican Patois, in every message, no exceptions. Keep it warm and natural (e.g. "wah gwaan", "mi", "yuh", "di", "dem", "nuh", "ting"), but never let the patois obscure the actual answer — names, numbers, dates, and stats must stay exact and easy to read. If a question is complex, prioritize clarity: use simple patois phrasing over anything cute that risks confusing the user.
 
-Answer questions about the team, players, stats, and games. Be concise and friendly. When giving stats, reference the season and game breakdowns where relevant. If asked to do something you can't (like edit data), explain that the app UI should be used for that — still in patois.`
+Answer questions about the team, players, stats, and games. Be concise and friendly. When giving stats, reference the season and game breakdowns where relevant.
+
+YOU CAN LOG DATA: you have tools to record a goal/event, undo the most recently logged event, and manage lineups for a game. Before calling any of these tools, first restate in plain patois exactly what you're about to do (who did what, and which game — use CURRENT DATE plus the game list above to say which game you mean, e.g. "tonight's game vs X" or "the June 7 game vs Y") and ask the user to confirm; only call the tool once the user actually confirms in a later message. If a player name is ambiguous or you can't find a matching game, ask instead of guessing. After a tool call, report back what actually happened (including any error) in patois, with the updated score if relevant — never claim something was logged unless the tool result confirms it.`
 }
 
 function isTransientGeminiError(err: unknown): boolean {
@@ -229,7 +232,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-async function callGemini(apiKey: string, model: string, systemInstruction: string, history: { role: string; content: string }[], message: string): Promise<string> {
+async function callGemini(
+  apiKey: string, model: string, systemInstruction: string,
+  history: { role: string; content: string }[], message: string,
+  actionsConfig: ActionsConfig, organizationId: number
+): Promise<string> {
   const genai = new GoogleGenAI({ apiKey })
 
   const chatHistory = history.map(h => ({
@@ -237,25 +244,51 @@ async function callGemini(apiKey: string, model: string, systemInstruction: stri
     parts: [{ text: h.content }],
   }))
 
-  // Retry transient Gemini errors (was tuned against gemma-4-31b-it, which
-  // could fail its transient 500 several times in a row; kept as a general
-  // safety net now that the model has switched to gemini-flash-lite).
+  const chat = genai.chats.create({
+    model,
+    history: chatHistory,
+    config: { systemInstruction, tools: [{ functionDeclarations: CHAT_FUNCTION_DECLARATIONS }] },
+  })
+
+  // Retry transient Gemini errors, but only for this first turn (was tuned
+  // against gemma-4-31b-it, which could fail its transient 500 several
+  // times in a row). Once a function call round below has actually
+  // executed a real DB write, blindly retrying on a later transient error
+  // could log the same event twice, so anything past this point surfaces
+  // the error instead of retrying.
   const MAX_ATTEMPTS = 5
+  let response
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const chat = genai.chats.create({
-        model,
-        history: chatHistory,
-        config: { systemInstruction },
-      })
-      const response = await chat.sendMessage({ message })
-      return response.text ?? ''
+      response = await chat.sendMessage({ message })
+      break
     } catch (err) {
       if (attempt === MAX_ATTEMPTS || !isTransientGeminiError(err)) throw err
       await sleep(600 * attempt)
     }
   }
-  throw new Error('unreachable')
+  if (!response) throw new Error('unreachable')
+
+  // The model confirms with the user in plain text before calling anything
+  // (see the system prompt's "YOU CAN LOG DATA" instructions), so a
+  // function call here means the user just confirmed — execute it for
+  // real and hand the result back so the model can report what happened.
+  const MAX_FUNCTION_ROUNDS = 4
+  for (let round = 0; round < MAX_FUNCTION_ROUNDS; round++) {
+    const calls = response.functionCalls
+    if (!calls || calls.length === 0) break
+    const parts = await Promise.all(calls.map(async call => {
+      try {
+        const output = await callChatFunction(actionsConfig, organizationId, call.name!, call.args ?? {})
+        return { functionResponse: { name: call.name!, response: { output } } }
+      } catch (err) {
+        return { functionResponse: { name: call.name!, response: { error: err instanceof Error ? err.message : String(err) } } }
+      }
+    }))
+    response = await chat.sendMessage({ message: parts })
+  }
+
+  return response.text ?? ''
 }
 
 export async function handleChatRequest(config: ChatConfig, request: Request): Promise<Response> {
@@ -274,7 +307,8 @@ export async function handleChatRequest(config: ChatConfig, request: Request): P
     const geminiApiKey = await getVaultSecret(config, 'gemini_api_key', config.geminiApiKey)
     const geminiModel = await getVaultSecret(config, 'gemini_model', config.geminiModel) ?? DEFAULT_GEMINI_MODEL
     if (!geminiApiKey) return json({ error: 'Gemini API key not configured' }, 500)
-    const reply = await callGemini(geminiApiKey, geminiModel, systemContext, history, message)
+    const actionsConfig: ActionsConfig = { supabaseUrl: config.supabaseUrl, supabaseSecretKey: config.supabaseSecretKey }
+    const reply = await callGemini(geminiApiKey, geminiModel, systemContext, history, message, actionsConfig, organization_id)
 
     await insertChatLogs(config, organization_id, [
       { session_id, role: 'user', content: message },

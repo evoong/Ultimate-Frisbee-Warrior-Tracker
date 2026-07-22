@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run frontend\"",
     "server": "node --dns-result-order=ipv4first node_modules/.bin/tsx server/index.ts",
+    "mcp": "tsx mcp-server/index.ts",
     "frontend": "cd frontend && npm run dev",
     "build": "cd frontend && npm ci && npm run build",
     "start": "npm run server",
@@ -21,6 +22,7 @@
   },
   "dependencies": {
     "@google/genai": "^2.10.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@supabase/server": "^1.2.0",
     "@supabase/ssr": "^0.12.0",
     "@supabase/supabase-js": "^2.108.2",
@@ -31,7 +33,8 @@
     "jose": "^6.2.3",
     "multer": "^2.2.0",
     "pg": "^8.11.3",
-    "postgres": "^3.4.9"
+    "postgres": "^3.4.9",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

@@ -100,6 +100,20 @@ export function useCreateSeason() {
   return useApiCall(fn)
 }
 
+export function useUpdateSeason() {
+  const fn = useCallback(async (params: {
+    seasonId: number; name?: string; year?: number; organizer?: string | null
+    location?: string | null; league_name?: string | null; default_game_time?: string | null
+    start_date?: string | null; end_date?: string | null
+  }) => {
+    const { seasonId, ...body } = params
+    const { data, error } = await supabase.from('seasons').update(body).eq('id', seasonId).select()
+    if (error) throw new Error(error.message)
+    return data?.[0]
+  }, [])
+  return useApiCall(fn)
+}
+
 export function useGetPlayerStats() {
   const fn = useCallback(async (params: { organizationId: number | null; seasonIds?: number[]; gameIds?: number[] }) => {
     // Resolve the games in scope first so events/attendance can be filtered

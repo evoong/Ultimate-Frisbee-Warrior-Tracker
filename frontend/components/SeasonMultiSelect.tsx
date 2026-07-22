@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from 'react'
-import { ChevronDown, Check, X } from 'lucide-react'
+import { ChevronDown, Check, X, Plus } from 'lucide-react'
 
 type Season = { id: number; name: string; year: number; organizer: string | null }
 
@@ -13,9 +13,11 @@ interface Props {
   onChange: (ids: number[]) => void
   placeholder?: string
   className?: string
+  /** Shows a "Create new season…" row at the bottom of the dropdown when provided. */
+  onCreateNew?: () => void
 }
 
-export default function SeasonMultiSelect({ seasons, selectedIds, onChange, placeholder = 'All Seasons', className = '' }: Props) {
+export default function SeasonMultiSelect({ seasons, selectedIds, onChange, placeholder = 'All Seasons', className = '', onCreateNew }: Props) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -99,6 +101,16 @@ export default function SeasonMultiSelect({ seasons, selectedIds, onChange, plac
               })
             )}
           </div>
+
+          {onCreateNew && (
+            <button
+              onClick={() => { setOpen(false); onCreateNew() }}
+              className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-left text-primary hover:bg-accent transition-colors border-t border-border"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Create new season…
+            </button>
+          )}
         </div>
       )}
     </div>
