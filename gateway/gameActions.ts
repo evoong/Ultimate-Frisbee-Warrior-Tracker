@@ -1,99 +1,47 @@
 // Write-side actions the Chat assistant can call as Gemini function calls
 // (see callGemini/getTeamContext in chat.ts) to actually record game events
-// and manage lineups, rather than only answering questions about them. Kept
-// deliberately separate from mcp-server/index.ts (which does the same thing
-// for MCP clients like Claude): that server talks to Supabase via
-// @supabase/supabase-js, while this module uses raw fetch like the rest of
-// gateway/ so it stays portable across Cloudflare Workers, Vercel, and
-// Express (see chat.ts's own supabaseServiceFetch for the same reasoning).
-// The small pure helpers below (isPastGame, isTurnoverEvent, ...) are
+// and manage lineups, rather than only answering questions about them.
+// Shared with mcpTools.ts (the Cloudflare-hosted MCP server), which reuses
+// the write functions below directly and the resolve/get helpers via
+// exports — the two used to duplicate this logic (mcpTools.ts's predecessor,
+// mcp-server/index.ts, talks to Supabase via @supabase/supabase-js since it
+// runs locally over stdio) but the Workers-hosted path has no reason not to
+// share. The small pure helpers below (isPastGame, isTurnoverEvent, ...) are
 // intentionally duplicated from frontend/lib rather than imported, matching
 // how chat.ts's getTeamContext already inlines its own turnover-type check
 // rather than pulling frontend code into the gateway bundle.
 
-export interface ActionsConfig {
-  supabaseUrl: string
-  supabaseSecretKey: string
-}
+import { type ActionsConfig, sbGet, sbWrite, sbUpsertIgnore } from './supabaseRest.js'
 
-async function sbGet(config: ActionsConfig, path: string): Promise<any> {
-  const res = await fetch(`${config.supabaseUrl}/rest/v1${path}`, {
-    headers: { apikey: config.supabaseSecretKey, Authorization: `Bearer ${config.supabaseSecretKey}` },
-  })
-  if (!res.ok) throw new Error(`Supabase query failed (${res.status}): ${path}`)
-  return res.json()
-}
-
-async function sbWrite(config: ActionsConfig, method: 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<any> {
-  const res = await fetch(`${config.supabaseUrl}/rest/v1${path}`, {
-    method,
-    headers: {
-      apikey: config.supabaseSecretKey,
-      Authorization: `Bearer ${config.supabaseSecretKey}`,
-      'Content-Type': 'application/json',
-      Prefer: 'return=representation',
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`Supabase ${method} failed (${res.status}): ${text || path}`)
-  }
-  const text = await res.text()
-  return text ? JSON.parse(text) : []
-}
-
-// Upsert that silently no-ops on a conflict against `onConflict` (e.g. a
-// player already on a season's roster, or a lineup group name that already
-// exists on this game) instead of erroring — matches the `ignoreDuplicates`
-// upserts already used for the same tables in frontend/hooks/backend/*.ts.
-async function sbUpsertIgnore(config: ActionsConfig, path: string, body: unknown, onConflict: string): Promise<any> {
-  const sep = path.includes('?') ? '&' : '?'
-  const res = await fetch(`${config.supabaseUrl}/rest/v1${path}${sep}on_conflict=${onConflict}`, {
-    method: 'POST',
-    headers: {
-      apikey: config.supabaseSecretKey,
-      Authorization: `Bearer ${config.supabaseSecretKey}`,
-      'Content-Type': 'application/json',
-      Prefer: 'return=representation,resolution=ignore-duplicates',
-    },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`Supabase upsert failed (${res.status}): ${text || path}`)
-  }
-  const text = await res.text()
-  return text ? JSON.parse(text) : []
-}
+export type { ActionsConfig }
 
 // Matches Schedule.tsx's IMMINENT_WINDOW_MS.
 const IMMINENT_WINDOW_MS = 30 * 60 * 1000
 
-function todayLocalStr(): string {
+export function todayLocalStr(): string {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
-function isPastGame(g: { game_date: string }, today = todayLocalStr()): boolean {
+export function isPastGame(g: { game_date: string }, today = todayLocalStr()): boolean {
   return g.game_date < today
 }
-function isTurnoverEvent(eventType: string): boolean {
+export function isTurnoverEvent(eventType: string): boolean {
   return ['Turnover', 'Throwaway', 'Drop'].includes(eventType)
 }
-function gameStartsAt(g: { game_date: string; game_time: string | null }): Date {
+export function gameStartsAt(g: { game_date: string; game_time: string | null }): Date {
   return new Date(`${g.game_date}T${g.game_time || '00:00:00'}`)
 }
 
-type GameRow = { id: number; season_id: number | null; opponent: string; game_date: string; game_time: string | null }
+export type GameRow = { id: number; season_id: number | null; opponent: string; game_date: string; game_time: string | null }
 
-async function getAllGames(config: ActionsConfig, orgId: number): Promise<GameRow[]> {
+export async function getAllGames(config: ActionsConfig, orgId: number): Promise<GameRow[]> {
   return sbGet(config, `/games?organization_id=eq.${orgId}&select=id,season_id,opponent,game_date,game_time`)
 }
 
 // Same fallback chain as mcp-server's resolveCurrentGame / Schedule.tsx's
 // imminent-game auto-select: imminent, else today, else most recently
 // played, else next upcoming.
-async function resolveCurrentGame(config: ActionsConfig, orgId: number): Promise<GameRow> {
+export async function resolveCurrentGame(config: ActionsConfig, orgId: number): Promise<GameRow> {
   const games = await getAllGames(config, orgId)
   if (games.length === 0) throw new Error('No games found.')
   const now = Date.now()
@@ -116,7 +64,7 @@ async function resolveCurrentGame(config: ActionsConfig, orgId: number): Promise
 // system prompt (no numeric ids are ever surfaced to it), so a specific
 // game is targeted by those rather than by id; omitting both resolves the
 // current/relevant game the same way the MCP server does.
-async function resolveGame(config: ActionsConfig, orgId: number, hint?: { gameDate?: string; opponent?: string }): Promise<GameRow> {
+export async function resolveGame(config: ActionsConfig, orgId: number, hint?: { gameDate?: string; opponent?: string }): Promise<GameRow> {
   if (hint?.gameDate || hint?.opponent) {
     const games = await getAllGames(config, orgId)
     let matches = games
@@ -129,9 +77,9 @@ async function resolveGame(config: ActionsConfig, orgId: number, hint?: { gameDa
   return resolveCurrentGame(config, orgId)
 }
 
-type PlayerRow = { id: number; display_name: string }
+export type PlayerRow = { id: number; display_name: string }
 
-async function resolvePlayer(config: ActionsConfig, orgId: number, nameQuery: string): Promise<PlayerRow> {
+export async function resolvePlayer(config: ActionsConfig, orgId: number, nameQuery: string): Promise<PlayerRow> {
   const players: PlayerRow[] = await sbGet(config, `/players?organization_id=eq.${orgId}&select=id,display_name`)
   const q = nameQuery.trim().toLowerCase()
   let matches = players.filter(p => p.display_name.toLowerCase() === q)
@@ -141,7 +89,7 @@ async function resolvePlayer(config: ActionsConfig, orgId: number, nameQuery: st
   return matches[0]!
 }
 
-async function currentScore(config: ActionsConfig, gameId: number): Promise<{ our_score: number; their_score: number }> {
+export async function currentScore(config: ActionsConfig, gameId: number): Promise<{ our_score: number; their_score: number }> {
   const events: { event_type: string }[] = await sbGet(config, `/game_events?game_id=eq.${gameId}&select=event_type`)
   return {
     our_score: events.filter(e => e.event_type === 'Goal').length,
@@ -149,7 +97,7 @@ async function currentScore(config: ActionsConfig, gameId: number): Promise<{ ou
   }
 }
 
-const EVENT_TYPES = ['Goal', 'Opponent Goal', 'Block', 'Throwaway', 'Drop', 'Pull', 'Caught OB', 'Fouls'] as const
+export const EVENT_TYPES = ['Goal', 'Opponent Goal', 'Block', 'Throwaway', 'Drop', 'Pull', 'Caught OB', 'Fouls'] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 
 export const CHAT_FUNCTION_DECLARATIONS = [

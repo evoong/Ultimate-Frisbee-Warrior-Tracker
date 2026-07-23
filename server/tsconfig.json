@@ -11,5 +11,14 @@
     "resolveJsonModule": true
   },
   "include": ["./**/*.ts", "../gateway/**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+  // mcpAgent.ts and mcpOAuth.ts are Workers-only (a Durable Object built on
+  // the `agents` package, and an OAuth wrapper built on
+  // @cloudflare/workers-oauth-provider — both need bundler/node16 module
+  // resolution for subpath exports, and reference Cloudflare's ambient
+  // `cloudflare:workers` typing); neither is part of the Express/Vercel
+  // build server/index.ts produces, so they're excluded here the same way
+  // worker.ts itself is never fed through this config. Typechecked
+  // separately (see wrangler's own build/deploy, which bundles them via
+  // esbuild) rather than through tsc.
+  "exclude": ["node_modules", "dist", "../gateway/mcpAgent.ts", "../gateway/mcpOAuth.ts"]
 }

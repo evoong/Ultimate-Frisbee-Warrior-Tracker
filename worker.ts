@@ -1,6 +1,11 @@
 import { createGateway, createRequireAllowedUser } from './gateway/index.js'
 import { handleChatRequest, handleChatHistoryRequest, handleChatHistoryDeleteRequest, type ChatConfig } from './gateway/chat.js'
 import { runJamSync } from './gateway/jamSync.js'
+import { UfwtMcp } from './gateway/mcpAgent.js'
+import { createUfwtOAuthProvider } from './gateway/mcpOAuth.js'
+import type { OAuthHelpers } from '@cloudflare/workers-oauth-provider'
+
+export { UfwtMcp }
 
 interface Env {
   ASSETS: {
@@ -14,7 +19,17 @@ interface Env {
   // for these now. Only needed as a fallback/override.
   GEMINI_API_KEY?: string;
   GEMINI_MODEL?: string;
+  // MCP server (see gateway/mcpAgent.ts + gateway/mcpOAuth.ts + "MCP server"
+  // in CLAUDE.md). OAUTH_PROVIDER isn't a real wrangler.jsonc binding — it's
+  // injected into `env` at request time by createUfwtOAuthProvider's
+  // OAuthProvider, per that library's own convention.
+  UFWT_MCP: DurableObjectNamespace;
+  MCP_ORGANIZATION_ID?: string;
+  OAUTH_PROVIDER: OAuthHelpers;
 }
+
+// Minimal local alias so this file doesn't need @cloudflare/workers-types.
+type DurableObjectNamespace = unknown;
 
 // Minimal local aliases so this file doesn't need @cloudflare/workers-types
 // as a dependency just for the scheduled() export's parameter types.
@@ -37,8 +52,12 @@ function createIsOrgMember(_env: Env) {
   return async (_email: string, _organizationId: number): Promise<boolean> => true
 }
 
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+// Everything the app serves besides /mcp, /authorize, /token, and /register
+// (all four owned by the OAuthProvider wrapping this — see the default
+// export below and gateway/mcpOAuth.ts). Split out so mcpOAuth.ts's
+// `defaultHandler` can fall through to it for every request that isn't part
+// of the OAuth/MCP flow.
+async function handleAppRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
     try {
@@ -131,6 +150,28 @@ export default {
       console.error("Worker error:", error);
       return new Response("Internal Server Error", { status: 500 });
     }
+}
+
+// OAuthProvider owns the top-level fetch dispatch: it validates /mcp's
+// access token itself (issuing 401 + OAuth discovery metadata for a client
+// that isn't authenticated yet, which is what makes `claude mcp add`
+// automatically pop open the /authorize login page — see gateway/mcpOAuth.ts),
+// handles /token and /register internally, and falls through to
+// handleAppRequest for everything else (including /authorize itself, and
+// the entire rest of the app).
+const oauthProvider = createUfwtOAuthProvider<Env>(
+  // `agents`' McpAgent.serve() types its fetch handler against the full
+  // Cloudflare-provided ExecutionContext (this file only declares the
+  // minimal `waitUntil`-only shape above so it doesn't need
+  // @cloudflare/workers-types as a dependency); the cast just bridges the
+  // two types — the object passed in at runtime is the real one.
+  UfwtMcp.serve("/mcp", { binding: "UFWT_MCP" }) as any,
+  handleAppRequest,
+);
+
+export default {
+  fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    return oauthProvider.fetch(request, env as any, ctx as any);
   },
 
   // Daily JAM Sports calendar sync at 6am Eastern (see wrangler.jsonc's triggers.crons).

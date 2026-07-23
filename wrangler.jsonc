@@ -7,6 +7,9 @@
     "command": "npm run build"
   },
   "compatibility_date": "2024-12-16",
+  // Required by the `agents` package (gateway/mcpAgent.ts's McpAgent, used
+  // for the /mcp route below) — it uses node:async_hooks internally.
+  "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "directory": "./frontend/dist",
     "binding": "ASSETS"
@@ -20,9 +23,20 @@
   "triggers": {
     "crons": ["0 10 * * *"]
   },
+  // Cloudflare-hosted MCP server (see gateway/mcpAgent.ts, mounted at /mcp
+  // in worker.ts, gated by gateway/mcpOAuth.ts's OAuthProvider — logs in
+  // against Supabase Auth, the same identity system the app itself uses).
+  "durable_objects": {
+    "bindings": [{ "name": "UFWT_MCP", "class_name": "UfwtMcp" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["UfwtMcp"] }],
+  // OAuthProvider's storage for clients/grants/tokens (RFC 7591 dynamic
+  // client registration + authorization code + refresh tokens).
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "54fcd826c7a64bf4b87e2d00b99d19f0" }],
   "vars": {
     "SUPABASE_URL": "https://pyqngqyqwevfpaxcmfnd.supabase.co",
     "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_oUie8kxlAp6DD0UPMSG-ZQ_QBEWo3vT",
-    "SUPABASE_JWKS_URL": "https://pyqngqyqwevfpaxcmfnd.supabase.co/auth/v1/.well-known/jwks.json"
+    "SUPABASE_JWKS_URL": "https://pyqngqyqwevfpaxcmfnd.supabase.co/auth/v1/.well-known/jwks.json",
+    "MCP_ORGANIZATION_ID": "1"
   }
 }
