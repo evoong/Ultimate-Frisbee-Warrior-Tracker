@@ -124,6 +124,10 @@ export default function Strategy() {
 
   const [selectedPlayId, setSelectedPlayId] = useState<number | null>(null)
   const [selectedStepId, setSelectedStepId] = useState<number | null>(null)
+  // Lets loadStepData (below) tell a stale response apart from the current
+  // one — see its own comment for why this matters.
+  const selectedStepIdRef = useRef(selectedStepId)
+  selectedStepIdRef.current = selectedStepId
   const [positions, setPositions] = useState<Map<number, { x: number; y: number }>>(new Map())
   const [opponents, setOpponents] = useState<StrategyOpponentMarker[]>([])
   const [textBoxes, setTextBoxes] = useState<StrategyTextBox[]>([])
@@ -206,6 +210,16 @@ export default function Strategy() {
       fetchTextBoxes({ stepId }),
       fetchArrows({ stepId }),
     ])
+    // Clicking through steps quickly (e.g. tapping "Next" repeatedly) can
+    // fire several of these concurrently with no guarantee they resolve in
+    // request order. Applying a response for a step that's no longer
+    // selected would jump an entity to that stale step's position instead of
+    // sliding it to the current step's — a "teleport" rather than no
+    // animation at all, and only for whichever handful of entities differ
+    // between the two steps. Discarding stale responses outright (rather
+    // than only the more common "landed after a newer one" case) is the
+    // simplest rule that's still always correct.
+    if (selectedStepIdRef.current !== stepId) return
     if (posRows) setPositions(new Map(posRows.map(r => [r.player_id, { x: r.x, y: r.y }])))
     if (oppRows) setOpponents(oppRows)
     if (textRows) setTextBoxes(textRows)

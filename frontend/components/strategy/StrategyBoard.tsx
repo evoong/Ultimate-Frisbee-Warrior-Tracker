@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import PlayerAvatar from '../PlayerAvatar'
 import { Button } from '../../lib/shadcn/button'
 import { useMediaQuery } from '../../lib/shadcn/use-media-query'
-import { Pencil, UserPlus, Type, Trash2, Disc } from 'lucide-react'
+import { Pencil, UserPlus, Type, Trash2 } from 'lucide-react'
 import type { StrategyArrow, StrategyOpponentMarker, StrategyTextBox, StrategySelectedItem as SelectedItem, StrategyEntityMove as EntityMove } from '../../hooks/backend/strategy'
 
 // Canonical coordinates are fractions in [0, 1] of a LANDSCAPE field:
@@ -769,10 +769,20 @@ export default function StrategyBoard({
                   markerEnd="url(#strategy-arrowhead)"
                   opacity={isSel('arrow', a.id) || hoveredArrowId === a.id ? 1 : 0.9}
                 />
+                {/* Disc icon at the bend point, drawn as plain SVG circles (matching
+                    lucide's Disc glyph: an outer ring + inner dot) rather than a
+                    <foreignObject>-wrapped React icon. foreignObject content's
+                    pointer-events:none is unreliable on some touch browsers (notably
+                    older iOS Safari), which could swallow the drag that's meant to
+                    reach the "bend" handle sitting at this exact same point — this
+                    icon sits right where a throw arrow's curve handle lives, so it's
+                    the one icon on this board worth the extra care. Plain SVG
+                    pointer-events="none" doesn't have that cross-browser risk. */}
                 {a.arrow_type === 'throw' && (
-                  <foreignObject x={mid.vx - 1.5} y={mid.vy - 1.5} width={3} height={3} style={{ pointerEvents: 'none' }}>
-                    <Disc className="w-full h-full" style={{ color: ARROW_COLOR }} />
-                  </foreignObject>
+                  <g pointerEvents="none">
+                    <circle cx={mid.vx} cy={mid.vy} r={1.25} fill="none" stroke={ARROW_COLOR} strokeWidth={0.25} />
+                    <circle cx={mid.vx} cy={mid.vy} r={0.375} fill={ARROW_COLOR} />
+                  </g>
                 )}
               </g>
             )
