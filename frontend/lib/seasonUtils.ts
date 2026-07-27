@@ -16,7 +16,14 @@ export function todayLocalStr(): string {
  * 2. Next upcoming (earliest future start_date)
  * 3. Most recently ended (latest past end_date)
  * Falls back to `fallbackId` if no Jam seasons exist.
+ *
+ * Overloaded so the result is only `number | undefined` when the fallback
+ * itself might be undefined: a caller that has already guaranteed a real
+ * fallback (the usual case, e.g. `seasons[0]!.id` behind a length check)
+ * gets a plain `number` back and doesn't have to re-narrow it.
  */
+export function getDefaultJamSeasonId(allSeasons: SeasonLike[], fallbackId: number): number
+export function getDefaultJamSeasonId(allSeasons: SeasonLike[], fallbackId?: number): number | undefined
 export function getDefaultJamSeasonId(allSeasons: SeasonLike[], fallbackId?: number): number | undefined {
   const today = todayLocalStr()
   const jam = allSeasons.filter(s => s.organizer === 'Jam')
@@ -34,7 +41,11 @@ type GameLike = { season_id: number | null; game_date: string }
  * played, not just scheduled). Used where showing a season with zero
  * results yet (e.g. one that just started) would be a confusing default.
  * Falls back to `fallbackId` if no Jam season has a played game.
+ *
+ * Overloaded for the same reason as getDefaultJamSeasonId above.
  */
+export function getLatestJamSeasonWithPlayedGame(allSeasons: SeasonLike[], games: GameLike[], fallbackId: number): number
+export function getLatestJamSeasonWithPlayedGame(allSeasons: SeasonLike[], games: GameLike[], fallbackId?: number): number | undefined
 export function getLatestJamSeasonWithPlayedGame(
   allSeasons: SeasonLike[],
   games: GameLike[],
