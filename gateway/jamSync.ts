@@ -43,6 +43,7 @@ export interface JamSyncResult {
 interface CalendarSource {
   organizer: string
   calendar_url: string
+  organization_id: number
 }
 
 interface JamEvent {
@@ -160,11 +161,12 @@ function timeToMinutes(t: string): number {
   return h! * 60 + m!
 }
 
-async function createConflict(config: JamSyncConfig, organizer: string, event: JamEvent, existingGameId: number | null, reason: string): Promise<void> {
+async function createConflict(config: JamSyncConfig, organizationId: number, organizer: string, event: JamEvent, existingGameId: number | null, reason: string): Promise<void> {
   await supabaseFetch(config, '/jam_sync_conflicts', {
     method: 'POST',
     headers: { Prefer: 'return=minimal,resolution=ignore-duplicates' },
     body: JSON.stringify({
+      organization_id: organizationId,
       jam_uid: event.uid,
       organizer,
       opponent: event.opponent ?? '(unrecognized event)',
@@ -231,7 +233,7 @@ async function syncSource(
       }
 
       if (!event.opponent) {
-        await createConflict(config, source.organizer, event, null, 'unparseable')
+        await createConflict(config, source.organization_id, source.organizer, event, null, 'unparseable')
         result.conflicts++
         continue
       }
@@ -241,12 +243,12 @@ async function syncSource(
         return Math.abs(timeToMinutes(g.game_time.slice(0, 5)) - timeToMinutes(event.time.slice(0, 5))) <= CONFLICT_WINDOW_MINUTES
       })
       if (candidates.length === 1) {
-        await createConflict(config, source.organizer, event, candidates[0].id, 'possible_duplicate')
+        await createConflict(config, source.organization_id, source.organizer, event, candidates[0].id, 'possible_duplicate')
         result.conflicts++
         continue
       }
       if (candidates.length > 1) {
-        await createConflict(config, source.organizer, event, null, 'multiple_candidates')
+        await createConflict(config, source.organization_id, source.organizer, event, null, 'multiple_candidates')
         result.conflicts++
         continue
       }
@@ -258,7 +260,7 @@ async function syncSource(
         (s: any) => s.start_date && s.start_date <= event.date && (s.end_date == null || event.date <= s.end_date)
       )
       if (matchingSeasons.length !== 1) {
-        await createConflict(config, source.organizer, event, null, matchingSeasons.length === 0 ? 'no_season_match' : 'multiple_season_match')
+        await createConflict(config, source.organization_id, source.organizer, event, null, matchingSeasons.length === 0 ? 'no_season_match' : 'multiple_season_match')
         result.conflicts++
         continue
       }
@@ -267,6 +269,7 @@ async function syncSource(
         method: 'POST',
         headers: { Prefer: 'return=minimal,resolution=ignore-duplicates' },
         body: JSON.stringify({
+          organization_id: source.organization_id,
           season_id: matchingSeasons[0].id,
           opponent: event.opponent,
           game_date: event.date,
@@ -285,7 +288,7 @@ export async function runJamSync(config: JamSyncConfig): Promise<JamSyncResult> 
   const result: JamSyncResult = { sources: 0, fetched: 0, created: 0, updated: 0, alreadySynced: 0, conflicts: 0, errors: [] }
 
   const [sources, allGames, allSeasons, existingConflicts] = await Promise.all([
-    supabaseFetch(config, '/calendar_sources?select=organizer,calendar_url&enabled=eq.true'),
+    supabaseFetch(config, '/calendar_sources?select=organizer,calendar_url,organization_id&enabled=eq.true'),
     supabaseFetch(config, '/games?select=id,season_id,opponent,game_date,game_time,jam_uid'),
     supabaseFetch(config, '/seasons?select=id,organizer,start_date,end_date'),
     supabaseFetch(config, '/jam_sync_conflicts?select=jam_uid'),
