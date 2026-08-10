@@ -1,0 +1,34 @@
+-- ============================================================
+-- 023_drop_orphaned_verify_trigger.sql
+-- Fix: account creation (email signup AND Google OAuth) fails with
+-- "Database error updating user" / "Database error saving new user".
+--
+-- 016_organizations.sql dropped public.allowed_users (the global email
+-- allowlist, superseded by organizations/organization_members) but left
+-- behind 003's on_email_verified trigger on auth.users, whose function
+-- grant_write_on_verify() inserts into that table with no exception
+-- handler. With "Confirm email" off (mailer_autoconfirm), every email
+-- signup confirms via an update of email_confirmed_at, and every Google
+-- OAuth account arrives pre-confirmed, so the trigger fires on every
+-- account creation and aborts the auth.users write:
+--   ERROR: relation "public.allowed_users" does not exist
+--
+-- Write access no longer depends on the allowlist (it means "belongs to
+-- at least one organization" since 016/017), so the trigger and its
+-- function are dead code and are dropped outright.
+--
+-- Run this entire file in the Supabase SQL Editor AFTER 022.
+-- Re-runnable (drop ... if exists).
+--
+-- VERIFICATION (run in the SQL editor after applying):
+--   1. No user triggers remain on auth.users, expect 0 rows:
+--        select tgname from pg_trigger
+--        where tgrelid = 'auth.users'::regclass and not tgisinternal;
+--   2. Function is gone, expect 0 rows:
+--        select proname from pg_proc
+--        where proname = 'grant_write_on_verify';
+--   3. Signing up with a fresh email through the app succeeds.
+-- ============================================================
+
+drop trigger if exists on_email_verified on auth.users;
+drop function if exists public.grant_write_on_verify();
