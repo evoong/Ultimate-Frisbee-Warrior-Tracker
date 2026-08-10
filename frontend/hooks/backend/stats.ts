@@ -233,8 +233,17 @@ export function useGetPlayerStats() {
       return { ...s, games_played: gamesPlayed, ga_rank: 0 }
     })
 
-    // Sort by goals + assists descending
-    result.sort((a: any, b: any) => (b.goals + b.assists) - (a.goals + a.assists))
+    // Rank by goals+assists first; ties broken by goals, then by (G+A) per
+    // game played (a player with zero games played sorts last among ties).
+    result.sort((a: any, b: any) => {
+      const gaDiff = (b.goals + b.assists) - (a.goals + a.assists)
+      if (gaDiff !== 0) return gaDiff
+      const goalsDiff = b.goals - a.goals
+      if (goalsDiff !== 0) return goalsDiff
+      const aRate = a.games_played > 0 ? (a.goals + a.assists) / a.games_played : 0
+      const bRate = b.games_played > 0 ? (b.goals + b.assists) / b.games_played : 0
+      return bRate - aRate
+    })
 
     // Add ranking
     result.forEach((s: any, i: number) => { s.ga_rank = i + 1 })

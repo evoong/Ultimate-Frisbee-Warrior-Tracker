@@ -388,7 +388,8 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
     : []
 
   // ── Summary table sort ───────────────────────────────────────────────────────
-  // No sort selected keeps the hook's own order (ranked by G+A descending).
+  // No sort selected keeps the hook's own order (ranked by G+A descending,
+  // ties broken by goals descending, then by (G+A)/game descending).
   // A tied primary comparison falls through to the secondary column, if one
   // is set (e.g. sort by GP, then by G to break ties among equal-GP players).
   const sortedStats = useMemo(() => {
