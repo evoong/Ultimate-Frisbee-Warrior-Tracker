@@ -3,6 +3,9 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App'
 import { AuthProvider } from './contexts/AuthContext'
+import { injectSpeedInsights } from '@vercel/speed-insights'
+
+injectSpeedInsights()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
