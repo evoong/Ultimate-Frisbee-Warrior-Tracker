@@ -5,7 +5,7 @@ export type StrategyPlay = { id: number; name: string; created_at: string; updat
 export type StrategyStep = { id: number; play_id: number; step_number: number }
 export type StrategyPosition = { player_id: number; x: number; y: number }
 export type StrategyOpponentMarker = { id: number; label: string; x: number; y: number }
-export type StrategyTextBox = { id: number; text: string; x: number; y: number }
+export type StrategyTextBox = { id: number; text: string; x: number; y: number; color: string | null; filled: boolean; width: number }
 export type StrategyHighlight = { id: number; points: { x: number; y: number }[]; color: string; is_straight: boolean }
 export type StrategyLine = { id: number; points: { x: number; y: number }[]; color: string; is_straight: boolean }
 export type StrategyArrow = {
@@ -263,7 +263,7 @@ export function useGetStrategyTextBoxes() {
   const fn = useCallback(async (params: { stepId: number }) => {
     const { data, error } = await supabase
       .from('strategy_text_boxes')
-      .select('id, text, x, y')
+      .select('id, text, x, y, color, filled, width')
       .eq('step_id', params.stepId)
       .order('id')
     if (error) throw new Error(error.message)
@@ -285,7 +285,7 @@ export function useCreateStrategyTextBox() {
 }
 
 export function useUpdateStrategyTextBox() {
-  const fn = useCallback(async (params: { id: number; x?: number; y?: number; text?: string }) => {
+  const fn = useCallback(async (params: { id: number; x?: number; y?: number; text?: string; color?: string | null; filled?: boolean; width?: number }) => {
     const { id, ...body } = params
     const { error } = await supabase
       .from('strategy_text_boxes')
@@ -294,7 +294,7 @@ export function useUpdateStrategyTextBox() {
     if (error) throw new Error(error.message)
     return true
   }, [])
-  return useApiCall<boolean, { id: number; x?: number; y?: number; text?: string }>(fn)
+  return useApiCall<boolean, { id: number; x?: number; y?: number; text?: string; color?: string | null; filled?: boolean; width?: number }>(fn)
 }
 
 export function useDeleteStrategyTextBox() {

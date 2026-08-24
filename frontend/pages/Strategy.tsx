@@ -359,7 +359,7 @@ export default function Strategy() {
     const x = 0.5
     const y = Math.min(0.9, 0.15 + (textBoxes.length % 6) * 0.12)
     const tempId = -Date.now()
-    const withNew = [...textBoxes, { id: tempId, text, x, y }]
+    const withNew = [...textBoxes, { id: tempId, text, x, y, color: null, filled: false, width: 0.12 }]
     setTextBoxes(withNew)
     const created = await trackCreate(createTextBox({ stepId: selectedStepId, text, x, y, organizationId: currentOrgId }))
     if (created) {
@@ -387,6 +387,17 @@ export default function Strategy() {
     pushHistory()
     setTextBoxes(prev => prev.filter(t => t.id !== id))
     const ok = await removeTextBox({ id })
+    if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
+  }
+
+  // Color, filled background, and width are cosmetic, not part of a
+  // "shape" the way position/text are, but still go through the same
+  // optimistic-update/reconcile-on-failure/undo-snapshot shape as the
+  // handlers above for consistency.
+  const handleUpdateTextBoxStyle = async (id: number, patch: { color?: string | null; filled?: boolean; width?: number }) => {
+    pushHistory()
+    setTextBoxes(prev => prev.map(t => (t.id === id ? { ...t, ...patch } : t)))
+    const ok = await updateTextBox({ id, ...patch })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
   }
 
@@ -1018,6 +1029,7 @@ export default function Strategy() {
               onAddTextBox={handleAddTextBox}
               onMoveTextBox={handleMoveTextBox}
               onEditTextBox={handleEditTextBox}
+              onUpdateTextBoxStyle={handleUpdateTextBoxStyle}
               onRemoveTextBox={handleRemoveTextBox}
               onCreateArrow={handleCreateArrow}
               onUpdateArrow={handleUpdateArrow}

@@ -140,7 +140,7 @@ function isTypingTarget(t: EventTarget | null) {
 export default function StrategyBoard({
   players, positions, opponents, textBoxes, arrows, highlights, lines, allowed,
   onPlace, onRemove, onAddOpponent, onMoveOpponent, onRemoveOpponent, onRenameOpponent,
-  onAddTextBox, onMoveTextBox, onEditTextBox, onRemoveTextBox,
+  onAddTextBox, onMoveTextBox, onEditTextBox, onUpdateTextBoxStyle, onRemoveTextBox,
   onCreateArrow, onUpdateArrow, onDeleteArrow,
   onCreateHighlight, onUpdateHighlightColor, onUpdateHighlightPoints, onDeleteHighlight,
   onCreateLine, onUpdateLineColor, onUpdateLinePoints, onDeleteLine,
@@ -164,6 +164,7 @@ export default function StrategyBoard({
   onAddTextBox: () => void
   onMoveTextBox: (id: number, x: number, y: number) => void
   onEditTextBox: (id: number, text: string) => void
+  onUpdateTextBoxStyle: (id: number, patch: { color?: string | null; filled?: boolean; width?: number }) => void
   onRemoveTextBox: (id: number) => void
   onCreateArrow: (arrow: { x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id: number | null; start_opponent_id: number | null }) => void
   onUpdateArrow: (arrow: { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id?: number | null; start_opponent_id?: number | null }) => void
@@ -255,6 +256,56 @@ export default function StrategyBoard({
     const trimmed = editingTextValue.trim()
     const original = textBoxes.find(t => t.id === id)?.text
     if (trimmed !== original) onEditTextBox(id, trimmed)
+  }
+  // The palette icon swaps the pencil/palette pair out for the color
+  // swatches (plus a Fill toggle), same "pencil reveals swatches" pattern
+  // as a highlight's/line's own recolor control.
+  const [editingTextBoxStyle, setEditingTextBoxStyle] = useState(false)
+  useEffect(() => { setEditingTextBoxStyle(false) }, [selectedTextBoxId])
+  // Dragging a selected text box's corner handle adjusts its width (a
+  // fraction of the field container's rendered width, same convention as
+  // x/y being field-fractions for position). Mirrors the window-pointer-
+  // listener drag pattern used everywhere else in this file.
+  const [resizingTextBox, setResizingTextBox] = useState<{ id: number; width: number } | null>(null)
+  const resizeTextBoxTeardownRef = useRef<() => void>(() => {})
+  useEffect(() => () => resizeTextBoxTeardownRef.current(), [])
+  const beginTextBoxResize = (box: StrategyTextBox, pointerId: number, startClientX: number) => {
+    const rect = fieldRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const startWidth = box.width
+    setResizingTextBox({ id: box.id, width: startWidth })
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return
+      const deltaFrac = (ev.clientX - startClientX) / rect.width
+      // The box is centered (-translate-x-1/2), so its right edge moves at
+      // half the dragged distance relative to its center — doubling the
+      // delta here keeps the actual right edge tracking under the pointer.
+      const next = Math.min(0.45, Math.max(0.05, startWidth + deltaFrac * 2))
+      setResizingTextBox({ id: box.id, width: next })
+    }
+    const onUp = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return
+      teardown()
+      setResizingTextBox(w => {
+        if (w) onUpdateTextBoxStyle(box.id, { width: w.width })
+        return null
+      })
+    }
+    const onCancel = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return
+      teardown()
+      setResizingTextBox(null)
+    }
+    const teardown = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+      resizeTextBoxTeardownRef.current = () => {}
+    }
+    resizeTextBoxTeardownRef.current = teardown
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
   }
   // Refs so the window keydown listener (registered once) always sees the
   // latest selection and delete action without re-subscribing every render.
@@ -1031,18 +1082,80 @@ export default function StrategyBoard({
   return (
     <div className="space-y-3">
       {allowed && (
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant={mode === 'draw' ? 'default' : 'outline'}
-              onClick={() => setMode(m => (m === 'draw' ? 'move' : 'draw'))}
-              title="Draw arrows for cuts and movement. Toggle on and drag on the field, or hold A and drag."
-            >
-              <ArrowRight className="w-3.5 h-3.5 mr-1.5" />Draw arrow
-            </Button>
-            {mode === 'draw' && (
+        <div className="space-y-2">
+          {/* Tool selector: one flat row, grouped into "draw something on
+              the field" vs. "add a marker" with a divider between them, so
+              Draw arrow/Highlight/Pencil/Straight Line read as one family
+              of tools rather than free-floating buttons. Each tool's own
+              sub-options (arrow type, freehand vs. straight, color, the
+              straight-draft Finish/Cancel) live in the single contextual
+              bar below instead of inline here, which is what made this row
+              wrap unpredictably before. */}
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <Button
+                type="button"
+                size="sm"
+                variant={mode === 'draw' ? 'default' : 'outline'}
+                onClick={() => setMode(m => (m === 'draw' ? 'move' : 'draw'))}
+                title="Draw arrows for cuts and movement. Toggle on and drag on the field, or hold A and drag."
+              >
+                <ArrowRight className="w-3.5 h-3.5 mr-1.5" />Draw arrow
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={mode === 'highlight' ? 'default' : 'outline'}
+                onClick={() => setMode(m => (m === 'highlight' ? 'move' : 'highlight'))}
+                title="Highlight a zone. Toggle on and drag on the field to trace a filled area."
+              >
+                <Highlighter className="w-3.5 h-3.5 mr-1.5" />Highlight
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={mode === 'line' && !lineStraight ? 'default' : 'outline'}
+                onClick={() => {
+                  if (mode === 'line' && !lineStraight) { setMode('move'); return }
+                  setLineStraight(false)
+                  setMode('line')
+                }}
+                title="Draw a freehand line. Toggle on and drag on the field to trace it."
+              >
+                <PenLine className="w-3.5 h-3.5 mr-1.5" />Pencil
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={mode === 'line' && lineStraight ? 'default' : 'outline'}
+                onClick={() => {
+                  if (mode === 'line' && lineStraight) { setMode('move'); return }
+                  setLineStraight(true)
+                  setMode('line')
+                }}
+                title="Tap to place straight-line corners; Enter or the checkmark finishes, Escape cancels."
+              >
+                <Slash className="w-3.5 h-3.5 mr-1.5" />Straight Line
+              </Button>
+            </div>
+            <div className="hidden sm:block w-px h-6 bg-border" />
+            <div className="flex items-center gap-1.5">
+              <Button type="button" size="sm" variant="outline" onClick={onAddOpponent}>
+                <UserPlus className="w-3.5 h-3.5 mr-1.5" />Add Opponent
+              </Button>
+              <Button type="button" size="sm" variant="outline" onClick={onAddTextBox}>
+                <Type className="w-3.5 h-3.5 mr-1.5" />Add Text
+              </Button>
+            </div>
+          </div>
+
+          {/* Contextual options bar: only rendered once a tool above is
+              armed, and only ever shows the options for that one tool, so
+              it can't be confused with the tool buttons themselves or with
+              another tool's options. */}
+          {mode === 'draw' && (
+            <div className="flex items-center gap-3 flex-wrap rounded-lg border border-border bg-muted/40 px-3 py-2">
+              <span className="text-xs text-muted-foreground">Arrow type</span>
               <div className="flex rounded-md border border-border overflow-hidden text-xs font-medium">
                 <button
                   type="button"
@@ -1059,17 +1172,11 @@ export default function StrategyBoard({
                   Throw
                 </button>
               </div>
-            )}
-            <Button
-              type="button"
-              size="sm"
-              variant={mode === 'highlight' ? 'default' : 'outline'}
-              onClick={() => setMode(m => (m === 'highlight' ? 'move' : 'highlight'))}
-              title="Highlight a zone. Toggle on and drag on the field to trace a filled area."
-            >
-              <Highlighter className="w-3.5 h-3.5 mr-1.5" />Highlight
-            </Button>
-            {mode === 'highlight' && (
+            </div>
+          )}
+          {mode === 'highlight' && (
+            <div className="flex items-center gap-3 flex-wrap rounded-lg border border-border bg-muted/40 px-3 py-2">
+              <span className="text-xs text-muted-foreground">Highlight</span>
               <div className="flex rounded-md border border-border overflow-hidden text-xs font-medium">
                 <button
                   type="button"
@@ -1087,9 +1194,7 @@ export default function StrategyBoard({
                   Straight
                 </button>
               </div>
-            )}
-            {mode === 'highlight' && (
-              <div className="flex items-center gap-1 rounded-md border border-border px-1.5 py-1">
+              <div className="flex items-center gap-1 rounded-md border border-border bg-card px-1.5 py-1">
                 {HIGHLIGHT_COLORS.map(c => (
                   <button
                     key={c}
@@ -1101,64 +1206,38 @@ export default function StrategyBoard({
                   />
                 ))}
               </div>
-            )}
-            {mode === 'highlight' && highlightStraight && straightDraft && straightDraft.length > 0 && (
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs text-muted-foreground tabular-nums">{straightDraft.length} pt{straightDraft.length === 1 ? '' : 's'}</span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={straightDraft.length < MIN_HIGHLIGHT_POINTS}
-                  title={straightDraft.length < MIN_HIGHLIGHT_POINTS ? 'Needs at least 3 points' : 'Finish (Enter)'}
-                  onClick={() => finishStraightDraftRef.current()}
-                  className="h-7 px-2"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  title="Cancel (Escape)"
-                  onClick={() => cancelStraightDraftRef.current()}
-                  className="h-7 px-2"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </Button>
-              </div>
-            )}
-            {/* Pencil and Straight Line: plain unfilled lines, separate
-                tools from Highlight above (which always makes a filled
-                zone) rather than nested under it. */}
-            <Button
-              type="button"
-              size="sm"
-              variant={mode === 'line' && !lineStraight ? 'default' : 'outline'}
-              onClick={() => {
-                if (mode === 'line' && !lineStraight) { setMode('move'); return }
-                setLineStraight(false)
-                setMode('line')
-              }}
-              title="Draw a freehand line. Toggle on and drag on the field to trace it."
-            >
-              <PenLine className="w-3.5 h-3.5 mr-1.5" />Pencil
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={mode === 'line' && lineStraight ? 'default' : 'outline'}
-              onClick={() => {
-                if (mode === 'line' && lineStraight) { setMode('move'); return }
-                setLineStraight(true)
-                setMode('line')
-              }}
-              title="Tap to place straight-line corners; Enter or the checkmark finishes, Escape cancels."
-            >
-              <Slash className="w-3.5 h-3.5 mr-1.5" />Straight Line
-            </Button>
-            {mode === 'line' && (
-              <div className="flex items-center gap-1 rounded-md border border-border px-1.5 py-1">
+              {highlightStraight && straightDraft && straightDraft.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-muted-foreground tabular-nums">{straightDraft.length} pt{straightDraft.length === 1 ? '' : 's'}</span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={straightDraft.length < MIN_HIGHLIGHT_POINTS}
+                    title={straightDraft.length < MIN_HIGHLIGHT_POINTS ? 'Needs at least 3 points' : 'Finish (Enter)'}
+                    onClick={() => finishStraightDraftRef.current()}
+                    className="h-7 px-2"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    title="Cancel (Escape)"
+                    onClick={() => cancelStraightDraftRef.current()}
+                    className="h-7 px-2"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+          {mode === 'line' && (
+            <div className="flex items-center gap-3 flex-wrap rounded-lg border border-border bg-muted/40 px-3 py-2">
+              <span className="text-xs text-muted-foreground">{lineStraight ? 'Straight Line' : 'Pencil'}</span>
+              <div className="flex items-center gap-1 rounded-md border border-border bg-card px-1.5 py-1">
                 {LINE_COLORS.map(c => (
                   <button
                     key={c}
@@ -1170,42 +1249,34 @@ export default function StrategyBoard({
                   />
                 ))}
               </div>
-            )}
-            {mode === 'line' && lineStraight && straightLineDraft && straightLineDraft.length > 0 && (
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs text-muted-foreground tabular-nums">{straightLineDraft.length} pt{straightLineDraft.length === 1 ? '' : 's'}</span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={straightLineDraft.length < MIN_LINE_POINTS}
-                  title={straightLineDraft.length < MIN_LINE_POINTS ? 'Needs at least 2 points' : 'Finish (Enter)'}
-                  onClick={() => finishStraightLineDraftRef.current()}
-                  className="h-7 px-2"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  title="Cancel (Escape)"
-                  onClick={() => cancelStraightLineDraftRef.current()}
-                  className="h-7 px-2"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </Button>
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <Button type="button" size="sm" variant="outline" onClick={onAddOpponent}>
-              <UserPlus className="w-3.5 h-3.5 mr-1.5" />Add Opponent
-            </Button>
-            <Button type="button" size="sm" variant="outline" onClick={onAddTextBox}>
-              <Type className="w-3.5 h-3.5 mr-1.5" />Add Text
-            </Button>
-          </div>
+              {lineStraight && straightLineDraft && straightLineDraft.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-muted-foreground tabular-nums">{straightLineDraft.length} pt{straightLineDraft.length === 1 ? '' : 's'}</span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={straightLineDraft.length < MIN_LINE_POINTS}
+                    title={straightLineDraft.length < MIN_LINE_POINTS ? 'Needs at least 2 points' : 'Finish (Enter)'}
+                    onClick={() => finishStraightLineDraftRef.current()}
+                    className="h-7 px-2"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    title="Cancel (Escape)"
+                    onClick={() => cancelStraightLineDraftRef.current()}
+                    className="h-7 px-2"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1264,20 +1335,23 @@ export default function StrategyBoard({
             return effectivePoints.map((p, i) => {
               const v = toViewBox(p.x, p.y)
               return (
-                <circle
-                  key={i}
-                  cx={v.vx}
-                  cy={v.vy}
-                  r={0.7}
-                  fill="#fff"
-                  stroke={h.color}
-                  strokeWidth={0.3}
-                  style={{ pointerEvents: 'all', cursor: 'grab' }}
-                  onPointerDown={e => {
-                    e.stopPropagation()
-                    beginPointDrag('highlight', h.id, i, h.points, e.pointerId)
-                  }}
-                />
+                <g key={i}>
+                  {/* A much larger invisible circle carries the actual
+                      pointer-down: the visible dot alone is a fussy target
+                      to land a drag on precisely, especially by touch. */}
+                  <circle
+                    cx={v.vx}
+                    cy={v.vy}
+                    r={2}
+                    fill="transparent"
+                    style={{ pointerEvents: 'all', cursor: 'grab' }}
+                    onPointerDown={e => {
+                      e.stopPropagation()
+                      beginPointDrag('highlight', h.id, i, h.points, e.pointerId)
+                    }}
+                  />
+                  <circle cx={v.vx} cy={v.vy} r={0.7} fill="#fff" stroke={h.color} strokeWidth={0.3} style={{ pointerEvents: 'none' }} />
+                </g>
               )
             })
           })()}
@@ -1413,20 +1487,20 @@ export default function StrategyBoard({
             return effectivePoints.map((p, i) => {
               const v = toViewBox(p.x, p.y)
               return (
-                <circle
-                  key={i}
-                  cx={v.vx}
-                  cy={v.vy}
-                  r={0.7}
-                  fill="#fff"
-                  stroke={l.color}
-                  strokeWidth={0.3}
-                  style={{ pointerEvents: 'all', cursor: 'grab' }}
-                  onPointerDown={e => {
-                    e.stopPropagation()
-                    beginPointDrag('line', l.id, i, l.points, e.pointerId)
-                  }}
-                />
+                <g key={i}>
+                  <circle
+                    cx={v.vx}
+                    cy={v.vy}
+                    r={2}
+                    fill="transparent"
+                    style={{ pointerEvents: 'all', cursor: 'grab' }}
+                    onPointerDown={e => {
+                      e.stopPropagation()
+                      beginPointDrag('line', l.id, i, l.points, e.pointerId)
+                    }}
+                  />
+                  <circle cx={v.vx} cy={v.vy} r={0.7} fill="#fff" stroke={l.color} strokeWidth={0.3} style={{ pointerEvents: 'none' }} />
+                </g>
               )
             })
           })()}
@@ -1727,6 +1801,12 @@ export default function StrategyBoard({
           const onTop = lastActiveKey === `textbox-${box.id}`
           const isSelected = isSel('textbox', box.id)
           const isEditing = editingTextBoxId === box.id
+          const effectiveWidth = resizingTextBox && resizingTextBox.id === box.id ? resizingTextBox.width : box.width
+          const accentColor = box.color ?? HIGHLIGHT_COLORS[0]
+          const boxColorStyle: React.CSSProperties = box.filled
+            ? { backgroundColor: `${accentColor}33`, borderColor: accentColor, borderWidth: 1, borderStyle: 'solid' }
+            : {}
+          const textColorStyle: React.CSSProperties = !box.filled && box.color ? { color: box.color } : {}
           return (
             <div
               key={box.id}
@@ -1734,9 +1814,12 @@ export default function StrategyBoard({
               className={`absolute -translate-x-1/2 -translate-y-1/2 touch-none animate-in fade-in duration-300 ${
                 allowed ? (drawArmed ? '' : 'cursor-grab') : ''
               } ${isDragSource ? 'opacity-40' : 'transition-[left,top] ease-in-out'}`}
-              style={{ left: `${left}%`, top: `${top}%`, zIndex: onTop ? 20 : 10, transitionDuration: isDragSource ? undefined : `${transitionMs}ms` }}
+              style={{ left: `${left}%`, top: `${top}%`, width: `${effectiveWidth * 100}%`, minWidth: '48px', zIndex: onTop ? 20 : 10, transitionDuration: isDragSource ? undefined : `${transitionMs}ms` }}
             >
-              <div className={`relative min-w-[70px] max-w-[160px] px-2 py-1 rounded-md ${isSelected ? 'ring-2 ring-primary ring-offset-2 ring-offset-background' : ''}`}>
+              <div
+                className={`relative px-2 py-1 rounded-md ${isSelected ? 'ring-2 ring-primary ring-offset-2 ring-offset-background' : ''}`}
+                style={boxColorStyle}
+              >
                 {isEditing ? (
                   <textarea
                     autoFocus
@@ -1752,24 +1835,79 @@ export default function StrategyBoard({
                     className="w-full text-[11px] bg-background border border-primary rounded px-1 text-foreground resize-none"
                   />
                 ) : (
-                  <span className="block text-[11px] text-foreground whitespace-pre-wrap break-words select-none">
+                  <span className="block text-[11px] text-foreground whitespace-pre-wrap break-words select-none" style={textColorStyle}>
                     {box.text || <span className="italic text-muted-foreground">Text</span>}
                   </span>
                 )}
                 {allowed && isSelected && !isEditing && (
-                  <button
-                    type="button"
-                    aria-label="Edit text"
-                    onPointerDown={e => e.stopPropagation()}
-                    onClick={e => {
+                  <div className="absolute -top-1.5 -right-1.5 flex items-center gap-1" onPointerDown={e => e.stopPropagation()}>
+                    {editingTextBoxStyle ? (
+                      <div className="flex items-center gap-1 rounded-full bg-card border border-border shadow px-1.5 py-1">
+                        {HIGHLIGHT_COLORS.map(c => (
+                          <button
+                            key={c}
+                            type="button"
+                            aria-label={`Change text color to ${c}`}
+                            onClick={() => onUpdateTextBoxStyle(box.id, { color: c })}
+                            className={`w-4 h-4 rounded-full ${box.color === c ? 'ring-2 ring-offset-1 ring-offset-background ring-foreground' : ''}`}
+                            style={{ backgroundColor: c }}
+                          />
+                        ))}
+                        <button
+                          type="button"
+                          aria-label="Use default text color"
+                          onClick={() => onUpdateTextBoxStyle(box.id, { color: null })}
+                          className={`w-4 h-4 rounded-full border border-border bg-background ${box.color === null ? 'ring-2 ring-offset-1 ring-offset-background ring-foreground' : ''}`}
+                        />
+                        <button
+                          type="button"
+                          aria-label={box.filled ? 'Remove background fill' : 'Add background fill'}
+                          onClick={() => onUpdateTextBoxStyle(box.id, { filled: !box.filled })}
+                          className={`w-4 h-4 rounded-full border border-border flex items-center justify-center ${box.filled ? 'bg-foreground text-background' : 'bg-background text-foreground'}`}
+                        >
+                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: accentColor }} />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          aria-label="Change text color or background"
+                          onClick={() => setEditingTextBoxStyle(true)}
+                          className="w-4 h-4 rounded-full bg-background border border-border flex items-center justify-center text-muted-foreground hover:text-foreground shadow"
+                        >
+                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: accentColor }} />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Edit text"
+                          onClick={() => {
+                            setEditingTextValue(box.text)
+                            setEditingTextBoxId(box.id)
+                          }}
+                          className="w-4 h-4 rounded-full bg-background border border-border flex items-center justify-center text-muted-foreground hover:text-foreground shadow"
+                        >
+                          <Pencil className="w-2.5 h-2.5" />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+                {/* Resize handle: drag the box's own right edge to adjust
+                    its stored width. Only shown on the sole selection, same
+                    "editable only when selected" rule as the pencil. */}
+                {allowed && isSelected && !isEditing && (
+                  <div
+                    role="separator"
+                    aria-label="Resize text box"
+                    onPointerDown={e => {
                       e.stopPropagation()
-                      setEditingTextValue(box.text)
-                      setEditingTextBoxId(box.id)
+                      beginTextBoxResize(box, e.pointerId, e.clientX)
                     }}
-                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-background border border-border flex items-center justify-center text-muted-foreground hover:text-foreground shadow"
+                    className="absolute -right-1.5 bottom-0 top-0 w-3 flex items-center cursor-ew-resize"
                   >
-                    <Pencil className="w-2.5 h-2.5" />
-                  </button>
+                    <span className="w-1 h-3/5 mx-auto rounded-full bg-border" />
+                  </div>
                 )}
               </div>
             </div>
