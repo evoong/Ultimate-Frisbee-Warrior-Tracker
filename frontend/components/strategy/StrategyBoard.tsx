@@ -3,8 +3,8 @@ import { createPortal } from 'react-dom'
 import PlayerAvatar from '../PlayerAvatar'
 import { Button } from '../../lib/shadcn/button'
 import { useMediaQuery } from '../../lib/shadcn/use-media-query'
-import { Pencil, UserPlus, Type, Trash2 } from 'lucide-react'
-import type { StrategyArrow, StrategyOpponentMarker, StrategyTextBox, StrategySelectedItem as SelectedItem, StrategyEntityMove as EntityMove } from '../../hooks/backend/strategy'
+import { Pencil, PenLine, Slash, ArrowRight, UserPlus, Type, Trash2, Highlighter, Check, X } from 'lucide-react'
+import type { StrategyArrow, StrategyOpponentMarker, StrategyTextBox, StrategyHighlight, StrategyLine, StrategySelectedItem as SelectedItem, StrategyEntityMove as EntityMove } from '../../hooks/backend/strategy'
 
 // Canonical coordinates are fractions in [0, 1] of a LANDSCAPE field:
 // x along the 100m length (0 = left back line), y across the 37m width
@@ -46,10 +46,25 @@ type DragState = {
 
 type ArrowDraft = { x1: number; y1: number; x2: number; y2: number; pointerId: number; startPlayerId?: number; startOpponentId?: number }
 type ArrowLive = { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number }
+type HighlightDraft = { points: { x: number; y: number }[]; pointerId: number }
+type LineDraft = { points: { x: number; y: number }[]; pointerId: number }
+// While a straight-drawn highlight's or line's corner handle is being
+// dragged, this overrides its rendered points so the shape updates live
+// before the save completes (same idea as liveArrowEdit for arrow handles).
+type PointDragState = { kind: 'highlight' | 'line'; id: number; index: number; pointerId: number; points: { x: number; y: number }[] }
 
 const DRAG_THRESHOLD_PX = 4
 const MIN_ARROW_LENGTH = 0.02
 const END_ZONE_FRACTION = 0.18
+// Minimum canonical-coordinate distance between two consecutively recorded
+// freehand points, so a slow drag doesn't balloon the stored shape into
+// hundreds of near-duplicate points. Shared by highlight and line freehand
+// tracing alike.
+const MIN_FREEHAND_POINT_DIST = 0.012
+const MIN_HIGHLIGHT_POINTS = 3
+const MIN_LINE_POINTS = 2
+const HIGHLIGHT_COLORS = ['#f59e0b', '#ef4444', '#3b82f6', '#22c55e'] as const
+const LINE_COLORS = HIGHLIGHT_COLORS
 
 function clamp01(v: number) {
   return Math.min(1, Math.max(0, v))
@@ -123,10 +138,12 @@ function isTypingTarget(t: EventTarget | null) {
 }
 
 export default function StrategyBoard({
-  players, positions, opponents, textBoxes, arrows, allowed,
+  players, positions, opponents, textBoxes, arrows, highlights, lines, allowed,
   onPlace, onRemove, onAddOpponent, onMoveOpponent, onRemoveOpponent, onRenameOpponent,
   onAddTextBox, onMoveTextBox, onEditTextBox, onRemoveTextBox,
   onCreateArrow, onUpdateArrow, onDeleteArrow,
+  onCreateHighlight, onUpdateHighlightColor, onUpdateHighlightPoints, onDeleteHighlight,
+  onCreateLine, onUpdateLineColor, onUpdateLinePoints, onDeleteLine,
   onGroupMove, onDeleteMany,
   transitionMs = 700,
 }: {
@@ -135,6 +152,8 @@ export default function StrategyBoard({
   opponents: StrategyOpponentMarker[]
   textBoxes: StrategyTextBox[]
   arrows: StrategyArrow[]
+  highlights: StrategyHighlight[]
+  lines: StrategyLine[]
   allowed: boolean
   onPlace: (playerId: number, x: number, y: number) => void
   onRemove: (playerId: number) => void
@@ -149,6 +168,14 @@ export default function StrategyBoard({
   onCreateArrow: (arrow: { x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; arrow_type: 'run' | 'throw'; start_player_id: number | null; start_opponent_id: number | null }) => void
   onUpdateArrow: (arrow: { id: number; x1: number; y1: number; x2: number; y2: number; cx: number; cy: number; start_player_id?: number | null; start_opponent_id?: number | null }) => void
   onDeleteArrow: (id: number) => void
+  onCreateHighlight: (points: { x: number; y: number }[], color: string, isStraight: boolean) => void
+  onUpdateHighlightColor: (id: number, color: string) => void
+  onUpdateHighlightPoints: (id: number, points: { x: number; y: number }[]) => void
+  onDeleteHighlight: (id: number) => void
+  onCreateLine: (points: { x: number; y: number }[], color: string, isStraight: boolean) => void
+  onUpdateLineColor: (id: number, color: string) => void
+  onUpdateLinePoints: (id: number, points: { x: number; y: number }[]) => void
+  onDeleteLine: (id: number) => void
   onGroupMove: (moves: EntityMove[], phase: 'start' | 'preview' | 'commit' | 'cancel') => void
   onDeleteMany: (items: SelectedItem[]) => void
   // How long the slide between steps takes, in ms. Set from the Strategy
@@ -186,7 +213,7 @@ export default function StrategyBoard({
   useEffect(() => () => teardownRef.current(), [])
 
   // ── Arrow drawing / editing mode ──────────────────────────────────────────
-  const [mode, setMode] = useState<'move' | 'draw'>('move')
+  const [mode, setMode] = useState<'move' | 'draw' | 'highlight' | 'line'>('move')
   const [arrowType, setArrowType] = useState<'run' | 'throw'>('run')
   const [aArmed, setAArmed] = useState(false)
   // A multi-selection shared by players, opponents, and arrows. Click selects
@@ -283,14 +310,205 @@ export default function StrategyBoard({
   const arrowDragTeardownRef = useRef<() => void>(() => {})
   useEffect(() => () => arrowDragTeardownRef.current(), [])
 
+  // ── Highlight zone drawing ──────────────────────────────────────────────
+  // A freehand-traced filled polygon, single-selectable, recolorable, and
+  // deletable but not draggable/resizable in place (see onCreateHighlight's
+  // comment in Strategy.tsx) — separate from the players/opponents/arrows
+  // `selected` multi-selection so its simpler select-only model doesn't
+  // have to thread through group-move's coordinate math.
+  const [highlightColor, setHighlightColor] = useState<string>(HIGHLIGHT_COLORS[0])
+  const [drawingHighlight, setDrawingHighlight] = useState<HighlightDraft | null>(null)
+  const drawHighlightRef = useRef<HighlightDraft | null>(null)
+  const [selectedHighlightId, setSelectedHighlightId] = useState<number | null>(null)
+  const selectedHighlightRef = useRef<number | null>(null)
+  selectedHighlightRef.current = selectedHighlightId
+  // Whether the selected highlight's pencil button has swapped the
+  // pencil/trash pair out for the color swatches.
+  const [editingHighlightColor, setEditingHighlightColor] = useState(false)
+  const deleteSelectedHighlightRef = useRef<() => void>(() => {})
+  deleteSelectedHighlightRef.current = () => {
+    if (!allowed || selectedHighlightRef.current === null) return
+    onDeleteHighlight(selectedHighlightRef.current)
+    setSelectedHighlightId(null)
+  }
+  useEffect(() => {
+    setSelectedHighlightId(id => (id != null && !highlights.some(h => h.id === id) ? null : id))
+  }, [highlights])
+  // Closing the color picker whenever the selection itself changes (a new
+  // highlight picked, or deselected) keeps it from silently reappearing
+  // pinned to whatever gets selected next.
+  useEffect(() => { setEditingHighlightColor(false) }, [selectedHighlightId])
+
+  // Straight-edge alternative to the freehand trace above: each tap on the
+  // field appends a vertex (a straight segment from the previous one)
+  // instead of continuously sampling a drag, so lines come out perfectly
+  // straight instead of hand-wobbled. A floating Finish/Cancel control (in
+  // the toolbar, not on the field, so it doesn't need centroid math for a
+  // still-open shape) commits or discards it.
+  const [highlightStraight, setHighlightStraight] = useState(false)
+  const [straightDraft, setStraightDraft] = useState<{ x: number; y: number }[] | null>(null)
+  const straightDraftRef = useRef<{ x: number; y: number }[] | null>(null)
+  const addStraightVertex = (x: number, y: number) => {
+    setStraightDraft(prev => {
+      const next = [...(prev ?? []), { x, y }]
+      straightDraftRef.current = next
+      return next
+    })
+  }
+  const finishStraightDraftRef = useRef<() => void>(() => {})
+  finishStraightDraftRef.current = () => {
+    const pts = straightDraftRef.current
+    if (pts && pts.length >= MIN_HIGHLIGHT_POINTS) onCreateHighlight(pts, highlightColor, true)
+    straightDraftRef.current = null
+    setStraightDraft(null)
+  }
+  const cancelStraightDraftRef = useRef<() => void>(() => {})
+  cancelStraightDraftRef.current = () => {
+    straightDraftRef.current = null
+    setStraightDraft(null)
+  }
+  // Switching away from highlight mode, or flipping the Freehand/Straight
+  // toggle mid-shape, abandons any straight-line draft rather than leaving
+  // it invisibly pending.
+  useEffect(() => { cancelStraightDraftRef.current() }, [mode, highlightStraight])
+
+  // ── Line drawing (Pencil / Straight Line) ───────────────────────────────
+  // Same freehand-trace-or-tap-corners mechanics as the Highlight zone
+  // above, but produces a plain unfilled open polyline (strategy_lines)
+  // instead of a closed filled zone, and is armed by its own two toolbar
+  // buttons rather than nested under Highlight's sub-toggle.
+  const [lineColor, setLineColor] = useState<string>(LINE_COLORS[0])
+  const [drawingLine, setDrawingLine] = useState<LineDraft | null>(null)
+  const drawLineRef = useRef<LineDraft | null>(null)
+  const [selectedLineId, setSelectedLineId] = useState<number | null>(null)
+  const selectedLineRef = useRef<number | null>(null)
+  selectedLineRef.current = selectedLineId
+  const [editingLineColor, setEditingLineColor] = useState(false)
+  const deleteSelectedLineRef = useRef<() => void>(() => {})
+  deleteSelectedLineRef.current = () => {
+    if (!allowed || selectedLineRef.current === null) return
+    onDeleteLine(selectedLineRef.current)
+    setSelectedLineId(null)
+  }
+  useEffect(() => {
+    setSelectedLineId(id => (id != null && !lines.some(l => l.id === id) ? null : id))
+  }, [lines])
+  useEffect(() => { setEditingLineColor(false) }, [selectedLineId])
+
+  const [lineStraight, setLineStraight] = useState(false)
+  const [straightLineDraft, setStraightLineDraft] = useState<{ x: number; y: number }[] | null>(null)
+  const straightLineDraftRef = useRef<{ x: number; y: number }[] | null>(null)
+  const addStraightLineVertex = (x: number, y: number) => {
+    setStraightLineDraft(prev => {
+      const next = [...(prev ?? []), { x, y }]
+      straightLineDraftRef.current = next
+      return next
+    })
+  }
+  const finishStraightLineDraftRef = useRef<() => void>(() => {})
+  finishStraightLineDraftRef.current = () => {
+    const pts = straightLineDraftRef.current
+    if (pts && pts.length >= MIN_LINE_POINTS) onCreateLine(pts, lineColor, true)
+    straightLineDraftRef.current = null
+    setStraightLineDraft(null)
+  }
+  const cancelStraightLineDraftRef = useRef<() => void>(() => {})
+  cancelStraightLineDraftRef.current = () => {
+    straightLineDraftRef.current = null
+    setStraightLineDraft(null)
+  }
+  // Switching away from line mode, or flipping the Pencil/Straight Line
+  // tool mid-shape, abandons any straight-line draft rather than leaving
+  // it invisibly pending.
+  useEffect(() => { cancelStraightLineDraftRef.current() }, [mode, lineStraight])
+
+  // ── Straight-corner point dragging ──────────────────────────────────────
+  // Shared by highlights and lines: a straight-drawn shape's corners are
+  // deliberate taps (usually a handful), so each is worth its own draggable
+  // handle; a freehand trace's hundreds of samples are not — those still
+  // require delete-and-redraw to reshape.
+  const [pointDrag, setPointDrag] = useState<PointDragState | null>(null)
+  const pointDragRef = useRef<PointDragState | null>(null)
+  const pointDragTeardownRef = useRef<() => void>(() => {})
+  useEffect(() => () => pointDragTeardownRef.current(), [])
+  const beginPointDrag = (kind: 'highlight' | 'line', id: number, index: number, initialPoints: { x: number; y: number }[], pointerId: number) => {
+    const initial: PointDragState = { kind, id, index, pointerId, points: initialPoints.map(p => ({ ...p })) }
+    pointDragRef.current = initial
+    setPointDrag(initial)
+    const onMove = (ev: PointerEvent) => {
+      const d = pointDragRef.current
+      if (!d || ev.pointerId !== d.pointerId) return
+      const rect = fieldRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const { x, y } = toCanonical((ev.clientX - rect.left) / rect.width, (ev.clientY - rect.top) / rect.height, isDesktop)
+      const next = { ...d, points: d.points.map((p, i) => (i === d.index ? { x, y } : p)) }
+      pointDragRef.current = next
+      setPointDrag(next)
+    }
+    const onUp = (ev: PointerEvent) => {
+      const d = pointDragRef.current
+      if (!d || ev.pointerId !== d.pointerId) return
+      teardown()
+      pointDragRef.current = null
+      setPointDrag(null)
+      if (d.kind === 'highlight') onUpdateHighlightPoints(d.id, d.points)
+      else onUpdateLinePoints(d.id, d.points)
+    }
+    const onCancel = (ev: PointerEvent) => {
+      if (pointDragRef.current?.pointerId !== ev.pointerId) return
+      teardown()
+      pointDragRef.current = null
+      setPointDrag(null)
+    }
+    const teardown = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+      pointDragTeardownRef.current = () => {}
+    }
+    pointDragTeardownRef.current = teardown
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
+  }
+
   const drawArmed = allowed && (mode === 'draw' || aArmed)
+  const highlightArmed = allowed && mode === 'highlight'
+  const lineArmed = allowed && mode === 'line'
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setSelected([]); return }
+      if (e.key === 'Escape') {
+        setSelected([])
+        setSelectedHighlightId(null)
+        setSelectedLineId(null)
+        cancelStraightDraftRef.current()
+        cancelStraightLineDraftRef.current()
+        return
+      }
+      if (e.key === 'Enter' && straightDraftRef.current !== null && !isTypingTarget(e.target)) {
+        e.preventDefault()
+        finishStraightDraftRef.current()
+        return
+      }
+      if (e.key === 'Enter' && straightLineDraftRef.current !== null && !isTypingTarget(e.target)) {
+        e.preventDefault()
+        finishStraightLineDraftRef.current()
+        return
+      }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedRef.current.length > 0 && !isTypingTarget(e.target)) {
         e.preventDefault()
         deleteSelectedRef.current()
+        return
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedHighlightRef.current !== null && !isTypingTarget(e.target)) {
+        e.preventDefault()
+        deleteSelectedHighlightRef.current()
+        return
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedLineRef.current !== null && !isTypingTarget(e.target)) {
+        e.preventDefault()
+        deleteSelectedLineRef.current()
         return
       }
       if (e.repeat || e.key.toLowerCase() !== 'a' || e.metaKey || e.ctrlKey || isTypingTarget(e.target)) return
@@ -322,6 +540,28 @@ export default function StrategyBoard({
     (e: React.PointerEvent<HTMLDivElement>) => {
       if (!allowed) return
       e.stopPropagation() // don't let the field's own handler also start an arrow draw
+      // In highlight or line mode, entities have no special role (no
+      // anchoring, no dragging) — a pointer-down anywhere on the field,
+      // including on top of a player/opponent/text box, starts tracing a
+      // shape instead.
+      if (highlightArmed && origin === 'field') {
+        const rect = fieldRef.current?.getBoundingClientRect()
+        if (rect) {
+          const { x, y } = toCanonical((e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height, isDesktop)
+          if (highlightStraight) addStraightVertex(x, y)
+          else beginHighlightDraw(e.pointerId, x, y)
+        }
+        return
+      }
+      if (lineArmed && origin === 'field') {
+        const rect = fieldRef.current?.getBoundingClientRect()
+        if (rect) {
+          const { x, y } = toCanonical((e.clientX - rect.left) / rect.width, (e.clientY - rect.top) / rect.height, isDesktop)
+          if (lineStraight) addStraightLineVertex(x, y)
+          else beginLineDraw(e.pointerId, x, y)
+        }
+        return
+      }
       if (drawArmed && (entity.kind === 'player' || entity.kind === 'opponent')) {
         const start = entity.kind === 'player' ? positions.get(entity.id) : opponents.find(o => o.id === entity.id)
         if (start) {
@@ -553,9 +793,123 @@ export default function StrategyBoard({
     window.addEventListener('pointercancel', onCancel)
   }
 
+  // Traces a freehand path while the pointer is down: each move appends a
+  // point (throttled by MIN_FREEHAND_POINT_DIST so a slow drag doesn't
+  // balloon the stored polygon), and release either commits it as a filled
+  // zone or discards it if the trace was too short to read as a shape.
+  const beginHighlightDraw = (pointerId: number, x: number, y: number) => {
+    const initial: HighlightDraft = { points: [{ x, y }], pointerId }
+    drawHighlightRef.current = initial
+    setDrawingHighlight(initial)
+
+    const onMove = (ev: PointerEvent) => {
+      const d = drawHighlightRef.current
+      if (!d || ev.pointerId !== d.pointerId) return
+      const rect = fieldRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const relLeft = (ev.clientX - rect.left) / rect.width
+      const relTop = (ev.clientY - rect.top) / rect.height
+      const { x: px, y: py } = toCanonical(relLeft, relTop, isDesktop)
+      const last = d.points[d.points.length - 1]!
+      if (Math.hypot(px - last.x, py - last.y) < MIN_FREEHAND_POINT_DIST) return
+      const next = { ...d, points: [...d.points, { x: px, y: py }] }
+      drawHighlightRef.current = next
+      setDrawingHighlight(next)
+    }
+    const onUp = (ev: PointerEvent) => {
+      const d = drawHighlightRef.current
+      if (!d || ev.pointerId !== d.pointerId) return
+      teardown()
+      drawHighlightRef.current = null
+      setDrawingHighlight(null)
+      if (d.points.length >= MIN_HIGHLIGHT_POINTS) onCreateHighlight(d.points, highlightColor, false)
+    }
+    const onCancel = (ev: PointerEvent) => {
+      if (drawHighlightRef.current?.pointerId !== ev.pointerId) return
+      teardown()
+      drawHighlightRef.current = null
+      setDrawingHighlight(null)
+    }
+    const teardown = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
+  }
+
+  // Same freehand trace as beginHighlightDraw, but commits to onCreateLine
+  // (an open unfilled polyline) instead of onCreateHighlight.
+  const beginLineDraw = (pointerId: number, x: number, y: number) => {
+    const initial: LineDraft = { points: [{ x, y }], pointerId }
+    drawLineRef.current = initial
+    setDrawingLine(initial)
+
+    const onMove = (ev: PointerEvent) => {
+      const d = drawLineRef.current
+      if (!d || ev.pointerId !== d.pointerId) return
+      const rect = fieldRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const relLeft = (ev.clientX - rect.left) / rect.width
+      const relTop = (ev.clientY - rect.top) / rect.height
+      const { x: px, y: py } = toCanonical(relLeft, relTop, isDesktop)
+      const last = d.points[d.points.length - 1]!
+      if (Math.hypot(px - last.x, py - last.y) < MIN_FREEHAND_POINT_DIST) return
+      const next = { ...d, points: [...d.points, { x: px, y: py }] }
+      drawLineRef.current = next
+      setDrawingLine(next)
+    }
+    const onUp = (ev: PointerEvent) => {
+      const d = drawLineRef.current
+      if (!d || ev.pointerId !== d.pointerId) return
+      teardown()
+      drawLineRef.current = null
+      setDrawingLine(null)
+      if (d.points.length >= MIN_LINE_POINTS) onCreateLine(d.points, lineColor, false)
+    }
+    const onCancel = (ev: PointerEvent) => {
+      if (drawLineRef.current?.pointerId !== ev.pointerId) return
+      teardown()
+      drawLineRef.current = null
+      setDrawingLine(null)
+    }
+    const teardown = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
+  }
+
   const handleFieldPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (highlightArmed) {
+      const rect = fieldRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const relLeft = (e.clientX - rect.left) / rect.width
+      const relTop = (e.clientY - rect.top) / rect.height
+      const { x, y } = toCanonical(relLeft, relTop, isDesktop)
+      if (highlightStraight) addStraightVertex(x, y)
+      else beginHighlightDraw(e.pointerId, x, y)
+      return
+    }
+    if (lineArmed) {
+      const rect = fieldRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const relLeft = (e.clientX - rect.left) / rect.width
+      const relTop = (e.clientY - rect.top) / rect.height
+      const { x, y } = toCanonical(relLeft, relTop, isDesktop)
+      if (lineStraight) addStraightLineVertex(x, y)
+      else beginLineDraw(e.pointerId, x, y)
+      return
+    }
     if (!drawArmed) {
       if (selected.length) setSelected([])
+      if (selectedHighlightId !== null) setSelectedHighlightId(null)
+      if (selectedLineId !== null) setSelectedLineId(null)
       return
     }
     const rect = fieldRef.current?.getBoundingClientRect()
@@ -686,7 +1040,7 @@ export default function StrategyBoard({
               onClick={() => setMode(m => (m === 'draw' ? 'move' : 'draw'))}
               title="Draw arrows for cuts and movement. Toggle on and drag on the field, or hold A and drag."
             >
-              <Pencil className="w-3.5 h-3.5 mr-1.5" />Draw arrow
+              <ArrowRight className="w-3.5 h-3.5 mr-1.5" />Draw arrow
             </Button>
             {mode === 'draw' && (
               <div className="flex rounded-md border border-border overflow-hidden text-xs font-medium">
@@ -706,6 +1060,143 @@ export default function StrategyBoard({
                 </button>
               </div>
             )}
+            <Button
+              type="button"
+              size="sm"
+              variant={mode === 'highlight' ? 'default' : 'outline'}
+              onClick={() => setMode(m => (m === 'highlight' ? 'move' : 'highlight'))}
+              title="Highlight a zone. Toggle on and drag on the field to trace a filled area."
+            >
+              <Highlighter className="w-3.5 h-3.5 mr-1.5" />Highlight
+            </Button>
+            {mode === 'highlight' && (
+              <div className="flex rounded-md border border-border overflow-hidden text-xs font-medium">
+                <button
+                  type="button"
+                  onClick={() => setHighlightStraight(false)}
+                  className={`px-2.5 py-1.5 ${!highlightStraight ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:text-foreground'}`}
+                >
+                  Freehand
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHighlightStraight(true)}
+                  title="Tap to place straight-line corners; Enter or the checkmark finishes, Escape cancels."
+                  className={`px-2.5 py-1.5 ${highlightStraight ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:text-foreground'}`}
+                >
+                  Straight
+                </button>
+              </div>
+            )}
+            {mode === 'highlight' && (
+              <div className="flex items-center gap-1 rounded-md border border-border px-1.5 py-1">
+                {HIGHLIGHT_COLORS.map(c => (
+                  <button
+                    key={c}
+                    type="button"
+                    aria-label={`Use ${c} for new highlights`}
+                    onClick={() => setHighlightColor(c)}
+                    className={`w-5 h-5 rounded-full ${highlightColor === c ? 'ring-2 ring-offset-1 ring-offset-background ring-foreground' : ''}`}
+                    style={{ backgroundColor: c }}
+                  />
+                ))}
+              </div>
+            )}
+            {mode === 'highlight' && highlightStraight && straightDraft && straightDraft.length > 0 && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground tabular-nums">{straightDraft.length} pt{straightDraft.length === 1 ? '' : 's'}</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={straightDraft.length < MIN_HIGHLIGHT_POINTS}
+                  title={straightDraft.length < MIN_HIGHLIGHT_POINTS ? 'Needs at least 3 points' : 'Finish (Enter)'}
+                  onClick={() => finishStraightDraftRef.current()}
+                  className="h-7 px-2"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  title="Cancel (Escape)"
+                  onClick={() => cancelStraightDraftRef.current()}
+                  className="h-7 px-2"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            )}
+            {/* Pencil and Straight Line: plain unfilled lines, separate
+                tools from Highlight above (which always makes a filled
+                zone) rather than nested under it. */}
+            <Button
+              type="button"
+              size="sm"
+              variant={mode === 'line' && !lineStraight ? 'default' : 'outline'}
+              onClick={() => {
+                if (mode === 'line' && !lineStraight) { setMode('move'); return }
+                setLineStraight(false)
+                setMode('line')
+              }}
+              title="Draw a freehand line. Toggle on and drag on the field to trace it."
+            >
+              <PenLine className="w-3.5 h-3.5 mr-1.5" />Pencil
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={mode === 'line' && lineStraight ? 'default' : 'outline'}
+              onClick={() => {
+                if (mode === 'line' && lineStraight) { setMode('move'); return }
+                setLineStraight(true)
+                setMode('line')
+              }}
+              title="Tap to place straight-line corners; Enter or the checkmark finishes, Escape cancels."
+            >
+              <Slash className="w-3.5 h-3.5 mr-1.5" />Straight Line
+            </Button>
+            {mode === 'line' && (
+              <div className="flex items-center gap-1 rounded-md border border-border px-1.5 py-1">
+                {LINE_COLORS.map(c => (
+                  <button
+                    key={c}
+                    type="button"
+                    aria-label={`Use ${c} for new lines`}
+                    onClick={() => setLineColor(c)}
+                    className={`w-5 h-5 rounded-full ${lineColor === c ? 'ring-2 ring-offset-1 ring-offset-background ring-foreground' : ''}`}
+                    style={{ backgroundColor: c }}
+                  />
+                ))}
+              </div>
+            )}
+            {mode === 'line' && lineStraight && straightLineDraft && straightLineDraft.length > 0 && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground tabular-nums">{straightLineDraft.length} pt{straightLineDraft.length === 1 ? '' : 's'}</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={straightLineDraft.length < MIN_LINE_POINTS}
+                  title={straightLineDraft.length < MIN_LINE_POINTS ? 'Needs at least 2 points' : 'Finish (Enter)'}
+                  onClick={() => finishStraightLineDraftRef.current()}
+                  className="h-7 px-2"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  title="Cancel (Escape)"
+                  onClick={() => cancelStraightLineDraftRef.current()}
+                  className="h-7 px-2"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <Button type="button" size="sm" variant="outline" onClick={onAddOpponent}>
@@ -723,9 +1214,307 @@ export default function StrategyBoard({
         onPointerDown={handleFieldPointerDown}
         className={`relative overflow-hidden rounded-xl border border-border bg-emerald-500/15 dark:bg-emerald-500/10 touch-none ${
           isDesktop ? 'w-full aspect-[100/37]' : 'mx-auto w-full max-w-xl h-[88vh]'
-        } ${drawArmed ? 'cursor-crosshair' : ''}`}
+        } ${drawArmed || highlightArmed || lineArmed ? 'cursor-crosshair' : ''}`}
       >
         {endZones}
+
+        {/* Highlighted zones: a background layer beneath arrows/players, so a
+            filled area reads as shading the field rather than sitting on top
+            of the diagram. Separate <svg> from the arrows one below (not
+            strictly necessary) keeps its own pointer-events scoped to just
+            the shapes that need to be clickable. */}
+        <svg
+          viewBox={`0 0 ${viewBoxW} ${viewBoxH}`}
+          preserveAspectRatio="none"
+          className="absolute inset-0 w-full h-full"
+          style={{ pointerEvents: 'none' }}
+        >
+          {highlights.map(h => {
+            const effectivePoints = pointDrag && pointDrag.kind === 'highlight' && pointDrag.id === h.id ? pointDrag.points : h.points
+            const pts = effectivePoints.map(p => toViewBox(p.x, p.y)).map(v => `${v.vx},${v.vy}`).join(' ')
+            const isSelected = selectedHighlightId === h.id
+            return (
+              <polygon
+                key={h.id}
+                points={pts}
+                fill={h.color}
+                fillOpacity={isSelected ? 0.35 : 0.22}
+                stroke={h.color}
+                strokeOpacity={isSelected ? 0.95 : 0.7}
+                strokeWidth={isSelected ? 0.5 : 0.35}
+                strokeLinejoin="round"
+                style={{ pointerEvents: 'all', cursor: allowed ? 'pointer' : 'default' }}
+                onPointerDown={e => {
+                  if (!allowed) return
+                  e.stopPropagation()
+                  setSelected([])
+                  setSelectedLineId(null)
+                  setSelectedHighlightId(id => (id === h.id ? null : h.id))
+                }}
+              />
+            )
+          })}
+          {/* A straight-drawn highlight's corners are individually
+              draggable while it's the sole selection — a freehand trace's
+              hundreds of samples are not, so this is gated on is_straight. */}
+          {allowed && selectedHighlightId !== null && (() => {
+            const h = highlights.find(x => x.id === selectedHighlightId)
+            if (!h || !h.is_straight) return null
+            const effectivePoints = pointDrag && pointDrag.kind === 'highlight' && pointDrag.id === h.id ? pointDrag.points : h.points
+            return effectivePoints.map((p, i) => {
+              const v = toViewBox(p.x, p.y)
+              return (
+                <circle
+                  key={i}
+                  cx={v.vx}
+                  cy={v.vy}
+                  r={0.7}
+                  fill="#fff"
+                  stroke={h.color}
+                  strokeWidth={0.3}
+                  style={{ pointerEvents: 'all', cursor: 'grab' }}
+                  onPointerDown={e => {
+                    e.stopPropagation()
+                    beginPointDrag('highlight', h.id, i, h.points, e.pointerId)
+                  }}
+                />
+              )
+            })
+          })()}
+          {drawingHighlight && drawingHighlight.points.length > 1 && (
+            <polygon
+              points={drawingHighlight.points.map(p => toViewBox(p.x, p.y)).map(v => `${v.vx},${v.vy}`).join(' ')}
+              fill={highlightColor}
+              fillOpacity={0.22}
+              stroke={highlightColor}
+              strokeOpacity={0.8}
+              strokeWidth={0.4}
+              strokeDasharray="1 0.8"
+              strokeLinejoin="round"
+            />
+          )}
+          {straightDraft && straightDraft.length > 0 && (
+            <>
+              {straightDraft.length > 1 && (
+                <polygon
+                  points={straightDraft.map(p => toViewBox(p.x, p.y)).map(v => `${v.vx},${v.vy}`).join(' ')}
+                  fill={highlightColor}
+                  fillOpacity={0.18}
+                  stroke={highlightColor}
+                  strokeOpacity={0.9}
+                  strokeWidth={0.4}
+                  strokeDasharray="1 0.8"
+                  strokeLinejoin="round"
+                />
+              )}
+              {/* Each placed vertex as a small dot, so it's clear where the
+                  next straight segment will start from. */}
+              {straightDraft.map((p, i) => {
+                const v = toViewBox(p.x, p.y)
+                return <circle key={i} cx={v.vx} cy={v.vy} r={0.55} fill={highlightColor} stroke="#fff" strokeWidth={0.15} />
+              })}
+            </>
+          )}
+        </svg>
+
+        {/* Selected highlight's recolor (pencil) + delete controls. Pencil
+            swaps the pair out for the preset swatches so recoloring reuses
+            the exact same picker as drawing a new one, without permanently
+            crowding the shape with four dots. */}
+        {allowed && selectedHighlightId !== null && (() => {
+          const h = highlights.find(x => x.id === selectedHighlightId)
+          if (!h) return null
+          const cx = h.points.reduce((s, p) => s + p.x, 0) / h.points.length
+          const cy = h.points.reduce((s, p) => s + p.y, 0) / h.points.length
+          const { left, top } = toRendered(cx, cy, isDesktop)
+          return (
+            <div
+              className="absolute -translate-x-1/2 -translate-y-1/2 flex items-center gap-1.5 z-20"
+              style={{ left: `${left}%`, top: `${top}%` }}
+              onPointerDown={e => e.stopPropagation()}
+            >
+              {editingHighlightColor ? (
+                <div className="flex items-center gap-1 rounded-full bg-card border border-border shadow px-1.5 py-1">
+                  {HIGHLIGHT_COLORS.map(c => (
+                    <button
+                      key={c}
+                      type="button"
+                      aria-label={`Change to ${c}`}
+                      onClick={() => { onUpdateHighlightColor(h.id, c); setEditingHighlightColor(false) }}
+                      className={`w-5 h-5 rounded-full ${h.color === c ? 'ring-2 ring-offset-1 ring-offset-background ring-foreground' : ''}`}
+                      style={{ backgroundColor: c }}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Change highlight color"
+                    className="w-6 h-6 rounded-full bg-background border border-border flex items-center justify-center text-muted-foreground hover:text-foreground shadow"
+                    onClick={() => setEditingHighlightColor(true)}
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Delete highlight"
+                    className="w-6 h-6 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center shadow"
+                    onClick={() => { onDeleteHighlight(selectedHighlightId); setSelectedHighlightId(null) }}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              )}
+            </div>
+          )
+        })()}
+
+        {/* Plain unfilled lines: same background layer and selection model
+            as highlighted zones above, but an open polyline instead of a
+            closed filled polygon. */}
+        <svg
+          viewBox={`0 0 ${viewBoxW} ${viewBoxH}`}
+          preserveAspectRatio="none"
+          className="absolute inset-0 w-full h-full"
+          style={{ pointerEvents: 'none' }}
+        >
+          {lines.map(l => {
+            const effectivePoints = pointDrag && pointDrag.kind === 'line' && pointDrag.id === l.id ? pointDrag.points : l.points
+            const pts = effectivePoints.map(p => toViewBox(p.x, p.y)).map(v => `${v.vx},${v.vy}`).join(' ')
+            const isSelected = selectedLineId === l.id
+            return (
+              <polyline
+                key={l.id}
+                points={pts}
+                fill="none"
+                stroke={l.color}
+                strokeOpacity={isSelected ? 1 : 0.85}
+                strokeWidth={isSelected ? 0.7 : 0.5}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{ pointerEvents: 'stroke', cursor: allowed ? 'pointer' : 'default' }}
+                onPointerDown={e => {
+                  if (!allowed) return
+                  e.stopPropagation()
+                  setSelected([])
+                  setSelectedHighlightId(null)
+                  setSelectedLineId(id => (id === l.id ? null : l.id))
+                }}
+              />
+            )
+          })}
+          {/* A straight-drawn line's corners are individually draggable
+              while it's the sole selection, same as a straight highlight. */}
+          {allowed && selectedLineId !== null && (() => {
+            const l = lines.find(x => x.id === selectedLineId)
+            if (!l || !l.is_straight) return null
+            const effectivePoints = pointDrag && pointDrag.kind === 'line' && pointDrag.id === l.id ? pointDrag.points : l.points
+            return effectivePoints.map((p, i) => {
+              const v = toViewBox(p.x, p.y)
+              return (
+                <circle
+                  key={i}
+                  cx={v.vx}
+                  cy={v.vy}
+                  r={0.7}
+                  fill="#fff"
+                  stroke={l.color}
+                  strokeWidth={0.3}
+                  style={{ pointerEvents: 'all', cursor: 'grab' }}
+                  onPointerDown={e => {
+                    e.stopPropagation()
+                    beginPointDrag('line', l.id, i, l.points, e.pointerId)
+                  }}
+                />
+              )
+            })
+          })()}
+          {drawingLine && drawingLine.points.length > 1 && (
+            <polyline
+              points={drawingLine.points.map(p => toViewBox(p.x, p.y)).map(v => `${v.vx},${v.vy}`).join(' ')}
+              fill="none"
+              stroke={lineColor}
+              strokeOpacity={0.8}
+              strokeWidth={0.5}
+              strokeLinecap="round"
+              strokeDasharray="1 0.8"
+              strokeLinejoin="round"
+            />
+          )}
+          {straightLineDraft && straightLineDraft.length > 0 && (
+            <>
+              {straightLineDraft.length > 1 && (
+                <polyline
+                  points={straightLineDraft.map(p => toViewBox(p.x, p.y)).map(v => `${v.vx},${v.vy}`).join(' ')}
+                  fill="none"
+                  stroke={lineColor}
+                  strokeOpacity={0.9}
+                  strokeWidth={0.5}
+                  strokeLinecap="round"
+                  strokeDasharray="1 0.8"
+                  strokeLinejoin="round"
+                />
+              )}
+              {straightLineDraft.map((p, i) => {
+                const v = toViewBox(p.x, p.y)
+                return <circle key={i} cx={v.vx} cy={v.vy} r={0.55} fill={lineColor} stroke="#fff" strokeWidth={0.15} />
+              })}
+            </>
+          )}
+        </svg>
+
+        {/* Selected line's recolor (pencil) + delete controls: same pattern
+            as the selected highlight's controls above, positioned at the
+            midpoint of the line's points rather than a polygon centroid. */}
+        {allowed && selectedLineId !== null && (() => {
+          const l = lines.find(x => x.id === selectedLineId)
+          if (!l) return null
+          const midIdx = Math.floor((l.points.length - 1) / 2)
+          const mid = l.points[midIdx]!
+          const { left, top } = toRendered(mid.x, mid.y, isDesktop)
+          return (
+            <div
+              className="absolute -translate-x-1/2 -translate-y-1/2 flex items-center gap-1.5 z-20"
+              style={{ left: `${left}%`, top: `${top}%` }}
+              onPointerDown={e => e.stopPropagation()}
+            >
+              {editingLineColor ? (
+                <div className="flex items-center gap-1 rounded-full bg-card border border-border shadow px-1.5 py-1">
+                  {LINE_COLORS.map(c => (
+                    <button
+                      key={c}
+                      type="button"
+                      aria-label={`Change to ${c}`}
+                      onClick={() => { onUpdateLineColor(l.id, c); setEditingLineColor(false) }}
+                      className={`w-5 h-5 rounded-full ${l.color === c ? 'ring-2 ring-offset-1 ring-offset-background ring-foreground' : ''}`}
+                      style={{ backgroundColor: c }}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Change line color"
+                    className="w-6 h-6 rounded-full bg-background border border-border flex items-center justify-center text-muted-foreground hover:text-foreground shadow"
+                    onClick={() => setEditingLineColor(true)}
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Delete line"
+                    className="w-6 h-6 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center shadow"
+                    onClick={() => { onDeleteLine(selectedLineId); setSelectedLineId(null) }}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              )}
+            </div>
+          )
+        })()}
 
         {/* Arrows: SVG overlay beneath the player/opponent avatars. */}
         <svg

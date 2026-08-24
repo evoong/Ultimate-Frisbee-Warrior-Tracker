@@ -12,7 +12,9 @@ import {
   useGetStrategyOpponentMarkers, useCreateStrategyOpponentMarker, useUpdateStrategyOpponentMarker, useDeleteStrategyOpponentMarker,
   useGetStrategyTextBoxes, useCreateStrategyTextBox, useUpdateStrategyTextBox, useDeleteStrategyTextBox,
   useGetStrategyArrows, useCreateStrategyArrow, useUpdateStrategyArrow, useDeleteStrategyArrow,
-  type StrategyPlay, type StrategyStep, type StrategyOpponentMarker, type StrategyTextBox, type StrategyArrow,
+  useGetStrategyHighlights, useCreateStrategyHighlight, useUpdateStrategyHighlight, useDeleteStrategyHighlight,
+  useGetStrategyLines, useCreateStrategyLine, useUpdateStrategyLine, useDeleteStrategyLine,
+  type StrategyPlay, type StrategyStep, type StrategyOpponentMarker, type StrategyTextBox, type StrategyArrow, type StrategyHighlight, type StrategyLine,
   type StrategySelectedItem as BoardItem, type StrategyEntityMove as EntityMove,
 } from '../hooks/backend/strategy'
 import StrategyBoard from '../components/strategy/StrategyBoard'
@@ -120,6 +122,16 @@ export default function Strategy() {
   const { trigger: updateArrow } = useUpdateStrategyArrow()
   const { trigger: removeArrow } = useDeleteStrategyArrow()
 
+  const { trigger: fetchHighlights } = useGetStrategyHighlights()
+  const { trigger: createHighlight } = useCreateStrategyHighlight()
+  const { trigger: updateHighlight } = useUpdateStrategyHighlight()
+  const { trigger: removeHighlight } = useDeleteStrategyHighlight()
+
+  const { trigger: fetchLines } = useGetStrategyLines()
+  const { trigger: createLine } = useCreateStrategyLine()
+  const { trigger: updateLine } = useUpdateStrategyLine()
+  const { trigger: removeLine } = useDeleteStrategyLine()
+
   const players = rawPlayers as Player[] | undefined
 
   const [selectedPlayId, setSelectedPlayId] = useState<number | null>(null)
@@ -132,6 +144,8 @@ export default function Strategy() {
   const [opponents, setOpponents] = useState<StrategyOpponentMarker[]>([])
   const [textBoxes, setTextBoxes] = useState<StrategyTextBox[]>([])
   const [arrows, setArrows] = useState<StrategyArrow[]>([])
+  const [highlights, setHighlights] = useState<StrategyHighlight[]>([])
+  const [lines, setLines] = useState<StrategyLine[]>([])
 
 
   const [showCreate, setShowCreate] = useState(false)
@@ -172,6 +186,8 @@ export default function Strategy() {
     setOpponents([])
     setTextBoxes([])
     setArrows([])
+    setHighlights([])
+    setLines([])
     if (selectedPlayId !== null) {
       fetchSteps({ playId: selectedPlayId }).then(rows => {
         if (rows && rows.length > 0) setSelectedStepId(rows[0]!.id)
@@ -204,11 +220,13 @@ export default function Strategy() {
   // StrategyBoard's left/top CSS transition animates the change) instead of
   // vanishing and popping back in at the new spot.
   const loadStepData = async (stepId: number) => {
-    const [posRows, oppRows, textRows, arrowRows] = await Promise.all([
+    const [posRows, oppRows, textRows, arrowRows, highlightRows, lineRows] = await Promise.all([
       fetchPositions({ stepId }),
       fetchOpponents({ stepId }),
       fetchTextBoxes({ stepId }),
       fetchArrows({ stepId }),
+      fetchHighlights({ stepId }),
+      fetchLines({ stepId }),
     ])
     // Clicking through steps quickly (e.g. tapping "Next" repeatedly) can
     // fire several of these concurrently with no guarantee they resolve in
@@ -224,6 +242,8 @@ export default function Strategy() {
     if (oppRows) setOpponents(oppRows)
     if (textRows) setTextBoxes(textRows)
     if (arrowRows) setArrows(arrowRows)
+    if (highlightRows) setHighlights(highlightRows)
+    if (lineRows) setLines(lineRows)
   }
 
   useEffect(() => {
@@ -427,6 +447,64 @@ export default function Strategy() {
     pushHistory()
     setArrows(prev => prev.filter(a => a.id !== id))
     const ok = await removeArrow({ id })
+    if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
+  }
+
+  // Highlighted zones aren't part of the undo/redo Board snapshot below —
+  // draw/recolor/delete/reshape only, no group-move to make undoable yet.
+  const handleCreateHighlight = async (points: { x: number; y: number }[], color: string, isStraight: boolean) => {
+    if (selectedStepId === null) return
+    const tempId = -Date.now()
+    setHighlights(prev => [...prev, { id: tempId, points, color, is_straight: isStraight }])
+    const created = await createHighlight({ stepId: selectedStepId, points, color, organizationId: currentOrgId, isStraight })
+    if (created) setHighlights(prev => prev.map(h => (h.id === tempId ? created : h)))
+    else loadStepData(selectedStepId)
+  }
+
+  const handleUpdateHighlightColor = async (id: number, color: string) => {
+    setHighlights(prev => prev.map(h => (h.id === id ? { ...h, color } : h)))
+    const ok = await updateHighlight({ id, color })
+    if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
+  }
+
+  const handleUpdateHighlightPoints = async (id: number, points: { x: number; y: number }[]) => {
+    setHighlights(prev => prev.map(h => (h.id === id ? { ...h, points } : h)))
+    const ok = await updateHighlight({ id, points })
+    if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
+  }
+
+  const handleDeleteHighlight = async (id: number) => {
+    setHighlights(prev => prev.filter(h => h.id !== id))
+    const ok = await removeHighlight({ id })
+    if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
+  }
+
+  // Plain unfilled lines: same optimistic-update/reconcile-on-failure shape
+  // as highlights above.
+  const handleCreateLine = async (points: { x: number; y: number }[], color: string, isStraight: boolean) => {
+    if (selectedStepId === null) return
+    const tempId = -Date.now()
+    setLines(prev => [...prev, { id: tempId, points, color, is_straight: isStraight }])
+    const created = await createLine({ stepId: selectedStepId, points, color, organizationId: currentOrgId, isStraight })
+    if (created) setLines(prev => prev.map(l => (l.id === tempId ? created : l)))
+    else loadStepData(selectedStepId)
+  }
+
+  const handleUpdateLineColor = async (id: number, color: string) => {
+    setLines(prev => prev.map(l => (l.id === id ? { ...l, color } : l)))
+    const ok = await updateLine({ id, color })
+    if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
+  }
+
+  const handleUpdateLinePoints = async (id: number, points: { x: number; y: number }[]) => {
+    setLines(prev => prev.map(l => (l.id === id ? { ...l, points } : l)))
+    const ok = await updateLine({ id, points })
+    if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
+  }
+
+  const handleDeleteLine = async (id: number) => {
+    setLines(prev => prev.filter(l => l.id !== id))
+    const ok = await removeLine({ id })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
   }
 
@@ -928,6 +1006,8 @@ export default function Strategy() {
               opponents={opponents}
               textBoxes={textBoxes}
               arrows={arrows}
+              highlights={highlights}
+              lines={lines}
               allowed={allowed}
               onPlace={handlePlace}
               onRemove={handleRemove}
@@ -942,6 +1022,14 @@ export default function Strategy() {
               onCreateArrow={handleCreateArrow}
               onUpdateArrow={handleUpdateArrow}
               onDeleteArrow={handleDeleteArrow}
+              onCreateHighlight={handleCreateHighlight}
+              onUpdateHighlightColor={handleUpdateHighlightColor}
+              onUpdateHighlightPoints={handleUpdateHighlightPoints}
+              onDeleteHighlight={handleDeleteHighlight}
+              onCreateLine={handleCreateLine}
+              onUpdateLineColor={handleUpdateLineColor}
+              onUpdateLinePoints={handleUpdateLinePoints}
+              onDeleteLine={handleDeleteLine}
               onGroupMove={handleGroupMove}
               onDeleteMany={handleDeleteMany}
               transitionMs={transitionMs}
@@ -951,8 +1039,14 @@ export default function Strategy() {
                 Drag players from the bench onto the field. Drag a player off the field to bench them.
                 Add opponent markers or text boxes and drag them off the field to remove them. Toggle
                 Draw arrow (or hold A) and drag on the field — or starting from a player — to add running
-                or thrown-pass arrows. Use the numbered steps to build a sequence; Prev/Next slides
-                everyone into place.
+                or thrown-pass arrows. Toggle Highlight and drag (Freehand) to trace a filled zone (a
+                lane, a cone, an area to attack), or switch to Straight and tap out corners for
+                perfectly straight edges — Enter or the checkmark finishes it, Escape cancels. Pencil and
+                Straight Line work the same way but draw a plain unfilled line instead of a filled zone.
+                Click a shape, then its pencil icon to recolor or the trash icon (or Delete) to remove
+                it; a straight-drawn zone or line also shows a small handle on each corner you can drag
+                to reshape it. Use the numbered steps to build a sequence; Prev/Next slides everyone into
+                place.
               </p>
             )}
           </div>
