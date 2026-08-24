@@ -135,7 +135,7 @@ function seasonLabel(s: { name: string; year: number; organizer: string | null }
 
 type PageTab = 'overview' | 'table' | 'standings'
 
-type StandingsSortKey = 'rank' | 'team' | 'games_played' | 'wins' | 'point_diff' | 'points'
+type StandingsSortKey = 'rank' | 'team' | 'games_played' | 'wins' | 'points_for' | 'points_against' | 'point_diff' | 'points'
 
 // Shared sortable-header button for the League Standings table: shows a
 // sort-direction chevron only on the active column, an inert double-chevron
@@ -1084,6 +1084,8 @@ function Standings() {
         : standingsSortKey === 'rank' ? a.rank - b.rank
         : standingsSortKey === 'games_played' ? a.games_played - b.games_played
         : standingsSortKey === 'wins' ? a.wins - b.wins
+        : standingsSortKey === 'points_for' ? a.points_for - b.points_for
+        : standingsSortKey === 'points_against' ? a.points_against - b.points_against
         : standingsSortKey === 'point_diff' ? a.point_diff - b.point_diff
         : a.points - b.points
       return standingsSortDir === 'asc' ? cmp : -cmp
@@ -1380,6 +1382,12 @@ function Standings() {
                         <StandingsSortHeader label="W-L-T" sortKey="wins" activeKey={standingsSortKey} dir={standingsSortDir} onClick={handleStandingsSortClick} align="center" />
                       </th>
                       <th className="text-center font-medium py-2.5 px-2">
+                        <StandingsSortHeader label="GF" sortKey="points_for" activeKey={standingsSortKey} dir={standingsSortDir} onClick={handleStandingsSortClick} align="center" />
+                      </th>
+                      <th className="text-center font-medium py-2.5 px-2">
+                        <StandingsSortHeader label="GA" sortKey="points_against" activeKey={standingsSortKey} dir={standingsSortDir} onClick={handleStandingsSortClick} align="center" />
+                      </th>
+                      <th className="text-center font-medium py-2.5 px-2">
                         <StandingsSortHeader label="+/-" sortKey="point_diff" activeKey={standingsSortKey} dir={standingsSortDir} onClick={handleStandingsSortClick} align="center" />
                       </th>
                       <th className="text-center font-medium py-2.5 px-2 pr-4">
@@ -1403,6 +1411,8 @@ function Standings() {
                         </td>
                         <td className="text-center py-2.5 px-2 tabular-nums">{r.games_played}</td>
                         <td className="text-center py-2.5 px-2 tabular-nums whitespace-nowrap">{r.wins}-{r.losses}-{r.ties}</td>
+                        <td className="text-center py-2.5 px-2 tabular-nums">{r.points_for}</td>
+                        <td className="text-center py-2.5 px-2 tabular-nums">{r.points_against}</td>
                         <td className={`text-center py-2.5 px-2 tabular-nums ${r.point_diff > 0 ? 'text-green-600 dark:text-green-400' : r.point_diff < 0 ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground'}`}>
                           {r.point_diff > 0 ? `+${r.point_diff}` : r.point_diff}
                         </td>
