@@ -2124,11 +2124,25 @@ export default function Schedule() {
   }
 
   const renderGameCard = (game: Game, index: number, isPlayed: boolean) => {
-    const displayResult = game.outcome_override ?? game.result
+    // our_score/their_score are derived live from game_events (see
+    // useGetGames), but games.result is a stored column no write path ever
+    // populates, so it reads as null for every normally-scored game — an
+    // outcome_override beats the score the same way Standings treats it,
+    // but otherwise the live score itself is the source of truth, not
+    // game.result.
+    const displayResult = game.outcome_override
+    const outcome: 'win' | 'loss' | 'tie' | null = !isPlayed ? null
+      : displayResult ? (displayResult.startsWith('Win') || displayResult === 'Default Win' ? 'win' : displayResult === 'Tie' ? 'tie' : 'loss')
+      : game.our_score > game.their_score ? 'win' : game.our_score < game.their_score ? 'loss' : 'tie'
     // Redundant once a single season is already the active filter; only earns
     // its place in the meta line when the list is mixing seasons together.
     const showSeasonLabel = game.season_id && scheduleSeasonIds.length !== 1
     const badge = dateBadgeParts(game.game_date)
+    const scoreColorClass = outcome === 'win' ? 'text-green-600 dark:text-green-400'
+      : outcome === 'loss' ? 'text-red-600 dark:text-red-400'
+      : outcome === 'tie' ? 'text-yellow-600 dark:text-yellow-400'
+      : 'text-primary'
+    const outcomeLabel = outcome === 'win' ? 'Win' : outcome === 'loss' ? 'Loss' : outcome === 'tie' ? 'Tie' : null
     return (
       <FadeIn key={game.id} delay={index * 40}>
         <Card
@@ -2173,13 +2187,13 @@ export default function Schedule() {
                 {isPlayed ? (
                   <div className="text-right">
                     <div className="text-2xl font-bold leading-none">
-                      <span className="text-primary">{game.our_score}</span>
+                      <span className={scoreColorClass}>{game.our_score}</span>
                       <span className="text-muted-foreground mx-1">-</span>
                       <span className="text-muted-foreground">{game.their_score}</span>
                     </div>
-                    {displayResult && (
-                      <div className={`text-xs font-medium mt-1 ${displayResult.startsWith('Win') || displayResult === 'Default Win' ? 'text-green-600 dark:text-green-400' : displayResult === 'Tie' ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-600 dark:text-red-400'}`}>
-                        {displayResult}
+                    {outcomeLabel && (
+                      <div className={`text-xs font-medium mt-1 ${scoreColorClass}`}>
+                        {game.outcome_override || outcomeLabel}
                         {game.outcome_override && <span className="text-[10px] opacity-60 ml-0.5">*</span>}
                       </div>
                     )}
@@ -2522,6 +2536,8 @@ export default function Schedule() {
                             ? 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-200'
                             : g.result?.startsWith('Loss') || g.outcome_override === 'Loss' || g.outcome_override === 'Default Loss'
                             ? 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200'
+                            : g.result === 'Tie' || g.outcome_override === 'Tie'
+                            ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-950 dark:text-yellow-200'
                             : 'bg-primary/10 text-primary'
                         }`}>
                         vs {g.opponent}

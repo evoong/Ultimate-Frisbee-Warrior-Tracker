@@ -4,7 +4,7 @@ import { useGetGames } from '../hooks/backend/games'
 import { useGetPlayers } from '../hooks/backend/players'
 import { useGetPlayerStats, useGetSeasons, useGetCumulativeStats, useGetAllSeasons } from '../hooks/backend/stats'
 import {
-  useGetLeague, computeStandings,
+  useGetLeague, useGetOpponentHistory, computeStandings,
   useCreateLeagueTeam, useUpdateLeagueTeam, useDeleteLeagueTeam, useUpdateSeasonPoints,
   type LeagueTeam,
 } from '../hooks/backend/league'
@@ -23,7 +23,7 @@ import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
 import {
   BarChart3, TrendingUp, LineChart as LineChartIcon, Settings2, ChevronUp, ChevronDown,
-  ChevronsUpDown, Plus, Trash2, Award, Target, Pencil, Check, X,
+  ChevronsUpDown, ChevronLeft, Plus, Trash2, Award, Target, Pencil, Check, X,
 } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -1014,10 +1014,17 @@ function Standings() {
 
   const [selectedSeasonId, setSelectedSeasonId] = useState<number | undefined>(undefined)
 
-  // Team detail dialog
+  // Team detail page: all-time history (every season, not just the one
+  // currently selected in the filter above) for whichever team row was
+  // clicked in the standings table.
   const [detailTeam, setDetailTeam] = useState<LeagueTeam | null>(null)
   const [notesValue, setNotesValue] = useState('')
   const [editingNotes, setEditingNotes] = useState(false)
+  const { data: oppHistory, loading: oppHistoryLoading, trigger: fetchOppHistory } = useGetOpponentHistory()
+
+  useEffect(() => {
+    if (detailTeam && currentOrgId != null) fetchOppHistory({ organizationId: currentOrgId, name: detailTeam.name })
+  }, [detailTeam, currentOrgId])
 
   // Manage league dialog (teams + points config)
   const [manageOpen, setManageOpen] = useState(false)
@@ -1107,11 +1114,6 @@ function Standings() {
     return map
   }, [league])
 
-  const teamName = (id: number | null) => {
-    if (id == null) return 'TBD'
-    return league?.teams.find(t => t.id === id)?.name ?? 'TBD'
-  }
-
   const handleAddTeam = async () => {
     if (!newTeamName.trim() || selectedSeasonId == null || currentOrgId == null) return
     await createTeam({ seasonId: selectedSeasonId, name: newTeamName, organizationId: currentOrgId })
@@ -1149,31 +1151,6 @@ function Standings() {
     refresh()
   }
 
-  // Head-to-head and season results for the team detail dialog.
-  const detailGames = useMemo(() => {
-    if (!detailTeam || !league) return []
-    return league.games
-      .filter(g => g.eff_home_team_id === detailTeam.id || g.eff_away_team_id === detailTeam.id)
-      .sort((a, b) => (a.game_date ?? '9999').localeCompare(b.game_date ?? '9999'))
-  }, [detailTeam, league])
-
-  const h2h = useMemo(() => {
-    if (!detailTeam || !usTeam || detailTeam.id === usTeam.id) return null
-    const record = { w: 0, l: 0, t: 0 }
-    for (const g of detailGames) {
-      if (!g.is_final || g.eff_home_score == null || g.eff_away_score == null) continue
-      const usHome = g.eff_home_team_id === usTeam.id
-      const usAway = g.eff_away_team_id === usTeam.id
-      if (!usHome && !usAway) continue
-      const our = usHome ? g.eff_home_score : g.eff_away_score
-      const their = usHome ? g.eff_away_score : g.eff_home_score
-      if (our > their) record.w++
-      else if (our < their) record.l++
-      else record.t++
-    }
-    return record
-  }, [detailTeam, detailGames, usTeam])
-
   const formDot = (o: 'W' | 'L' | 'T', i: number) => (
     <span
       key={i}
@@ -1185,6 +1162,163 @@ function Standings() {
 
   const seasons = (allSeasons as Season[] | undefined) ?? []
   const loading = leagueLoading || league == null
+
+  // ── Opponent detail page ────────────────────────────────────────────────
+  // Full history for one opponent name across every season it's appeared
+  // in, not just the season currently selected by the filter above.
+  if (detailTeam) {
+    const oppTeams = oppHistory?.teams ?? []
+    const oppGames = oppHistory?.games ?? []
+    const usTeamsBySeasonId = oppHistory?.usTeamsBySeasonId ?? new Map<number, { id: number; name: string }>()
+    const teamNamesById = oppHistory?.teamNamesById ?? new Map<number, string>()
+    const nameForTeamId = (id: number | null) => (id == null ? 'TBD' : teamNamesById.get(id) ?? 'TBD')
+
+    let allTimeH2h: { w: number; l: number; t: number } | null = null
+    if (!detailTeam.is_us) {
+      const record = { w: 0, l: 0, t: 0 }
+      for (const g of oppGames) {
+        if (!g.is_final || g.eff_home_score == null || g.eff_away_score == null) continue
+        const us = usTeamsBySeasonId.get(g.season_id)
+        if (!us) continue
+        const weAreHome = g.eff_home_team_id === us.id
+        const ourScore = weAreHome ? g.eff_home_score : g.eff_away_score
+        const theirScore = weAreHome ? g.eff_away_score : g.eff_home_score
+        if (ourScore > theirScore) record.w++
+        else if (ourScore < theirScore) record.l++
+        else record.t++
+      }
+      allTimeH2h = record
+    }
+
+    const detailSeason = oppTeams.find(t => t.id === detailTeam.id)
+
+    return (
+      <div className="space-y-4">
+        <button
+          onClick={() => { setDetailTeam(null); setEditingNotes(false) }}
+          className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ChevronLeft className="w-5 h-5" />
+          <span className="text-sm font-medium">Back to Standings</span>
+        </button>
+
+        <div className="flex items-center gap-2">
+          <h2 className="text-xl font-bold text-foreground">{detailTeam.name}</h2>
+          {detailTeam.is_us && <span className="text-xs font-normal text-primary">Us</span>}
+        </div>
+
+        {oppHistoryLoading && !oppHistory ? (
+          <p className="text-sm text-muted-foreground">Loading...</p>
+        ) : (
+          <>
+            {allTimeH2h && (
+              <Card className="bg-card text-card-foreground border-border">
+                <CardContent className="p-4 text-center">
+                  <p className="text-xs text-muted-foreground mb-1">All-time head-to-head vs us</p>
+                  <p className="text-lg font-bold tabular-nums">
+                    <span className="text-green-600 dark:text-green-400">{allTimeH2h.w}W</span>
+                    <span className="mx-2 text-red-600 dark:text-red-400">{allTimeH2h.l}L</span>
+                    <span className="text-yellow-600 dark:text-yellow-400">{allTimeH2h.t}T</span>
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
+            <Card className="bg-card text-card-foreground border-border">
+              <CardHeader><CardTitle className="text-base">Seasons Played</CardTitle></CardHeader>
+              <CardContent>
+                {oppTeams.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No seasons yet.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {oppTeams.map(t => (
+                      <span key={t.id} className="text-xs font-medium px-2 py-1 rounded-full bg-accent text-foreground">
+                        {seasonLabel({ name: t.season_name, year: t.season_year, organizer: t.season_organizer })}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card text-card-foreground border-border">
+              <CardHeader><CardTitle className="text-base">All Games</CardTitle></CardHeader>
+              <CardContent>
+                {oppGames.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No games yet.</p>
+                ) : (
+                  <div className="divide-y divide-border">
+                    {oppGames.map(g => {
+                      const thisTeamId = oppTeams.find(t => t.season_id === g.season_id)?.id ?? null
+                      const isThisTeamHome = g.eff_home_team_id === thisTeamId
+                      const otherName = nameForTeamId(isThisTeamHome ? g.eff_away_team_id : g.eff_home_team_id)
+                      const mine = isThisTeamHome ? g.eff_home_score : g.eff_away_score
+                      const theirs = isThisTeamHome ? g.eff_away_score : g.eff_home_score
+                      const decided = g.is_final && mine != null && theirs != null
+                      const season = oppTeams.find(t => t.season_id === g.season_id)
+                      return (
+                        <div key={g.id} className="flex items-center justify-between text-sm py-2 gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate">vs {otherName}</p>
+                            <p className="text-xs text-muted-foreground truncate">
+                              {season ? seasonLabel({ name: season.season_name, year: season.season_year, organizer: season.season_organizer }) : ''}
+                              {' · '}{g.game_date ?? 'TBD'}
+                            </p>
+                          </div>
+                          {decided ? (
+                            <span className={`tabular-nums font-semibold shrink-0 ${mine! > theirs! ? 'text-green-600 dark:text-green-400' : mine! < theirs! ? 'text-red-600 dark:text-red-400' : 'text-yellow-600 dark:text-yellow-400'}`}>
+                              {mine}-{theirs}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground shrink-0">Upcoming</span>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {!detailTeam.is_us && (
+              <Card className="bg-card text-card-foreground border-border">
+                <CardHeader className="flex flex-row items-center justify-between">
+                  <CardTitle className="text-base">
+                    Notes
+                    {detailSeason && <span className="text-xs font-normal text-muted-foreground ml-2">({seasonLabel({ name: detailSeason.season_name, year: detailSeason.season_year, organizer: detailSeason.season_organizer })})</span>}
+                  </CardTitle>
+                  {allowed && !editingNotes && (
+                    <button onClick={() => setEditingNotes(true)} className="text-xs text-primary hover:underline">Edit</button>
+                  )}
+                </CardHeader>
+                <CardContent>
+                  {editingNotes ? (
+                    <div className="space-y-2">
+                      <textarea
+                        value={notesValue}
+                        onChange={e => setNotesValue(e.target.value)}
+                        rows={4}
+                        className="w-full rounded-md border border-border bg-background text-foreground text-sm p-2"
+                        placeholder="Scouting notes: their zone looks beatable deep..."
+                      />
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={handleSaveNotes}>Save</Button>
+                        <Button size="sm" variant="ghost" onClick={() => { setEditingNotes(false); setNotesValue(detailTeam.notes ?? '') }}>Cancel</Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                      {detailTeam.notes || 'No notes yet.'}
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+          </>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-4">
@@ -1282,84 +1416,6 @@ function Standings() {
           </Card>
         </FadeIn>
       )}
-
-      {/* Team detail: head-to-head, results, scouting notes */}
-      <Dialog open={detailTeam != null} onOpenChange={open => { if (!open) setDetailTeam(null) }}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              {detailTeam?.name}
-              {detailTeam?.is_us && <span className="text-xs font-normal text-primary ml-2">Us</span>}
-            </DialogTitle>
-          </DialogHeader>
-          {detailTeam && (
-            <div className="space-y-4">
-              {h2h && (
-                <div className="rounded-lg bg-accent p-3 text-center">
-                  <p className="text-xs text-muted-foreground mb-1">Head to head vs us</p>
-                  <p className="text-lg font-bold tabular-nums">
-                    <span className="text-green-600 dark:text-green-400">{h2h.w}W</span>
-                    <span className="mx-2 text-red-600 dark:text-red-400">{h2h.l}L</span>
-                    <span className="text-yellow-600 dark:text-yellow-400">{h2h.t}T</span>
-                  </p>
-                </div>
-              )}
-              <div className="space-y-1 max-h-48 overflow-y-auto">
-                <p className="text-xs font-semibold text-muted-foreground">Season results</p>
-                {detailGames.length === 0 && <p className="text-sm text-muted-foreground">No games yet.</p>}
-                {detailGames.map(g => {
-                  const isHome = g.eff_home_team_id === detailTeam.id
-                  const oppName = teamName(isHome ? g.eff_away_team_id : g.eff_home_team_id)
-                  const mine = isHome ? g.eff_home_score : g.eff_away_score
-                  const theirs = isHome ? g.eff_away_score : g.eff_home_score
-                  const decided = g.is_final && mine != null && theirs != null
-                  return (
-                    <div key={g.id} className="flex items-center justify-between text-sm py-1">
-                      <span className="truncate">vs {oppName}</span>
-                      {decided ? (
-                        <span className={`tabular-nums font-semibold ${mine! > theirs! ? 'text-green-600 dark:text-green-400' : mine! < theirs! ? 'text-red-600 dark:text-red-400' : 'text-yellow-600 dark:text-yellow-400'}`}>
-                          {mine}-{theirs}
-                        </span>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">{g.game_date ?? 'TBD'}</span>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-              {!detailTeam.is_us && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs font-semibold text-muted-foreground">Notes</p>
-                    {allowed && !editingNotes && (
-                      <button onClick={() => setEditingNotes(true)} className="text-xs text-primary hover:underline">Edit</button>
-                    )}
-                  </div>
-                  {editingNotes ? (
-                    <div className="space-y-2">
-                      <textarea
-                        value={notesValue}
-                        onChange={e => setNotesValue(e.target.value)}
-                        rows={3}
-                        className="w-full rounded-md border border-border bg-background text-foreground text-sm p-2"
-                        placeholder="Scouting notes: their zone looks beatable deep..."
-                      />
-                      <div className="flex gap-2">
-                        <Button size="sm" onClick={handleSaveNotes}>Save</Button>
-                        <Button size="sm" variant="ghost" onClick={() => { setEditingNotes(false); setNotesValue(detailTeam.notes ?? '') }}>Cancel</Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-                      {detailTeam.notes || 'No notes yet.'}
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
 
       {/* Manage league: teams and points config */}
       <Dialog open={manageOpen} onOpenChange={setManageOpen}>
