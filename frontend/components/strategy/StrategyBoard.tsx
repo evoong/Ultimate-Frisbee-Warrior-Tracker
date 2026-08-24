@@ -422,6 +422,36 @@ export default function StrategyBoard({
   // toggle mid-shape, abandons any straight-line draft rather than leaving
   // it invisibly pending.
   useEffect(() => { cancelStraightDraftRef.current() }, [mode, highlightStraight])
+  // Dragging an already-placed draft vertex (rather than tapping to add
+  // yet another one) repositions it in place. Purely local state — the
+  // draft isn't a real row yet, so there's nothing to persist until Finish.
+  const draftPointDragTeardownRef = useRef<() => void>(() => {})
+  useEffect(() => () => draftPointDragTeardownRef.current(), [])
+  const beginStraightDraftPointDrag = (index: number, pointerId: number) => {
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return
+      const rect = fieldRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const { x, y } = toCanonical((ev.clientX - rect.left) / rect.width, (ev.clientY - rect.top) / rect.height, isDesktop)
+      setStraightDraft(prev => {
+        if (!prev) return prev
+        const next = prev.map((p, i) => (i === index ? { x, y } : p))
+        straightDraftRef.current = next
+        return next
+      })
+    }
+    const onUp = (ev: PointerEvent) => { if (ev.pointerId === pointerId) teardown() }
+    const teardown = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      draftPointDragTeardownRef.current = () => {}
+    }
+    draftPointDragTeardownRef.current = teardown
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+  }
 
   // ── Line drawing (Pencil / Straight Line) ───────────────────────────────
   // Same freehand-trace-or-tap-corners mechanics as the Highlight zone
@@ -472,6 +502,33 @@ export default function StrategyBoard({
   // tool mid-shape, abandons any straight-line draft rather than leaving
   // it invisibly pending.
   useEffect(() => { cancelStraightLineDraftRef.current() }, [mode, lineStraight])
+  // Same "drag an already-placed draft vertex instead of adding another"
+  // behavior as beginStraightDraftPointDrag above, for the line draft.
+  const beginStraightLineDraftPointDrag = (index: number, pointerId: number) => {
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return
+      const rect = fieldRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const { x, y } = toCanonical((ev.clientX - rect.left) / rect.width, (ev.clientY - rect.top) / rect.height, isDesktop)
+      setStraightLineDraft(prev => {
+        if (!prev) return prev
+        const next = prev.map((p, i) => (i === index ? { x, y } : p))
+        straightLineDraftRef.current = next
+        return next
+      })
+    }
+    const onUp = (ev: PointerEvent) => { if (ev.pointerId === pointerId) teardown() }
+    const teardown = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      draftPointDragTeardownRef.current = () => {}
+    }
+    draftPointDragTeardownRef.current = teardown
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+  }
 
   // ── Straight-corner point dragging ──────────────────────────────────────
   // Shared by highlights and lines: a straight-drawn shape's corners are
@@ -1382,10 +1439,28 @@ export default function StrategyBoard({
                 />
               )}
               {/* Each placed vertex as a small dot, so it's clear where the
-                  next straight segment will start from. */}
+                  next straight segment will start from — and, via the
+                  larger invisible circle beneath it, draggable in place
+                  instead of only addable-to, so fixing an earlier tap
+                  doesn't mean canceling and starting over. */}
               {straightDraft.map((p, i) => {
                 const v = toViewBox(p.x, p.y)
-                return <circle key={i} cx={v.vx} cy={v.vy} r={0.55} fill={highlightColor} stroke="#fff" strokeWidth={0.15} />
+                return (
+                  <g key={i}>
+                    <circle
+                      cx={v.vx}
+                      cy={v.vy}
+                      r={2}
+                      fill="transparent"
+                      style={{ pointerEvents: 'all', cursor: 'grab' }}
+                      onPointerDown={e => {
+                        e.stopPropagation()
+                        beginStraightDraftPointDrag(i, e.pointerId)
+                      }}
+                    />
+                    <circle cx={v.vx} cy={v.vy} r={0.55} fill={highlightColor} stroke="#fff" strokeWidth={0.15} style={{ pointerEvents: 'none' }} />
+                  </g>
+                )
               })}
             </>
           )}
@@ -1532,7 +1607,22 @@ export default function StrategyBoard({
               )}
               {straightLineDraft.map((p, i) => {
                 const v = toViewBox(p.x, p.y)
-                return <circle key={i} cx={v.vx} cy={v.vy} r={0.55} fill={lineColor} stroke="#fff" strokeWidth={0.15} />
+                return (
+                  <g key={i}>
+                    <circle
+                      cx={v.vx}
+                      cy={v.vy}
+                      r={2}
+                      fill="transparent"
+                      style={{ pointerEvents: 'all', cursor: 'grab' }}
+                      onPointerDown={e => {
+                        e.stopPropagation()
+                        beginStraightLineDraftPointDrag(i, e.pointerId)
+                      }}
+                    />
+                    <circle cx={v.vx} cy={v.vy} r={0.55} fill={lineColor} stroke="#fff" strokeWidth={0.15} style={{ pointerEvents: 'none' }} />
+                  </g>
+                )
               })}
             </>
           )}
