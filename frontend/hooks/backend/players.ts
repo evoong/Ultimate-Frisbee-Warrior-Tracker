@@ -9,6 +9,31 @@ type HookResult<T, P = void> = {
   trigger: P extends void ? () => Promise<T | undefined> : (params?: P) => Promise<T | undefined>
 }
 
+// A player can be placed into a lineup name that has no game_lineup_groups
+// row yet — e.g. the Events tab's Scorer/Assister quick-pick falls back to
+// defaultLineupName ('Lineup 1' or similar) when the game has no groups at
+// all set up yet (see Schedule.tsx). Without ensuring the group row exists
+// first, the resulting game_lineups entry is an orphan with no group to
+// render it in: the Lineups tab shows neither the player nor any "start a
+// lineup" affordance (its empty-state guard is "zero entries", and this
+// game already has one). ignoreDuplicates so this is a no-op once the
+// group already exists; sort_order only matters the first time it's
+// created, so an existing-groups count race is harmless.
+async function ensureLineupGroupExists(organizationId: number | null, gameId: number, lineupName: string) {
+  const { count, error: countError } = await supabase
+    .from('game_lineup_groups')
+    .select('id', { count: 'exact', head: true })
+    .eq('game_id', gameId)
+  if (countError) throw new Error(countError.message)
+  const { error } = await supabase
+    .from('game_lineup_groups')
+    .upsert(
+      { organization_id: organizationId, game_id: gameId, lineup_name: lineupName, sort_order: count ?? 0 },
+      { onConflict: 'game_id,lineup_name', ignoreDuplicates: true },
+    )
+  if (error) throw new Error(error.message)
+}
+
 function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P> {
   const [data, setData] = useState<T | undefined>(undefined)
   const [loading, setLoading] = useState(false)
@@ -191,9 +216,12 @@ export function useCreatePlayerForGame() {
     const playerId = playerData?.[0]?.id
     if (!playerId) throw new Error('Failed to create player')
 
+    const lineupName = params.lineupName ?? 'Starting'
+    await ensureLineupGroupExists(params.organizationId, params.gameId, lineupName)
+
     const { data, error } = await supabase
       .from('game_lineups')
-      .insert({ organization_id: params.organizationId, game_id: params.gameId, player_id: playerId, lineup_name: params.lineupName ?? 'Starting' })
+      .insert({ organization_id: params.organizationId, game_id: params.gameId, player_id: playerId, lineup_name: lineupName })
       .select()
     if (error) throw new Error(error.message)
 
@@ -234,9 +262,12 @@ export function useDeleteSubPlayer() {
 
 export function useAddPlayerToGame() {
   const fn = useCallback(async (params: { organizationId: number | null; gameId: number; playerId: number; seasonId?: number | null; lineupName?: string }) => {
+    const lineupName = params.lineupName ?? 'Starting'
+    await ensureLineupGroupExists(params.organizationId, params.gameId, lineupName)
+
     const { data, error } = await supabase
       .from('game_lineups')
-      .insert({ organization_id: params.organizationId, game_id: params.gameId, player_id: params.playerId, lineup_name: params.lineupName ?? 'Starting' })
+      .insert({ organization_id: params.organizationId, game_id: params.gameId, player_id: params.playerId, lineup_name: lineupName })
       .select()
     if (error) throw new Error(error.message)
 
