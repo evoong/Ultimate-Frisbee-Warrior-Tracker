@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import Schedule from './pages/Schedule'
 import Roster from './pages/Roster'
 import Stats from './pages/Stats'
@@ -9,7 +10,7 @@ import ResetPassword from './pages/ResetPassword'
 import CreateOrganization from './pages/CreateOrganization'
 import { useAuth } from './contexts/AuthContext'
 import { Moon, Sun, Loader2, LogOut, KeyRound, Settings } from 'lucide-react'
-import { NAV_ITEMS, type Tab } from './lib/nav'
+import { NAV_ITEMS, tabForPath, pathForTab, type Tab } from './lib/nav'
 import { useMediaQuery } from './lib/shadcn/use-media-query'
 import { SidebarProvider, SidebarInset, SidebarTrigger } from './lib/shadcn/sidebar'
 import AppSidebar from './components/AppSidebar'
@@ -26,7 +27,14 @@ function getInitialTheme(): 'light' | 'dark' {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('schedule')
+  const location = useLocation()
+  const navigate = useNavigate()
+  // The active tab is derived from the URL (not its own state) so the
+  // browser's back/forward buttons, a reload, or a bookmarked/shared link
+  // all land on the right page. Switching tabs pushes a real history entry
+  // via navigate() instead of just re-rendering in place.
+  const activeTab = tabForPath(location.pathname)
+  const setActiveTab = (tab: Tab) => navigate(pathForTab(tab))
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme)
   const [passkeysOpen, setPasskeysOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -39,6 +47,15 @@ export default function App() {
     else root.classList.remove('dark')
     localStorage.setItem(THEME_KEY, theme)
   }, [theme])
+
+  // Root path (and anything unrecognized, e.g. a stale/typo'd URL) redirects
+  // to the default tab rather than silently rendering Schedule at a URL
+  // that doesn't say so.
+  useEffect(() => {
+    if (location.pathname === '/reset-password') return
+    const known = NAV_ITEMS.some(item => item.path === location.pathname)
+    if (!known) navigate(pathForTab('schedule'), { replace: true })
+  }, [location.pathname])
 
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
 
