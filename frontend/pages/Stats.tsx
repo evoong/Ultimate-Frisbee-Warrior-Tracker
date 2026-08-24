@@ -1084,7 +1084,8 @@ function Standings() {
     return arr
   }, [standings, standingsSortKey, standingsSortDir])
 
-  // Last-5 form guide per team, oldest to newest, from decided regular games.
+  // Form guide per team, oldest to newest, from every decided regular
+  // game this season (not capped: one dot per game played).
   const formByTeam = useMemo(() => {
     const map = new Map<number, ('W' | 'L' | 'T')[]>()
     if (!league) return map
@@ -1103,7 +1104,6 @@ function Standings() {
         map.set(teamId, arr)
       }
     }
-    map.forEach((arr, id) => map.set(id, arr.slice(-5)))
     return map
   }, [league])
 
@@ -1265,7 +1265,7 @@ function Standings() {
                         <td className={`py-2.5 pl-4 pr-2 tabular-nums ${r.team.is_us ? 'font-bold text-primary' : 'text-muted-foreground'}`}>{r.rank}</td>
                         <td className="py-2.5 px-2">
                           <div className={`truncate max-w-[9rem] ${r.team.is_us ? 'font-bold' : 'font-medium'}`}>{r.team.name}</div>
-                          <div className="flex gap-1 mt-1">{(formByTeam.get(r.team.id) ?? []).map(formDot)}</div>
+                          <div className="flex flex-wrap gap-1 mt-1 max-w-[9rem]">{(formByTeam.get(r.team.id) ?? []).map(formDot)}</div>
                         </td>
                         <td className="text-center py-2.5 px-2 tabular-nums">{r.games_played}</td>
                         <td className="text-center py-2.5 px-2 tabular-nums whitespace-nowrap">{r.wins}-{r.losses}-{r.ties}</td>

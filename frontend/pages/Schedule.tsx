@@ -1229,7 +1229,11 @@ export default function Schedule() {
         if (e.player_id && sn) { ensurePlayer(e.player_id, sn); playerMap[e.player_id]!.turnovers++ }
       }
     })
-    const playerStats = Object.values(playerMap).sort((a, b) => b.goals - a.goals || b.assists - a.assists)
+    // Same ranking as the Stats page's Player Rankings: goals+assists desc,
+    // ties broken by goals desc (see useGetPlayerStats in stats.ts).
+    const playerStats = Object.values(playerMap).sort((a, b) =>
+      (b.goals + b.assists) - (a.goals + a.assists) || b.goals - a.goals
+    )
     const lineupEntries = (lineups as LineupEntry[] | undefined) ?? []
     const lineupByGroup = lineupEntries.reduce((acc, e) => {
       if (!acc[e.lineup_name]) acc[e.lineup_name] = []
@@ -1982,6 +1986,7 @@ export default function Schedule() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-xs text-muted-foreground font-medium">
+                      <th className="w-8 text-center font-medium pb-2">#</th>
                       <th className="text-left font-medium px-3 pb-2">Player</th>
                       <th className="w-10 text-center font-medium text-green-600 dark:text-green-400 pb-2">G</th>
                       <th className="w-10 text-center font-medium text-blue-600 dark:text-blue-400 pb-2">A</th>
@@ -1989,8 +1994,9 @@ export default function Schedule() {
                     </tr>
                   </thead>
                   <tbody>
-                    {playerStats.map(p => (
+                    {playerStats.map((p, i) => (
                       <tr key={p.name} className="border-t border-border">
+                        <td className="w-8 text-center tabular-nums text-muted-foreground">{i + 1}</td>
                         <td className="px-3 py-2 font-medium text-foreground">{p.name}</td>
                         <td className="w-10 text-center font-bold text-green-600 dark:text-green-400">{p.goals}</td>
                         <td className="w-10 text-center font-bold text-blue-600 dark:text-blue-400">{p.assists}</td>
