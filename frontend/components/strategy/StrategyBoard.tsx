@@ -412,6 +412,10 @@ export default function StrategyBoard({
     if (pts && pts.length >= MIN_HIGHLIGHT_POINTS) onCreateHighlight(pts, highlightColor, true)
     straightDraftRef.current = null
     setStraightDraft(null)
+    // Clicking Finish is a deliberate "I'm done with this shape" action,
+    // so it disarms the tool afterward rather than leaving it primed to
+    // immediately start tapping out another one.
+    setMode('move')
   }
   const cancelStraightDraftRef = useRef<() => void>(() => {})
   cancelStraightDraftRef.current = () => {
@@ -492,6 +496,8 @@ export default function StrategyBoard({
     if (pts && pts.length >= MIN_LINE_POINTS) onCreateLine(pts, lineColor, true)
     straightLineDraftRef.current = null
     setStraightLineDraft(null)
+    // Same "Finish disarms the tool" behavior as the highlight draft above.
+    setMode('move')
   }
   const cancelStraightLineDraftRef = useRef<() => void>(() => {})
   cancelStraightLineDraftRef.current = () => {
