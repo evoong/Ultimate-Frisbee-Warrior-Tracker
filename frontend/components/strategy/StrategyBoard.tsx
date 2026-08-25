@@ -1246,7 +1246,7 @@ export default function StrategyBoard({
               straight-draft Finish/Cancel) live in the single contextual
               bar below instead of inline here, which is what made this row
               wrap unpredictably before. */}
-          <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
             <div className="flex items-center gap-1.5 flex-wrap">
               <Button
                 type="button"
@@ -1293,8 +1293,11 @@ export default function StrategyBoard({
                 <Slash className="w-3.5 h-3.5 mr-1.5" />Straight Line
               </Button>
             </div>
-            <div className="hidden sm:block w-px h-6 bg-border" />
-            <div className="flex items-center gap-1.5">
+            {/* The divider lives on this group (a left border), not as its
+                own flex child, so the two never separate when the row wraps
+                — a standalone divider div could end up stranded at the end
+                of line one with nothing left to divide. */}
+            <div className="flex items-center gap-1.5 flex-wrap sm:border-l sm:border-border sm:pl-3">
               <Button type="button" size="sm" variant="outline" onClick={onAddOpponent}>
                 <UserPlus className="w-3.5 h-3.5 mr-1.5" />Add Opponent
               </Button>
