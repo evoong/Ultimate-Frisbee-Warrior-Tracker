@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import PlayerAvatar from '../PlayerAvatar'
 import { Button } from '../../lib/shadcn/button'
 import { useMediaQuery } from '../../lib/shadcn/use-media-query'
-import { Pencil, PenLine, Slash, ArrowRight, UserPlus, Type, Trash2, Highlighter, Check, X } from 'lucide-react'
+import { Pencil, PenLine, Slash, ArrowRight, UserPlus, Type, Trash2, Highlighter, Check, X, Lock, LockOpen } from 'lucide-react'
 import type { StrategyArrow, StrategyOpponentMarker, StrategyTextBox, StrategyHighlight, StrategyLine, StrategySelectedItem as SelectedItem, StrategyEntityMove as EntityMove } from '../../hooks/backend/strategy'
 
 // Canonical coordinates are fractions in [0, 1] of a LANDSCAPE field:
@@ -52,6 +52,10 @@ type LineDraft = { points: { x: number; y: number }[]; pointerId: number }
 // dragged, this overrides its rendered points so the shape updates live
 // before the save completes (same idea as liveArrowEdit for arrow handles).
 type PointDragState = { kind: 'highlight' | 'line'; id: number; index: number; pointerId: number; points: { x: number; y: number }[] }
+// Dragging a highlight/line by its body (not one corner handle) translates
+// every point by the same delta, so the whole shape moves as one rigid
+// piece — same idea as PointDragState but for the shape as a whole.
+type ShapeDragState = { kind: 'highlight' | 'line'; id: number; pointerId: number; points: { x: number; y: number }[] }
 
 const DRAG_THRESHOLD_PX = 4
 const MIN_ARROW_LENGTH = 0.02
@@ -142,8 +146,8 @@ export default function StrategyBoard({
   onPlace, onRemove, onAddOpponent, onMoveOpponent, onRemoveOpponent, onRenameOpponent,
   onAddTextBox, onMoveTextBox, onEditTextBox, onUpdateTextBoxStyle, onRemoveTextBox,
   onCreateArrow, onUpdateArrow, onDeleteArrow,
-  onCreateHighlight, onUpdateHighlightColor, onUpdateHighlightPoints, onDeleteHighlight,
-  onCreateLine, onUpdateLineColor, onUpdateLinePoints, onDeleteLine,
+  onCreateHighlight, onUpdateHighlightColor, onUpdateHighlightPoints, onUpdateHighlightLocked, onDeleteHighlight,
+  onCreateLine, onUpdateLineColor, onUpdateLinePoints, onUpdateLineLocked, onDeleteLine,
   onGroupMove, onDeleteMany,
   transitionMs = 700,
 }: {
@@ -172,10 +176,12 @@ export default function StrategyBoard({
   onCreateHighlight: (points: { x: number; y: number }[], color: string, isStraight: boolean) => void
   onUpdateHighlightColor: (id: number, color: string) => void
   onUpdateHighlightPoints: (id: number, points: { x: number; y: number }[]) => void
+  onUpdateHighlightLocked: (id: number, locked: boolean) => void
   onDeleteHighlight: (id: number) => void
   onCreateLine: (points: { x: number; y: number }[], color: string, isStraight: boolean) => void
   onUpdateLineColor: (id: number, color: string) => void
   onUpdateLinePoints: (id: number, points: { x: number; y: number }[]) => void
+  onUpdateLineLocked: (id: number, locked: boolean) => void
   onDeleteLine: (id: number) => void
   onGroupMove: (moves: EntityMove[], phase: 'start' | 'preview' | 'commit' | 'cancel') => void
   onDeleteMany: (items: SelectedItem[]) => void
@@ -584,6 +590,92 @@ export default function StrategyBoard({
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onCancel)
+  }
+
+  // ── Whole-shape dragging ──────────────────────────────────────────────
+  // Dragging a highlight's or line's body (not a corner handle) translates
+  // every point by the same delta, so freehand shapes — which have no
+  // individually-draggable corners — can still be repositioned without
+  // deleting and redrawing, and a straight-drawn one can be moved as a unit
+  // instead of one corner at a time. A release with no real movement is
+  // just a tap: falls through to the existing select/deselect behavior
+  // instead of writing a no-op points update. Locked shapes never reach
+  // this — the caller checks `locked` before invoking it.
+  const [shapeDrag, setShapeDrag] = useState<ShapeDragState | null>(null)
+  const shapeDragTeardownRef = useRef<() => void>(() => {})
+  useEffect(() => () => shapeDragTeardownRef.current(), [])
+  const beginShapeDrag = (kind: 'highlight' | 'line', id: number, initialPoints: { x: number; y: number }[], e: React.PointerEvent) => {
+    const pointerId = e.pointerId
+    const startClientX = e.clientX
+    const startClientY = e.clientY
+    const rect0 = fieldRef.current?.getBoundingClientRect()
+    if (!rect0) return
+    const startCanon = toCanonical((startClientX - rect0.left) / rect0.width, (startClientY - rect0.top) / rect0.height, isDesktop)
+    // Clamp the shared delta (not each point) so the shape stays rigid at
+    // the field edges instead of deforming, same approach as group-move.
+    const xs = initialPoints.map(p => p.x)
+    const ys = initialPoints.map(p => p.y)
+    const minDx = -Math.min(...xs)
+    const maxDx = 1 - Math.max(...xs)
+    const minDy = -Math.min(...ys)
+    const maxDy = 1 - Math.max(...ys)
+    let moved = false
+    const computeTranslated = (dxRaw: number, dyRaw: number) => {
+      const dx = Math.min(maxDx, Math.max(minDx, dxRaw))
+      const dy = Math.min(maxDy, Math.max(minDy, dyRaw))
+      return initialPoints.map(p => ({ x: p.x + dx, y: p.y + dy }))
+    }
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return
+      if (!moved && Math.abs(ev.clientX - startClientX) <= DRAG_THRESHOLD_PX && Math.abs(ev.clientY - startClientY) <= DRAG_THRESHOLD_PX) return
+      moved = true
+      const rect = fieldRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const canon = toCanonical((ev.clientX - rect.left) / rect.width, (ev.clientY - rect.top) / rect.height, isDesktop)
+      setShapeDrag({ kind, id, pointerId, points: computeTranslated(canon.x - startCanon.x, canon.y - startCanon.y) })
+    }
+    const onUp = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return
+      teardown()
+      if (!moved) {
+        setSelected([])
+        if (kind === 'highlight') { setSelectedLineId(null); setSelectedHighlightId(prev => (prev === id ? null : id)) }
+        else { setSelectedHighlightId(null); setSelectedLineId(prev => (prev === id ? null : id)) }
+        setShapeDrag(null)
+        return
+      }
+      const rect = fieldRef.current?.getBoundingClientRect()
+      setShapeDrag(null)
+      if (!rect) return
+      const canon = toCanonical((ev.clientX - rect.left) / rect.width, (ev.clientY - rect.top) / rect.height, isDesktop)
+      const points = computeTranslated(canon.x - startCanon.x, canon.y - startCanon.y)
+      if (kind === 'highlight') onUpdateHighlightPoints(id, points)
+      else onUpdateLinePoints(id, points)
+    }
+    const onCancel = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return
+      teardown()
+      setShapeDrag(null)
+    }
+    const teardown = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+      shapeDragTeardownRef.current = () => {}
+    }
+    shapeDragTeardownRef.current = teardown
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
+  }
+
+  // A shape being dragged (whole-body or one corner) renders at its live
+  // in-progress position instead of the last-saved one; at most one of the
+  // two drags can be active for a given shape at a time.
+  const getEffectivePoints = (kind: 'highlight' | 'line', id: number, stored: { x: number; y: number }[]) => {
+    if (pointDrag && pointDrag.kind === kind && pointDrag.id === id) return pointDrag.points
+    if (shapeDrag && shapeDrag.kind === kind && shapeDrag.id === id) return shapeDrag.points
+    return stored
   }
 
   const drawArmed = allowed && (mode === 'draw' || aArmed)
@@ -1364,7 +1456,7 @@ export default function StrategyBoard({
           style={{ pointerEvents: 'none' }}
         >
           {highlights.map(h => {
-            const effectivePoints = pointDrag && pointDrag.kind === 'highlight' && pointDrag.id === h.id ? pointDrag.points : h.points
+            const effectivePoints = getEffectivePoints('highlight', h.id, h.points)
             const pts = effectivePoints.map(p => toViewBox(p.x, p.y)).map(v => `${v.vx},${v.vy}`).join(' ')
             const isSelected = selectedHighlightId === h.id
             return (
@@ -1377,24 +1469,30 @@ export default function StrategyBoard({
                 strokeOpacity={isSelected ? 0.95 : 0.7}
                 strokeWidth={isSelected ? 0.5 : 0.35}
                 strokeLinejoin="round"
-                style={{ pointerEvents: 'all', cursor: allowed ? 'pointer' : 'default' }}
+                style={{ pointerEvents: 'all', cursor: !allowed ? 'default' : h.locked ? 'pointer' : 'grab' }}
                 onPointerDown={e => {
                   if (!allowed) return
                   e.stopPropagation()
-                  setSelected([])
-                  setSelectedLineId(null)
-                  setSelectedHighlightId(id => (id === h.id ? null : h.id))
+                  if (h.locked) {
+                    setSelected([])
+                    setSelectedLineId(null)
+                    setSelectedHighlightId(id => (id === h.id ? null : h.id))
+                    return
+                  }
+                  beginShapeDrag('highlight', h.id, h.points, e)
                 }}
               />
             )
           })}
           {/* A straight-drawn highlight's corners are individually
               draggable while it's the sole selection — a freehand trace's
-              hundreds of samples are not, so this is gated on is_straight. */}
+              hundreds of samples are not, so this is gated on is_straight.
+              A locked highlight hides these too: locking freezes the whole
+              shape, not just its body. */}
           {allowed && selectedHighlightId !== null && (() => {
             const h = highlights.find(x => x.id === selectedHighlightId)
-            if (!h || !h.is_straight) return null
-            const effectivePoints = pointDrag && pointDrag.kind === 'highlight' && pointDrag.id === h.id ? pointDrag.points : h.points
+            if (!h || !h.is_straight || h.locked) return null
+            const effectivePoints = getEffectivePoints('highlight', h.id, h.points)
             return effectivePoints.map((p, i) => {
               const v = toViewBox(p.x, p.y)
               return (
@@ -1472,15 +1570,17 @@ export default function StrategyBoard({
           )}
         </svg>
 
-        {/* Selected highlight's recolor (pencil) + delete controls. Pencil
-            swaps the pair out for the preset swatches so recoloring reuses
+        {/* Selected highlight's lock/recolor(pencil)/delete controls. Pencil
+            swaps the trio out for the preset swatches so recoloring reuses
             the exact same picker as drawing a new one, without permanently
-            crowding the shape with four dots. */}
+            crowding the shape with four dots. Tracks the shape's live
+            position (getEffectivePoints) so it doesn't lag behind mid-drag. */}
         {allowed && selectedHighlightId !== null && (() => {
           const h = highlights.find(x => x.id === selectedHighlightId)
           if (!h) return null
-          const cx = h.points.reduce((s, p) => s + p.x, 0) / h.points.length
-          const cy = h.points.reduce((s, p) => s + p.y, 0) / h.points.length
+          const effectivePoints = getEffectivePoints('highlight', h.id, h.points)
+          const cx = effectivePoints.reduce((s, p) => s + p.x, 0) / effectivePoints.length
+          const cy = effectivePoints.reduce((s, p) => s + p.y, 0) / effectivePoints.length
           const { left, top } = toRendered(cx, cy, isDesktop)
           return (
             <div
@@ -1503,6 +1603,15 @@ export default function StrategyBoard({
                 </div>
               ) : (
                 <>
+                  <button
+                    type="button"
+                    aria-label={h.locked ? 'Unlock highlight' : 'Lock highlight in place'}
+                    title={h.locked ? 'Unlock (drag to move)' : 'Lock (prevents dragging)'}
+                    className="w-6 h-6 rounded-full bg-background border border-border flex items-center justify-center text-muted-foreground hover:text-foreground shadow"
+                    onClick={() => onUpdateHighlightLocked(h.id, !h.locked)}
+                  >
+                    {h.locked ? <Lock className="w-3 h-3" /> : <LockOpen className="w-3 h-3" />}
+                  </button>
                   <button
                     type="button"
                     aria-label="Change highlight color"
@@ -1535,7 +1644,7 @@ export default function StrategyBoard({
           style={{ pointerEvents: 'none' }}
         >
           {lines.map(l => {
-            const effectivePoints = pointDrag && pointDrag.kind === 'line' && pointDrag.id === l.id ? pointDrag.points : l.points
+            const effectivePoints = getEffectivePoints('line', l.id, l.points)
             const pts = effectivePoints.map(p => toViewBox(p.x, p.y)).map(v => `${v.vx},${v.vy}`).join(' ')
             const isSelected = selectedLineId === l.id
             return (
@@ -1548,23 +1657,28 @@ export default function StrategyBoard({
                 strokeWidth={isSelected ? 0.7 : 0.5}
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                style={{ pointerEvents: 'stroke', cursor: allowed ? 'pointer' : 'default' }}
+                style={{ pointerEvents: 'stroke', cursor: !allowed ? 'default' : l.locked ? 'pointer' : 'grab' }}
                 onPointerDown={e => {
                   if (!allowed) return
                   e.stopPropagation()
-                  setSelected([])
-                  setSelectedHighlightId(null)
-                  setSelectedLineId(id => (id === l.id ? null : l.id))
+                  if (l.locked) {
+                    setSelected([])
+                    setSelectedHighlightId(null)
+                    setSelectedLineId(id => (id === l.id ? null : l.id))
+                    return
+                  }
+                  beginShapeDrag('line', l.id, l.points, e)
                 }}
               />
             )
           })}
           {/* A straight-drawn line's corners are individually draggable
-              while it's the sole selection, same as a straight highlight. */}
+              while it's the sole selection, same as a straight highlight
+              (and, same as there, hidden while locked). */}
           {allowed && selectedLineId !== null && (() => {
             const l = lines.find(x => x.id === selectedLineId)
-            if (!l || !l.is_straight) return null
-            const effectivePoints = pointDrag && pointDrag.kind === 'line' && pointDrag.id === l.id ? pointDrag.points : l.points
+            if (!l || !l.is_straight || l.locked) return null
+            const effectivePoints = getEffectivePoints('line', l.id, l.points)
             return effectivePoints.map((p, i) => {
               const v = toViewBox(p.x, p.y)
               return (
@@ -1634,14 +1748,16 @@ export default function StrategyBoard({
           )}
         </svg>
 
-        {/* Selected line's recolor (pencil) + delete controls: same pattern
-            as the selected highlight's controls above, positioned at the
-            midpoint of the line's points rather than a polygon centroid. */}
+        {/* Selected line's lock/recolor(pencil)/delete controls: same
+            pattern as the selected highlight's controls above, positioned
+            at the midpoint of the line's points rather than a polygon
+            centroid, and tracking its live (possibly mid-drag) points. */}
         {allowed && selectedLineId !== null && (() => {
           const l = lines.find(x => x.id === selectedLineId)
           if (!l) return null
-          const midIdx = Math.floor((l.points.length - 1) / 2)
-          const mid = l.points[midIdx]!
+          const effectivePoints = getEffectivePoints('line', l.id, l.points)
+          const midIdx = Math.floor((effectivePoints.length - 1) / 2)
+          const mid = effectivePoints[midIdx]!
           const { left, top } = toRendered(mid.x, mid.y, isDesktop)
           return (
             <div
@@ -1664,6 +1780,15 @@ export default function StrategyBoard({
                 </div>
               ) : (
                 <>
+                  <button
+                    type="button"
+                    aria-label={l.locked ? 'Unlock line' : 'Lock line in place'}
+                    title={l.locked ? 'Unlock (drag to move)' : 'Lock (prevents dragging)'}
+                    className="w-6 h-6 rounded-full bg-background border border-border flex items-center justify-center text-muted-foreground hover:text-foreground shadow"
+                    onClick={() => onUpdateLineLocked(l.id, !l.locked)}
+                  >
+                    {l.locked ? <Lock className="w-3 h-3" /> : <LockOpen className="w-3 h-3" />}
+                  </button>
                   <button
                     type="button"
                     aria-label="Change line color"

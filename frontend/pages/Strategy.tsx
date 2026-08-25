@@ -76,6 +76,8 @@ type Board = {
   opponents: StrategyOpponentMarker[]
   textBoxes: StrategyTextBox[]
   arrows: StrategyArrow[]
+  highlights: StrategyHighlight[]
+  lines: StrategyLine[]
 }
 
 export default function Strategy() {
@@ -461,59 +463,82 @@ export default function Strategy() {
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
   }
 
-  // Highlighted zones aren't part of the undo/redo Board snapshot below —
-  // draw/recolor/delete/reshape only, no group-move to make undoable yet.
+  // Highlighted zones: draw/recolor/reshape/lock/delete are each their own
+  // undo step, same as arrows above (see the Board type below — highlights
+  // and lines are both part of its snapshot).
   const handleCreateHighlight = async (points: { x: number; y: number }[], color: string, isStraight: boolean) => {
     if (selectedStepId === null) return
+    pushHistory()
     const tempId = -Date.now()
-    setHighlights(prev => [...prev, { id: tempId, points, color, is_straight: isStraight }])
-    const created = await createHighlight({ stepId: selectedStepId, points, color, organizationId: currentOrgId, isStraight })
+    setHighlights(prev => [...prev, { id: tempId, points, color, is_straight: isStraight, locked: false }])
+    const created = await trackCreate(createHighlight({ stepId: selectedStepId, points, color, organizationId: currentOrgId, isStraight }))
     if (created) setHighlights(prev => prev.map(h => (h.id === tempId ? created : h)))
     else loadStepData(selectedStepId)
   }
 
   const handleUpdateHighlightColor = async (id: number, color: string) => {
+    pushHistory()
     setHighlights(prev => prev.map(h => (h.id === id ? { ...h, color } : h)))
     const ok = await updateHighlight({ id, color })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
   }
 
   const handleUpdateHighlightPoints = async (id: number, points: { x: number; y: number }[]) => {
+    pushHistory()
     setHighlights(prev => prev.map(h => (h.id === id ? { ...h, points } : h)))
     const ok = await updateHighlight({ id, points })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
   }
 
+  const handleUpdateHighlightLocked = async (id: number, locked: boolean) => {
+    pushHistory()
+    setHighlights(prev => prev.map(h => (h.id === id ? { ...h, locked } : h)))
+    const ok = await updateHighlight({ id, locked })
+    if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
+  }
+
   const handleDeleteHighlight = async (id: number) => {
+    pushHistory()
     setHighlights(prev => prev.filter(h => h.id !== id))
     const ok = await removeHighlight({ id })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
   }
 
-  // Plain unfilled lines: same optimistic-update/reconcile-on-failure shape
-  // as highlights above.
+  // Plain unfilled lines: same undoable-optimistic-update/reconcile-on-failure
+  // shape as highlights above.
   const handleCreateLine = async (points: { x: number; y: number }[], color: string, isStraight: boolean) => {
     if (selectedStepId === null) return
+    pushHistory()
     const tempId = -Date.now()
-    setLines(prev => [...prev, { id: tempId, points, color, is_straight: isStraight }])
-    const created = await createLine({ stepId: selectedStepId, points, color, organizationId: currentOrgId, isStraight })
+    setLines(prev => [...prev, { id: tempId, points, color, is_straight: isStraight, locked: false }])
+    const created = await trackCreate(createLine({ stepId: selectedStepId, points, color, organizationId: currentOrgId, isStraight }))
     if (created) setLines(prev => prev.map(l => (l.id === tempId ? created : l)))
     else loadStepData(selectedStepId)
   }
 
   const handleUpdateLineColor = async (id: number, color: string) => {
+    pushHistory()
     setLines(prev => prev.map(l => (l.id === id ? { ...l, color } : l)))
     const ok = await updateLine({ id, color })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
   }
 
   const handleUpdateLinePoints = async (id: number, points: { x: number; y: number }[]) => {
+    pushHistory()
     setLines(prev => prev.map(l => (l.id === id ? { ...l, points } : l)))
     const ok = await updateLine({ id, points })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
   }
 
+  const handleUpdateLineLocked = async (id: number, locked: boolean) => {
+    pushHistory()
+    setLines(prev => prev.map(l => (l.id === id ? { ...l, locked } : l)))
+    const ok = await updateLine({ id, locked })
+    if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
+  }
+
   const handleDeleteLine = async (id: number) => {
+    pushHistory()
     setLines(prev => prev.filter(l => l.id !== id))
     const ok = await removeLine({ id })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
@@ -524,13 +549,15 @@ export default function Strategy() {
   // applying (in the handlers above and the batch handlers below); undo/redo
   // restore a snapshot and reconcile the database to match. Scoped to board
   // elements only — step/play/game structural changes are not undoable.
-  const boardRef = useRef<Board>({ positions, opponents, textBoxes, arrows })
-  boardRef.current = { positions, opponents, textBoxes, arrows }
+  const boardRef = useRef<Board>({ positions, opponents, textBoxes, arrows, highlights, lines })
+  boardRef.current = { positions, opponents, textBoxes, arrows, highlights, lines }
   const cloneBoard = (b: Board): Board => ({
     positions: new Map(b.positions),
     opponents: b.opponents.map(o => ({ ...o })),
     textBoxes: b.textBoxes.map(t => ({ ...t })),
     arrows: b.arrows.map(a => ({ ...a })),
+    highlights: b.highlights.map(h => ({ ...h, points: h.points.map(p => ({ ...p })) })),
+    lines: b.lines.map(l => ({ ...l, points: l.points.map(p => ({ ...p })) })),
   })
   const historyRef = useRef<Map<number, { past: Board[]; future: Board[] }>>(new Map())
   // Guards against undo/redo firing while an optimistic insert is still in
@@ -619,6 +646,40 @@ export default function Strategy() {
       }
     }
     for (const a of cur.arrows) if (!targetArrIds.has(a.id)) ops.push(removeArrow({ id: a.id }))
+
+    setHighlights(target.highlights.map(h => ({ ...h, points: h.points.map(p => ({ ...p })) })))
+    const curHi = new Map(cur.highlights.map(h => [h.id, h]))
+    const targetHiIds = new Set(target.highlights.map(h => h.id))
+    for (const h of target.highlights) {
+      const c = curHi.get(h.id)
+      if (!c) {
+        const oldId = h.id
+        ops.push(trackCreate(createHighlight({ stepId, points: h.points, color: h.color, isStraight: h.is_straight, organizationId: currentOrgId })).then(created => {
+          if (created) setHighlights(prev => prev.map(p => (p.id === oldId ? created : p)))
+          return !!created
+        }))
+      } else if (c.color !== h.color || c.locked !== h.locked || JSON.stringify(c.points) !== JSON.stringify(h.points)) {
+        ops.push(updateHighlight({ id: h.id, color: h.color, points: h.points, locked: h.locked }))
+      }
+    }
+    for (const h of cur.highlights) if (!targetHiIds.has(h.id)) ops.push(removeHighlight({ id: h.id }))
+
+    setLines(target.lines.map(l => ({ ...l, points: l.points.map(p => ({ ...p })) })))
+    const curLn = new Map(cur.lines.map(l => [l.id, l]))
+    const targetLnIds = new Set(target.lines.map(l => l.id))
+    for (const l of target.lines) {
+      const c = curLn.get(l.id)
+      if (!c) {
+        const oldId = l.id
+        ops.push(trackCreate(createLine({ stepId, points: l.points, color: l.color, isStraight: l.is_straight, organizationId: currentOrgId })).then(created => {
+          if (created) setLines(prev => prev.map(p => (p.id === oldId ? created : p)))
+          return !!created
+        }))
+      } else if (c.color !== l.color || c.locked !== l.locked || JSON.stringify(c.points) !== JSON.stringify(l.points)) {
+        ops.push(updateLine({ id: l.id, color: l.color, points: l.points, locked: l.locked }))
+      }
+    }
+    for (const l of cur.lines) if (!targetLnIds.has(l.id)) ops.push(removeLine({ id: l.id }))
 
     const results = await Promise.all(ops)
     reconcilingRef.current = false
@@ -1037,10 +1098,12 @@ export default function Strategy() {
               onCreateHighlight={handleCreateHighlight}
               onUpdateHighlightColor={handleUpdateHighlightColor}
               onUpdateHighlightPoints={handleUpdateHighlightPoints}
+              onUpdateHighlightLocked={handleUpdateHighlightLocked}
               onDeleteHighlight={handleDeleteHighlight}
               onCreateLine={handleCreateLine}
               onUpdateLineColor={handleUpdateLineColor}
               onUpdateLinePoints={handleUpdateLinePoints}
+              onUpdateLineLocked={handleUpdateLineLocked}
               onDeleteLine={handleDeleteLine}
               onGroupMove={handleGroupMove}
               onDeleteMany={handleDeleteMany}
