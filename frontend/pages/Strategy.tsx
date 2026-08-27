@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useGetPlayers, useGetSeasonRoster, useGetPlayersNotInSeason, useCreatePlayer, useCreatePlayerForGame, useAddPlayerToGame } from '../hooks/backend/players'
 import { useGetGames } from '../hooks/backend/games'
@@ -82,6 +83,14 @@ type Board = {
 
 export default function Strategy() {
   const { allowed, currentOrgId } = useAuth()
+  const navigate = useNavigate()
+  // The selected play mirrors this URL segment (see the "default to first
+  // play" effect below), so a reload, browser back/forward, or a
+  // bookmarked/shared link opens that play directly. Unlike Schedule's
+  // selectedGame/Roster's selectedPlayer, this needs no local state or
+  // by-id resolver: useGetStrategyPlays already loads every play in the
+  // org unfiltered, so the param is just parsed straight through.
+  const { playId: playIdParam } = useParams<{ playId: string }>()
   const [transitionMs, setTransitionMs] = useState<number>(loadTransitionMs)
   const handleTransitionSpeedChange = (ms: number) => {
     setTransitionMs(ms)
@@ -136,7 +145,7 @@ export default function Strategy() {
 
   const players = rawPlayers as Player[] | undefined
 
-  const [selectedPlayId, setSelectedPlayId] = useState<number | null>(null)
+  const selectedPlayId = playIdParam ? parseInt(playIdParam, 10) : null
   const [selectedStepId, setSelectedStepId] = useState<number | null>(null)
   // Lets loadStepData (below) tell a stale response apart from the current
   // one — see its own comment for why this matters.
@@ -168,9 +177,10 @@ export default function Strategy() {
   useEffect(() => {
     if (!plays) return
     if (selectedPlayId === null || !plays.some(p => p.id === selectedPlayId)) {
-      setSelectedPlayId(plays[0]?.id ?? null)
+      if (plays[0]) navigate(`/plays/${plays[0].id}`, { replace: true })
+      else if (playIdParam) navigate('/plays', { replace: true })
     }
-  }, [plays])
+  }, [plays, playIdParam])
 
   const selectedPlay = (plays as StrategyPlay[] | undefined)?.find(p => p.id === selectedPlayId) ?? null
   const selectedGame = (games as Game[] | undefined)?.find(g => g.id === selectedPlay?.game_id) ?? null
@@ -792,7 +802,7 @@ export default function Strategy() {
       setNameInput('')
       setGameInput(NO_GAME)
       await fetchPlays({ organizationId: currentOrgId })
-      setSelectedPlayId(play.id)
+      navigate(`/plays/${play.id}`)
     }
   }
 
@@ -968,7 +978,7 @@ export default function Strategy() {
             <div className="flex items-center gap-2">
               <Select
                 value={selectedPlayId !== null ? String(selectedPlayId) : undefined}
-                onValueChange={v => setSelectedPlayId(Number(v))}
+                onValueChange={v => navigate(`/plays/${v}`)}
                 onOpenChange={open => { if (open) fetchPlays({ organizationId: currentOrgId }) }}
               >
                 <SelectTrigger className="flex-1 bg-card text-foreground border-border">

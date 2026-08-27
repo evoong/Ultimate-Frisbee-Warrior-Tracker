@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useGetGames } from '../hooks/backend/games'
 import { useGetPlayers } from '../hooks/backend/players'
@@ -160,14 +161,30 @@ function StandingsSortHeader({ label, sortKey, activeKey, dir, onClick, align }:
     </button>
   )
 }
-const PAGE_TABS: { key: PageTab; label: string }[] = [
-  { key: 'overview', label: 'Overview' },
-  { key: 'table', label: 'Player Rankings' },
-  { key: 'standings', label: 'League Standings' },
+// URL words for each tab, readable rather than the internal PageTab keys
+// ("table" predates the "Player Rankings" label — see the PageTab comment
+// above and doesn't belong in a URL a person actually reads).
+const PAGE_TABS: { key: PageTab; label: string; slug: string }[] = [
+  { key: 'overview', label: 'Overview', slug: 'overview' },
+  { key: 'table', label: 'Player Rankings', slug: 'rankings' },
+  { key: 'standings', label: 'League Standings', slug: 'standings' },
 ]
 
+function pageTabForSlug(slug: string | undefined): PageTab {
+  return PAGE_TABS.find(t => t.slug === slug)?.key ?? 'overview'
+}
+
 export default function Stats() {
-  const [pageTab, setPageTab] = useState<PageTab>('overview')
+  const navigate = useNavigate()
+  // The active sub-tab mirrors this URL segment, so a reload, browser
+  // back/forward, or a bookmarked/shared link lands on the right sub-tab
+  // instead of always resetting to Overview.
+  const { subtab } = useParams<{ subtab: string }>()
+  const pageTab = pageTabForSlug(subtab)
+
+  useEffect(() => {
+    if (subtab && !PAGE_TABS.some(t => t.slug === subtab)) navigate('/stats', { replace: true })
+  }, [subtab])
 
   return (
     <div className="space-y-4">
@@ -177,7 +194,7 @@ export default function Stats() {
         {PAGE_TABS.map(t => (
           <button
             key={t.key}
-            onClick={() => setPageTab(t.key)}
+            onClick={() => navigate(t.key === 'overview' ? '/stats' : `/stats/${t.slug}`)}
             className={`py-1.5 rounded-md text-sm font-medium transition-colors ${
               pageTab === t.key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
             }`}

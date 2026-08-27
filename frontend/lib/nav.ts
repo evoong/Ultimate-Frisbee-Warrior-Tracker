@@ -27,10 +27,25 @@ export const NAV_ITEMS: { key: Tab; label: string; icon: LucideIcon; path: strin
   { key: "chat", label: "AI", icon: MessageCircle, path: "/ai" },
 ]
 
+// Matches a tab's own path exactly, or a sub-path under it (e.g.
+// "/schedule/42", a deep link to one game's detail view), so a tab still
+// reads as active while viewing a specific game/player/play/stats sub-tab
+// within it, not just at its bare path.
+function pathMatches(itemPath: string, pathname: string): boolean {
+  return pathname === itemPath || pathname.startsWith(itemPath + "/")
+}
+
 export function tabForPath(pathname: string): Tab {
-  return NAV_ITEMS.find(item => item.path === pathname)?.key ?? "schedule"
+  return NAV_ITEMS.find(item => pathMatches(item.path, pathname))?.key ?? "schedule"
 }
 
 export function pathForTab(tab: Tab): string {
   return NAV_ITEMS.find(item => item.key === tab)!.path
+}
+
+// Whether pathname falls under one of the app's real tabs (its own path or
+// a sub-path), used to decide whether an unrecognized URL should redirect
+// to the default tab instead of being treated as a deep link.
+export function isKnownPath(pathname: string): boolean {
+  return NAV_ITEMS.some(item => pathMatches(item.path, pathname))
 }

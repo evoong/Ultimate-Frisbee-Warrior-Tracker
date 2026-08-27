@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate, Routes, Route } from 'react-router-dom'
 import Schedule from './pages/Schedule'
 import Roster from './pages/Roster'
 import Stats from './pages/Stats'
@@ -10,7 +10,7 @@ import ResetPassword from './pages/ResetPassword'
 import CreateOrganization from './pages/CreateOrganization'
 import { useAuth } from './contexts/AuthContext'
 import { Moon, Sun, Loader2, LogOut, KeyRound, Settings } from 'lucide-react'
-import { NAV_ITEMS, tabForPath, pathForTab, type Tab } from './lib/nav'
+import { NAV_ITEMS, tabForPath, pathForTab, isKnownPath, type Tab } from './lib/nav'
 import { useMediaQuery } from './lib/shadcn/use-media-query'
 import { SidebarProvider, SidebarInset, SidebarTrigger } from './lib/shadcn/sidebar'
 import AppSidebar from './components/AppSidebar'
@@ -53,8 +53,7 @@ export default function App() {
   // that doesn't say so.
   useEffect(() => {
     if (location.pathname === '/reset-password') return
-    const known = NAV_ITEMS.some(item => item.path === location.pathname)
-    if (!known) navigate(pathForTab('schedule'), { replace: true })
+    if (!isKnownPath(location.pathname)) navigate(pathForTab('schedule'), { replace: true })
   }, [location.pathname])
 
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
@@ -87,14 +86,23 @@ export default function App() {
     return <CreateOrganization />
   }
 
+  // Each tab additionally accepts one sub-path (a specific game, player,
+  // play, or stats sub-tab), so the page component itself reads that piece
+  // of state from useParams() rather than only ever owning it as in-memory
+  // state — see the "selected game/player/play mirrors the URL" comments in
+  // Schedule.tsx/Roster.tsx/Strategy.tsx and Stats.tsx's subtab handling.
   const pageContent = (
-    <>
-      {activeTab === 'schedule' && <Schedule />}
-      {activeTab === 'roster' && <Roster />}
-      {activeTab === 'stats' && <Stats />}
-      {activeTab === 'strategy' && <Strategy />}
-      {activeTab === 'chat' && <Chat />}
-    </>
+    <Routes>
+      <Route path="/schedule" element={<Schedule />} />
+      <Route path="/schedule/:gameId" element={<Schedule />} />
+      <Route path="/roster" element={<Roster />} />
+      <Route path="/roster/:playerId" element={<Roster />} />
+      <Route path="/stats" element={<Stats />} />
+      <Route path="/stats/:subtab" element={<Stats />} />
+      <Route path="/plays" element={<Strategy />} />
+      <Route path="/plays/:playId" element={<Strategy />} />
+      <Route path="/ai" element={<Chat />} />
+    </Routes>
   )
 
   const readOnlyNotice = !allowed && (

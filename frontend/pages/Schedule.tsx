@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
-import { useGetGames, useCreateGame, useUpdateGame, useDeleteGame, useGetLineups, useAddToLineup, useRemoveFromLineup, useMoveLineupEntry, useUpdateLineupSortOrder, useUpdateLineupRole, useGetLineupGroups, useCreateLineupGroup, useRenameLineupGroup, useReorderLineupGroups, useDeleteLineupGroup, useGetRecentLineupGames, useGetLineupTemplates, useGetLineupTemplateDetail, useSaveLineupTemplate, useDeleteLineupTemplate, type LineupGroup, type LineupTemplate, type RecentLineupGame } from '../hooks/backend/games'
+import { useParams, useNavigate } from 'react-router-dom'
+import { useGetGames, useGetGame, useCreateGame, useUpdateGame, useDeleteGame, useGetLineups, useAddToLineup, useRemoveFromLineup, useMoveLineupEntry, useUpdateLineupSortOrder, useUpdateLineupRole, useGetLineupGroups, useCreateLineupGroup, useRenameLineupGroup, useReorderLineupGroups, useDeleteLineupGroup, useGetRecentLineupGames, useGetLineupTemplates, useGetLineupTemplateDetail, useSaveLineupTemplate, useDeleteLineupTemplate, type LineupGroup, type LineupTemplate, type RecentLineupGame } from '../hooks/backend/games'
 import { useGetGameEvents, useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useUpdateEventTimestamp, useGetEventTypes } from '../hooks/backend/events'
 import { useGetSeasonRoster, useGetPlayersNotInSeason, useCreatePlayerForGame, useDeleteSubPlayer, useAddPlayerToGame } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons, useCreateSeason, useUpdateSeason, useGetSeasonsMeta, useGetPlayerStats } from '../hooks/backend/stats'
@@ -97,7 +98,13 @@ const OUTCOME_OPTIONS = ['Win', 'Loss', 'Tie', 'Default Win', 'Default Loss', 'F
 
 export default function Schedule() {
   const { allowed, currentOrgId } = useAuth()
+  const navigate = useNavigate()
+  // The selected game mirrors this URL segment (see the effect near
+  // handleSelectGame below), so a reload, browser back/forward, or a
+  // bookmarked/shared link lands on that game's detail view directly.
+  const { gameId: gameIdParam } = useParams<{ gameId: string }>()
   const { data: games, loading, error, trigger: fetchGames } = useGetGames()
+  const { trigger: fetchGameById } = useGetGame()
   const { data: events, loading: eventsLoading, trigger: fetchEvents } = useGetGameEvents()
   const { data: players, trigger: fetchPlayers } = useGetSeasonRoster()
   const { data: otherPlayers, trigger: fetchOtherPlayers } = useGetPlayersNotInSeason()
@@ -333,16 +340,16 @@ export default function Schedule() {
   // instead of making you find it in the list. Only does this once per page
   // load so navigating back to the list afterward doesn't re-trigger it.
   useEffect(() => {
-    if (autoOpenedRef.current || selectedGame) return
+    if (autoOpenedRef.current || gameIdParam) return
     const g = (games as Game[] | undefined) ?? []
     if (g.length === 0) return
     const now = Date.now()
     const imminent = g.find(gm => Math.abs(gameStartsAt(gm).getTime() - now) <= IMMINENT_WINDOW_MS)
     if (imminent) {
       autoOpenedRef.current = true
-      handleSelectGame(imminent)
+      navigate(`/schedule/${imminent.id}`)
     }
-  }, [games])
+  }, [games, gameIdParam])
 
   // Filling a game's lineups is explicit now, via buttons shown while the
   // game has no one placed yet — it used to auto-copy the previous game on
@@ -570,7 +577,26 @@ export default function Schedule() {
     }
   }
 
-  const handleBack = () => { setSelectedGame(null); setEditingEventId(null) }
+  const handleBack = () => { navigate('/schedule'); setEditingEventId(null) }
+
+  // Resolve selectedGame from the URL rather than only from click handlers,
+  // so a reload/back-forward/shared link opens the right game directly.
+  // `games` is scoped to the current season filter and may not include the
+  // linked game (a different season, or not loaded yet), so fall back to a
+  // direct by-id fetch that ignores that filter.
+  useEffect(() => {
+    if (!gameIdParam) { setSelectedGame(null); return }
+    const id = parseInt(gameIdParam, 10)
+    if (isNaN(id)) { navigate('/schedule', { replace: true }); return }
+    if (selectedGame?.id === id) return
+    const fromList = (games as Game[] | undefined)?.find(g => g.id === id)
+    if (fromList) { handleSelectGame(fromList); return }
+    if (currentOrgId == null) return
+    fetchGameById({ gameId: id, organizationId: currentOrgId }).then(g => {
+      if (g) handleSelectGame(g as Game)
+      else navigate('/schedule', { replace: true })
+    })
+  }, [gameIdParam, games, currentOrgId])
 
   const handleSeasonSelect = (value: string) => {
     if (value === '__new__') { setShowNewSeason(true); setFormData(f => ({ ...f, season_id: '' })) }
@@ -636,7 +662,7 @@ export default function Schedule() {
   const handleDeleteGame = async (gameId: number) => {
     await deleteGame({ gameId })
     setDeleteConfirmId(null)
-    setSelectedGame(null)
+    navigate('/schedule')
     fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentOrgId })
   }
 
@@ -2259,7 +2285,7 @@ export default function Schedule() {
     return (
       <FadeIn key={game.id} delay={index * 40}>
         <Card
-          onClick={() => handleSelectGame(game)}
+          onClick={() => navigate(`/schedule/${game.id}`)}
           className="bg-card text-card-foreground border-border cursor-pointer hover:bg-accent/50 active:scale-[0.99] transition-all"
         >
           <CardContent className="py-3.5">
@@ -2335,7 +2361,7 @@ export default function Schedule() {
     return (
       <FadeIn key={game.id}>
         <Card
-          onClick={() => handleSelectGame(game)}
+          onClick={() => navigate(`/schedule/${game.id}`)}
           className="bg-card border-primary/40 ring-1 ring-primary/20 cursor-pointer hover:border-primary/70 active:scale-[0.99] transition-all"
         >
           <CardContent className="p-4 flex items-center gap-4">
@@ -2643,7 +2669,7 @@ export default function Schedule() {
                   <div key={day} className={`min-h-[52px] p-1 rounded border ${isToday ? 'border-primary/40 bg-primary/5' : 'border-transparent'}`}>
                     <div className={`text-xs font-medium mb-0.5 ${isToday ? 'text-primary' : 'text-foreground'}`}>{day}</div>
                     {dayGames.map(g => (
-                      <button key={g.id} onClick={() => handleSelectGame(g)}
+                      <button key={g.id} onClick={() => navigate(`/schedule/${g.id}`)}
                         className={`w-full text-left text-[10px] px-1 py-0.5 rounded mb-0.5 truncate ${
                           g.result?.startsWith('Win') || g.outcome_override === 'Win' || g.outcome_override === 'Default Win'
                             ? 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-200'

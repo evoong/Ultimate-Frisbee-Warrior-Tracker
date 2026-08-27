@@ -69,6 +69,34 @@ export function useGetGames() {
   return useApiCall<any[], { organizationId: number | null; seasonIds?: number[] }>(fn)
 }
 
+// Resolves a single game by id, ignoring any season filter — used to load a
+// deep-linked /schedule/:gameId whose game isn't in the currently-filtered
+// list (useGetGames above), e.g. a different season or before that list has
+// loaded at all.
+export function useGetGame() {
+  const fn = useCallback(async (params: { gameId: number; organizationId: number | null }) => {
+    const { data, error } = await supabase
+      .from('games')
+      .select('*')
+      .eq('id', params.gameId)
+      .eq('organization_id', params.organizationId)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    if (!data) return undefined
+
+    const { data: goalEvents } = await supabase
+      .from('game_events')
+      .select('event_type')
+      .eq('game_id', params.gameId)
+      .in('event_type', ['Goal', 'Opponent Goal'])
+    let our = 0, their = 0
+    ;(goalEvents ?? []).forEach((e: any) => { if (e.event_type === 'Goal') our++; else their++ })
+
+    return { ...data, our_score: our, their_score: their } as any
+  }, [])
+  return useApiCall<any, { gameId: number; organizationId: number | null }>(fn)
+}
+
 // Every game we play is also a matchup in the league schedule. Database
 // triggers (010_league_tracking.sql) resolve games.opponent text to a
 // league_teams row and maintain the paired league_games row on every

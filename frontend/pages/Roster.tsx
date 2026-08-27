@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
 import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlayer, useGetPlayerGameStats, useSetGameAttendance, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer, useGetSeasonRoster, useCopyPlayersToSeason, useRemovePlayersFromSeason } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons, useCreateSeason } from '../hooks/backend/stats'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
@@ -55,6 +56,11 @@ function RosterCardSkeleton() {
 
 export default function Roster() {
   const { allowed, currentOrgId } = useAuth()
+  const navigate = useNavigate()
+  // The selected player mirrors this URL segment (see the effect near
+  // handleSelectPlayer below), so a reload, browser back/forward, or a
+  // bookmarked/shared link opens that player's detail view directly.
+  const { playerId: playerIdParam } = useParams<{ playerId: string }>()
   const { data: rawPlayers, loading, error, trigger: fetchPlayers } = useGetPlayers()
   const { data: gameStats, loading: statsLoading, trigger: fetchGameStats } = useGetPlayerGameStats()
   const { trigger: setGameAttendance } = useSetGameAttendance()
@@ -186,7 +192,22 @@ export default function Roster() {
     fetchPlayerSeasons({ playerId: player.id })
   }
 
-  const handleBack = () => { setSelectedPlayer(null); setSearchQuery(''); setUploadError(null); setEditing(false); setEditingSeasons(false) }
+  const handleBack = () => { navigate('/roster'); setSearchQuery(''); setUploadError(null); setEditing(false); setEditingSeasons(false) }
+
+  // Resolve selectedPlayer from the URL rather than only from click
+  // handlers, so a reload/back-forward/shared link opens the right player
+  // directly. allOrgPlayers is unfiltered by the season picker (fetched
+  // above for the Manage Roster checklist), so a deep link works regardless
+  // of which season(s) the page's own filter is currently scoped to.
+  useEffect(() => {
+    if (!playerIdParam) { setSelectedPlayer(null); return }
+    const id = parseInt(playerIdParam, 10)
+    if (isNaN(id)) { navigate('/roster', { replace: true }); return }
+    if (selectedPlayer?.id === id) return
+    const found = allOrgPlayers?.find(p => p.id === id)
+    if (found) handleSelectPlayer(found)
+    else if (allOrgPlayers) navigate('/roster', { replace: true })
+  }, [playerIdParam, allOrgPlayers])
 
   const handleStartEdit = () => {
     if (!selectedPlayer) return
@@ -866,7 +887,7 @@ export default function Roster() {
             <FadeIn
               key={player.id}
               delay={index * 20}
-              onClick={() => handleSelectPlayer(player)}
+              onClick={() => navigate(`/roster/${player.id}`)}
               className="flex items-center gap-3 px-3 py-2 bg-card hover:bg-accent/50 cursor-pointer transition-colors"
             >
               <PlayerAvatar photoUrl={player.photo_url} name={player.display_name} genderMatch={player.gender_match} size="sm" />
@@ -891,7 +912,7 @@ export default function Roster() {
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
           {filteredPlayers?.map((player, index) => (
             <FadeIn key={player.id} delay={index * 40}>
-              <Card onClick={() => handleSelectPlayer(player)}
+              <Card onClick={() => navigate(`/roster/${player.id}`)}
                 className="bg-card text-card-foreground border-border cursor-pointer hover:bg-accent/50 active:scale-[0.99] transition-all h-full"
               >
                 <CardContent className="p-4 flex flex-col items-center text-center gap-2">
