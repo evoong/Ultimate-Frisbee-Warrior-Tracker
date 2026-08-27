@@ -3,7 +3,121 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Ultimate Frisbee Warrior Tracker</title>
+
+    <title>Ultimate Frisbee Warrior Tracker | Team, Roster & Stats App</title>
+    <meta
+      name="description"
+      content="Run your Ultimate Frisbee team or league from one app: live game scoring, roster and lineup management, player stats and standings, a drag-and-drop strategy board, and an AI assistant. Free to get started."
+    />
+    <meta
+      name="keywords"
+      content="ultimate frisbee app, ultimate frisbee stats, ultimate frisbee roster management, ultimate frisbee live scoring, ultimate frisbee league standings, ultimate frisbee strategy board, frisbee team tracker"
+    />
+    <meta name="theme-color" content="#18181b" />
+    <link rel="canonical" href="https://your-domain.example/" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%2318181b'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%23fafafa' stroke-width='2'/%3E%3C/svg%3E"
+    />
+
+    <!-- Open Graph / Facebook, LinkedIn, iMessage, Slack unfurls -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Ultimate Frisbee Warrior Tracker" />
+    <meta property="og:title" content="Ultimate Frisbee Warrior Tracker | Team, Roster & Stats App" />
+    <meta
+      property="og:description"
+      content="Live game scoring, rosters and lineups, player stats and league standings, a strategy board, and an AI assistant, all in one Ultimate Frisbee team app."
+    />
+    <meta property="og:url" content="https://your-domain.example/" />
+    <meta property="og:locale" content="en_US" />
+
+    <!-- Twitter / X card -->
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Ultimate Frisbee Warrior Tracker" />
+    <meta
+      name="twitter:description"
+      content="Live game scoring, rosters and lineups, player stats and league standings, a strategy board, and an AI assistant, all in one Ultimate Frisbee team app."
+    />
+
+    <!--
+      Structured data for search engines and AI answer engines (ChatGPT,
+      Perplexity, Google AI Overviews, ...). Kept as static JSON-LD so it is
+      readable without executing the app's JS. The FAQ entries here must stay
+      in sync with the visible FAQ section rendered by frontend/pages/Home.tsx
+      (see the SEO/AEO section of CLAUDE.md) since mismatched schema/visible
+      content is treated as low-trust by answer engines.
+    -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Ultimate Frisbee Warrior Tracker",
+        "applicationCategory": "SportsApplication",
+        "operatingSystem": "Any (web browser)",
+        "description": "Ultimate Frisbee team and league management app: live game scoring, roster and lineup management, player stats and league standings, a strategy board, and an AI assistant.",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        }
+      }
+    </script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Is Ultimate Frisbee Warrior Tracker free to use?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. Signup is open, and any signed-in user can create a new team or join an existing one for free."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can I track live scores during a game?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. The Schedule page's Events tab has a live scoreboard for logging goals and assists in real time, with an undo button for mistakes."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does it support a whole league, not just one team?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. An organization can run one team or several, and League Standings automatically tracks every team's record, points, and point differential for a season as games are scored."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can I diagram and animate strategy plays?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. The Strategy board lets you build named plays step by step with player positions, opponent markers, and arrows, then step through them like a play-by-play animation."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Is there an AI assistant?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. The built-in AI chat can answer questions about your team's stats and, once you confirm, log events or manage lineups for you. The same tools are also available to external AI clients over MCP."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Do I need to install anything?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. Ultimate Frisbee Warrior Tracker runs in the browser on desktop and mobile, with no app download required."
+            }
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -5,6 +5,7 @@ import Roster from './pages/Roster'
 import Stats from './pages/Stats'
 import Strategy from './pages/Strategy'
 import Chat from './pages/Chat'
+import Home from './pages/Home'
 import Login from './pages/Login'
 import ResetPassword from './pages/ResetPassword'
 import CreateOrganization from './pages/CreateOrganization'
@@ -48,13 +49,16 @@ export default function App() {
     localStorage.setItem(THEME_KEY, theme)
   }, [theme])
 
-  // Root path (and anything unrecognized, e.g. a stale/typo'd URL) redirects
-  // to the default tab rather than silently rendering Schedule at a URL
-  // that doesn't say so.
+  // Any unrecognized authenticated-tab URL (e.g. a stale/typo'd link)
+  // redirects to the default tab rather than silently rendering Schedule at
+  // a URL that doesn't say so. Scoped to signed-in users only: while signed
+  // out, '/' and '/login' are real public pages (Home/Login below), not
+  // unrecognized paths to bounce from.
   useEffect(() => {
+    if (!user) return
     if (location.pathname === '/reset-password') return
     if (!isKnownPath(location.pathname)) navigate(pathForTab('schedule'), { replace: true })
-  }, [location.pathname])
+  }, [location.pathname, user])
 
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
 
@@ -76,8 +80,19 @@ export default function App() {
   // they don't belong to). The `allowed` flag means "member of the current
   // organization — can write"; write controls are gated on it, and the
   // DB's RLS is the real enforcement (016_organizations.sql).
+  //
+  // Signed out: '/login' is the sign-in/sign-up form; every other path
+  // (including '/', the marketing homepage, and any unrecognized URL) shows
+  // Home, so a shared/bookmarked deep link to the app still lands on a real
+  // page instead of a redirect loop. Once signed in, the unknown-path effect
+  // above takes over and these two paths stop being special.
   if (!user) {
-    return <Login />
+    return (
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="*" element={<Home theme={theme} toggleTheme={toggleTheme} />} />
+      </Routes>
+    )
   }
 
   // Every domain table requires an organization_id, so a user with zero

@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Disallow: /schedule
+Disallow: /roster
+Disallow: /stats
+Disallow: /plays
+Disallow: /ai
+Disallow: /reset-password
+
+Sitemap: https://your-domain.example/sitemap.xml
