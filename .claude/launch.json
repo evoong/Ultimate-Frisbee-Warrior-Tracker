@@ -4,7 +4,7 @@
     {
       "name": "Express API Server",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["--dns-result-order=ipv4first", "node_modules/.bin/tsx", "server/index.ts"],
+      "runtimeArgs": ["--dns-result-order=ipv4first", "node_modules/tsx/dist/cli.mjs", "server/index.ts"],
       "port": 3001,
       "autoPort": true
     },
