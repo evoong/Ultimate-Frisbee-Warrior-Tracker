@@ -89,6 +89,26 @@ export async function resolvePlayer(config: ActionsConfig, orgId: number, nameQu
   return matches[0]!
 }
 
+export type SeasonRow = { id: number; label: string }
+
+// The assistant never sees the raw `name` column ("Summer") on its own —
+// getTeamContext only ever shows it the composite label built the same way
+// as chat.ts's seasonNames map (`${organizer} ${name} ${year}`, e.g. "Jam
+// Summer 2026"), so a season must be resolved against that same composite,
+// not the bare name (matching it against `name` alone silently failed to
+// resolve any season the model actually asked about).
+export async function resolveSeason(config: ActionsConfig, orgId: number, nameQuery: string): Promise<SeasonRow> {
+  const raw: { id: number; name: string; year: number; organizer: string | null }[] =
+    await sbGet(config, `/seasons?organization_id=eq.${orgId}&select=id,name,year,organizer`)
+  const seasons: SeasonRow[] = raw.map(s => ({ id: s.id, label: `${s.organizer ?? ''} ${s.name} ${s.year}`.trim() }))
+  const q = nameQuery.trim().toLowerCase()
+  let matches = seasons.filter(s => s.label.toLowerCase() === q)
+  if (matches.length === 0) matches = seasons.filter(s => s.label.toLowerCase().includes(q) || q.includes(s.label.toLowerCase()))
+  if (matches.length === 0) throw new Error(`No season found matching "${nameQuery}".`)
+  if (matches.length > 1) throw new Error(`Multiple seasons match "${nameQuery}": ${matches.map(m => m.label).join(', ')}. Be more specific.`)
+  return matches[0]!
+}
+
 export async function currentScore(config: ActionsConfig, gameId: number): Promise<{ our_score: number; their_score: number }> {
   const events: { event_type: string }[] = await sbGet(config, `/game_events?game_id=eq.${gameId}&select=event_type`)
   return {
@@ -99,6 +119,9 @@ export async function currentScore(config: ActionsConfig, gameId: number): Promi
 
 export const EVENT_TYPES = ['Goal', 'Opponent Goal', 'Block', 'Throwaway', 'Drop', 'Pull', 'Caught OB', 'Fouls'] as const
 export type EventType = (typeof EVENT_TYPES)[number]
+
+export const STAT_METRICS = ['goals', 'assists', 'turnovers'] as const
+export type StatMetric = (typeof STAT_METRICS)[number]
 
 export const CHAT_FUNCTION_DECLARATIONS = [
   {
@@ -159,6 +182,22 @@ export const CHAT_FUNCTION_DECLARATIONS = [
       type: 'object',
       properties: { name: { type: 'string' }, gameDate: { type: 'string' }, opponent: { type: 'string' } },
       required: ['name'],
+    },
+  },
+  {
+    name: 'query_stat_breakdown',
+    description: `Computes an exact, code-verified stat breakdown. The system prompt's PLAYER STATS and ASSIST PAIRINGS tables are pre-tallied but ALL-TIME ONLY — call this tool instead of counting from EVENT TIMELINE yourself whenever a question is scoped to one specific season or one specific game. Examples: "who assisted Eric the most this season" -> {metric: "assists", byAssistPairing: true, seasonName: "Jam Summer 2026"}. "top scorers in the game vs Huck Huck Goose" -> {metric: "goals", opponent: "Huck Huck Goose"}. "who had the most turnovers in Jam Summer 2026" -> {metric: "turnovers", seasonName: "Jam Summer 2026"}. "best pairing so far this season" -> {metric: "assists", byAssistPairing: true, seasonName: "<current season>"}. Omit seasonName/gameDate/opponent only for an all-time breakdown (rarely needed since PLAYER STATS/ASSIST PAIRINGS already cover all-time).
+STRICT OUTPUT RULE: the "rows" you get back are the complete, final, already-correct answer for exactly the scope you asked for — quote a row's "count" verbatim, character for character, in your reply. Never recalculate, round, average, or "estimate" a count; never blend a scoped row with the separate ALL-TIME PLAYER STATS/ASSIST PAIRINGS numbers in the same sentence (e.g. do not say "4 this season (6 all-time)" — pick the one scope the user asked about and report only that). An empty "rows" array is a real, valid answer meaning zero matching events for that exact scope (check the "note" field, which spells this out) — say so plainly, do not treat it as a failure or fall back to guessing a number. If seasonName/gameDate/opponent fails to resolve, or metric is invalid, the call errors out instead of returning empty rows — tell the user you couldn't find that season/game/metric by name instead of guessing a number.`,
+    parametersJsonSchema: {
+      type: 'object',
+      properties: {
+        metric: { type: 'string', enum: [...STAT_METRICS] },
+        byAssistPairing: { type: 'boolean', description: 'Only for metric "assists": group by scorer+assister pair instead of by player.' },
+        seasonName: { type: 'string', description: 'Season name/substring, e.g. "Jam Summer 2026". Scopes the breakdown to that season.' },
+        gameDate: { type: 'string', description: 'YYYY-MM-DD. Scopes the breakdown to that one game.' },
+        opponent: { type: 'string', description: 'Opponent name/substring. Scopes the breakdown to that one game.' },
+      },
+      required: ['metric'],
     },
   },
 ]
@@ -232,6 +271,79 @@ export async function createLineupGroup(config: ActionsConfig, orgId: number, pa
   return { game: { date: game.game_date, opponent: game.opponent }, created: created[0] ?? { note: `A group named "${params.name}" already exists.` } }
 }
 
+// Read-only, code-computed stat breakdown for the chat assistant to call
+// instead of hand-tallying from EVENT TIMELINE (see query_stat_breakdown's
+// declaration above). getTeamContext's own PLAYER STATS/ASSIST PAIRINGS
+// sections only pre-tally all-time totals, so any season- or game-scoped
+// question needs this instead — that gap is what let the model regress to
+// hand-counting (and self-contradicting) despite the earlier all-time fix.
+export async function queryStatBreakdown(
+  config: ActionsConfig, orgId: number,
+  params: { metric: StatMetric; seasonName?: string; gameDate?: string; opponent?: string; byAssistPairing?: boolean }
+): Promise<unknown> {
+  // A silently-mistyped metric (e.g. "assist" instead of "assists") would
+  // otherwise match no branch below and produce an empty tally that's
+  // indistinguishable from "this scope genuinely has zero events" — fail
+  // loudly instead so the caller sees a real error, not a false zero.
+  if (!STAT_METRICS.includes(params.metric)) {
+    throw new Error(`Invalid metric "${params.metric}". Must be one of: ${STAT_METRICS.join(', ')}.`)
+  }
+
+  let gameIds: number[] | null = null
+  let scope = 'all-time'
+
+  if (params.gameDate || params.opponent) {
+    const game = await resolveGame(config, orgId, params)
+    gameIds = [game.id]
+    scope = `${game.game_date} vs ${game.opponent}`
+  } else if (params.seasonName) {
+    const season = await resolveSeason(config, orgId, params.seasonName)
+    const games: { id: number }[] = await sbGet(config, `/games?organization_id=eq.${orgId}&season_id=eq.${season.id}&select=id`)
+    gameIds = games.map(g => g.id)
+    scope = season.label
+  }
+
+  const eventsPath = gameIds
+    ? `/game_events?organization_id=eq.${orgId}&game_id=in.(${gameIds.join(',') || '0'})&select=event_type,player_id,related_player_id`
+    : `/game_events?organization_id=eq.${orgId}&select=event_type,player_id,related_player_id`
+  const events: { event_type: string; player_id: number | null; related_player_id: number | null }[] = await sbGet(config, eventsPath)
+  const players: PlayerRow[] = await sbGet(config, `/players?organization_id=eq.${orgId}&select=id,display_name`)
+  const nameOf = (id: number | null) => players.find(p => p.id === id)?.display_name ?? 'Unknown'
+
+  if (params.metric === 'assists' && params.byAssistPairing) {
+    const tally = new Map<string, { scorer: number; assister: number; count: number }>()
+    for (const e of events) {
+      if (e.event_type !== 'Goal' || !e.player_id || !e.related_player_id) continue
+      const key = `${e.player_id}:${e.related_player_id}`
+      const row = tally.get(key) ?? { scorer: e.player_id, assister: e.related_player_id, count: 0 }
+      row.count++
+      tally.set(key, row)
+    }
+    const rows = [...tally.values()]
+      .sort((a, b) => b.count - a.count)
+      .map(r => ({ scorer: nameOf(r.scorer), assister: nameOf(r.assister), count: r.count }))
+    return { scope, breakdown: 'assist_pairings', rows, note: rows.length === 0 ? `No assisted goals recorded for ${scope}.` : undefined }
+  }
+
+  const tally = new Map<number, number>()
+  for (const e of events) {
+    if (params.metric === 'goals' && e.event_type === 'Goal' && e.player_id) {
+      tally.set(e.player_id, (tally.get(e.player_id) ?? 0) + 1)
+    } else if (params.metric === 'assists' && e.event_type === 'Goal' && e.related_player_id) {
+      tally.set(e.related_player_id, (tally.get(e.related_player_id) ?? 0) + 1)
+    } else if (params.metric === 'turnovers' && isTurnoverEvent(e.event_type) && e.player_id) {
+      tally.set(e.player_id, (tally.get(e.player_id) ?? 0) + 1)
+    }
+  }
+  const rows = [...tally.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([id, count]) => ({ player: nameOf(id), count }))
+  return {
+    scope, breakdown: 'by_player', metric: params.metric, rows,
+    note: rows.length === 0 ? `No ${params.metric} recorded for ${scope}.` : undefined,
+  }
+}
+
 export async function callChatFunction(config: ActionsConfig, orgId: number, name: string, args: Record<string, unknown>): Promise<unknown> {
   switch (name) {
     case 'create_game_event': return createGameEvent(config, orgId, args as any)
@@ -239,6 +351,7 @@ export async function callChatFunction(config: ActionsConfig, orgId: number, nam
     case 'add_to_lineup': return addToLineup(config, orgId, args as any)
     case 'remove_from_lineup': return removeFromLineup(config, orgId, args as any)
     case 'create_lineup_group': return createLineupGroup(config, orgId, args as any)
+    case 'query_stat_breakdown': return queryStatBreakdown(config, orgId, args as any)
     default: throw new Error(`Unknown function: ${name}`)
   }
 }
