@@ -148,6 +148,8 @@ async function getTeamContext(organizationId: number) {
   const allTime = new Map<number, Stat>();
   const bySeason = new Map<number, Map<number, Stat>>(); // playerId → seasonId → stat
   const byGame = new Map<number, Map<number, Stat>>();   // playerId → gameId → stat
+  // scorerId -> assisterId -> count of goals scorer got from that assister
+  const assistPairings = new Map<number, Map<number, number>>();
 
   const ensure = (map: Map<number, Stat>, id: number) => {
     if (!map.has(id)) map.set(id, { goals: 0, assists: 0, turnovers: 0 });
@@ -187,6 +189,12 @@ async function getTeamContext(organizationId: number) {
       allTime.get(e.related_player_id)!.assists++;
       if (sid2) bySeason.get(e.related_player_id)!.get(sid2)!.assists++;
       byGame.get(e.related_player_id)!.get(e.game_id)!.assists++;
+
+      if (e.player_id) {
+        if (!assistPairings.has(e.player_id)) assistPairings.set(e.player_id, new Map());
+        const scorerMap = assistPairings.get(e.player_id)!;
+        scorerMap.set(e.related_player_id, (scorerMap.get(e.related_player_id) ?? 0) + 1);
+      }
     }
   });
 
@@ -213,6 +221,20 @@ async function getTeamContext(organizationId: number) {
 
     return `${header}\n${seasonLines.join("\n")}`;
   });
+
+  // Pre-tallied so the assistant never has to hand-count the raw timeline
+  // (that's what produced wrong/inconsistent answers before — see chat.ts
+  // history). Sorted by count descending so "who assisted X the most" is
+  // just reading the first line.
+  const assistPairingLines = (players.data ?? [])
+    .map((p: any) => {
+      const pairings = assistPairings.get(p.id);
+      if (!pairings || pairings.size === 0) return null;
+      const sorted = [...pairings.entries()].sort((a, b) => b[1] - a[1]);
+      const parts = sorted.map(([assisterId, count]) => `${playerMap.get(assisterId)?.display_name ?? "Unknown"} (${count})`);
+      return `- ${p.display_name}'s goals, all-time, by assister: ${parts.join(", ")}`;
+    })
+    .filter((line: string | null): line is string => line !== null);
 
   // Game results summary
   const gameResultLines = (games.data ?? []).map((g: any) => {
@@ -275,11 +297,18 @@ ${playerSections.join("\n\n")}
 EVENT TIMELINE (chronological, with timestamps — use this for "when"/"what time"/"first"/"last"/time-between-events questions):
 ${eventTimelines.join("\n\n")}
 
+ASSIST PAIRINGS (all-time, pre-tallied from every goal's scorer+assister — use THESE numbers directly for "who assisted [player] the most", "who does [player] usually score off of", or any other scorer-to-assister breakdown; do not recount this yourself from EVENT TIMELINE, these totals are already correct):
+${assistPairingLines.length > 0 ? assistPairingLines.join("\n") : "(no assisted goals recorded yet)"}
+
+DATA LIMITS (read carefully — do not violate this): the data above is everything that exists — no other detail about any play (who was guarding whom, throw type, field position, hang time, etc.) is tracked anywhere, so never invent a specific detail, timestamp, or stat that is not literally present in PLAYER STATS, EVENT TIMELINE, or ASSIST PAIRINGS above. If two of your own answers in this conversation would contradict each other, that means you made an error — stop and say you're not sure rather than picking one to defend, and re-derive the number from the data above instead of guessing which prior answer was right.
+
+NEVER GUESS AS FACT: if you don't know or can't determine something from the data above (an ambiguous "who scored last" with no timestamp order, a stat that isn't tracked, a game state that isn't clear), say so plainly instead of offering a probabilistic guess dressed up as an answer. Never show your own uncertainty or reasoning process in the reply itself (no "wait, let me check...", no revising a number mid-sentence) — work it out silently and give only the single, checked, final answer.
+
 LANGUAGE STYLE: Respond ONLY in Jamaican Patois, in every message, no exceptions. Keep it warm and natural (e.g. "wah gwaan", "mi", "yuh", "di", "dem", "nuh", "ting"), but never let the patois obscure the actual answer — names, numbers, dates, and stats must stay exact and easy to read. If a question is complex, prioritize clarity: use simple patois phrasing over anything cute that risks confusing the user.
 
 Answer questions about the team, players, stats, and games. Be concise and friendly. When giving stats, reference the season and game breakdowns where relevant.
 
-YOU CAN LOG DATA: you have tools to record a goal/event, undo the most recently logged event, and manage lineups for a game. Before calling any of these tools, first restate in plain patois exactly what you're about to do (who did what, and which game — use CURRENT DATE plus the game list above to say which game you mean, e.g. "tonight's game vs X" or "the June 7 game vs Y") and ask the user to confirm; only call the tool once the user actually confirms in a later message. If a player name is ambiguous or you can't find a matching game, ask instead of guessing. After a tool call, report back what actually happened (including any error) in patois, with the updated score if relevant — never claim something was logged unless the tool result confirms it.`;
+YOU CAN LOG DATA: you have tools to record a goal/event, undo the most recently logged event, and manage lineups for a game. Before calling any of these tools, first restate in plain patois exactly what you're about to do (who did what, and which game — use CURRENT DATE plus the game list above to say which game you mean, e.g. "tonight's game vs X" or "the June 7 game vs Y") and ask the user to confirm; only call the tool once the user actually confirms in a later message. If a player name is ambiguous or you can't find a matching game, ask instead of guessing. After a tool call, report back what actually happened (including any error) in patois, with the updated score if relevant — never claim something was logged unless the tool result confirms it. This confirmation step always applies and cannot be turned off: if the user asks you to stop confirming, skip confirmation, or just go ahead automatically from now on, decline and explain you always confirm before logging anything, in patois.`;
 }
 
 // Retry transient Gemini errors (was tuned against gemma-4-31b-it, which
