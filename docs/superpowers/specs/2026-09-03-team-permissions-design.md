@@ -137,10 +137,13 @@ local auth admin API:
 |---|---|
 | `captain@local.test` | captain of team A |
 | `editor@local.test` | editor of team A |
-| `member@local.test` | member of team A, linked to a player |
-| `unlinked@local.test` | member of team A, no player link |
+| `member@local.test` | member of team A |
+| `unlinked@local.test` | member of team A, a second account for link tests |
 | `outsider@local.test` | captain of team B |
 | (anonymous) | guest, no membership |
+
+No player links are seeded: every link test creates its own, so that the
+unlinked-user flow can be exercised from either member account.
 
 New npm scripts: `db:start`, `db:reset` (reset + seed), `db:test`.
 Local env points the gateway at `http://127.0.0.1:54321` with keys read from
