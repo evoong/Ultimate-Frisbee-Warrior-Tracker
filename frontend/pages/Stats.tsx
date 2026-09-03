@@ -211,34 +211,56 @@ export default function Stats() {
 
 type NetworkNode = { id: number; name: string; fullName: string; goals: number; assists: number }
 type NetworkEdge = { scorerId: number; assisterId: number; count: number }
-type NetworkMode = 'ga' | 'goals' | 'assists'
-
-const NETWORK_MODE_TABS: { key: NetworkMode; label: string }[] = [
-  { key: 'ga', label: 'Goals + Assists' },
-  { key: 'goals', label: 'Goals' },
-  { key: 'assists', label: 'Assists' },
-]
+type NetworkMode = 'goals' | 'assists'
 
 // Node size reflects the selected stat; the edges themselves (who assisted
-// whom, and how often — see NetworkEdge) never change between modes, only
-// how much visual weight each player's node carries.
+// whom, and how often — see NetworkEdge) never change between the Goals and
+// Assists graphs, only how much visual weight each player's node carries.
 function nodeWeight(n: NetworkNode, mode: NetworkMode): number {
-  if (mode === 'goals') return n.goals
-  if (mode === 'assists') return n.assists
-  return n.goals + n.assists
+  return mode === 'goals' ? n.goals : n.assists
 }
 
-// A directed scorer<-assister network: nodes evenly spaced on a circle (no
-// force-simulation layout — deterministic and simple, matching this file's
-// existing chart patterns), edges as curved arrows reusing the arrowhead
-// marker technique from the Strategy board's arrow drawing, each labeled
-// with its pairing count. Clicking a node highlights only its own edges;
-// clicking again or clicking empty space clears the highlight.
+// Simple per-player Goals/Assists totals list, shown alongside the two
+// network graphs — the graphs already show connection detail (who, how
+// often); this is just the aggregate each node's size is based on.
+function NetworkTotalsList({ nodes }: { nodes: NetworkNode[] }) {
+  return (
+    <div className="space-y-1.5">
+      {nodes.map(n => (
+        <div key={n.id} className="flex items-center justify-between text-sm">
+          <span className="text-foreground truncate">{n.fullName}</span>
+          <span className="flex items-center gap-3 shrink-0 ml-2 font-mono text-xs">
+            <span className="text-green-600 dark:text-green-400">{n.goals}G</span>
+            <span className="text-blue-600 dark:text-blue-400">{n.assists}A</span>
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// mode='assists': arrows point assister -> scorer ("who I set up"), blue,
+// nodes sized by assists. mode='goals': the same pairs, arrows REVERSED to
+// scorer -> assister ("who I scored off"), green, nodes sized by goals.
+// Same underlying pairing data throughout — the two graphs differ in which
+// direction the relationship reads and what a bigger node means, not in a
+// separate dataset (a goal alone isn't a relationship between two players;
+// the assist is the only pairwise fact this data has).
+const NETWORK_COLOR: Record<NetworkMode, string> = { assists: '#2563eb', goals: '#16a34a' }
+
+// A directed network: nodes evenly spaced on a circle (no force-simulation
+// layout — deterministic and simple, matching this file's existing chart
+// patterns), edges as curved arrows reusing the arrowhead marker technique
+// from the Strategy board's arrow drawing, each labeled with its pairing
+// count. Clicking a node highlights only its own edges; clicking again or
+// clicking empty space clears the highlight.
 function AssistNetworkGraph({ nodes, edges, mode }: { nodes: NetworkNode[]; edges: NetworkEdge[]; mode: NetworkMode }) {
   const [selectedId, setSelectedId] = useState<number | null>(null)
-  const size = 280
+  const size = 320
   const center = size / 2
-  const radius = center - 40
+  const radius = center - 56
+  const color = NETWORK_COLOR[mode]
+  const markerId = `network-arrowhead-${mode}`
   const positions = new Map<number, { x: number; y: number }>()
   nodes.forEach((n, i) => {
     const angle = (i / nodes.length) * 2 * Math.PI - Math.PI / 2
@@ -260,17 +282,21 @@ function AssistNetworkGraph({ nodes, edges, mode }: { nodes: NetworkNode[]; edge
     <svg
       viewBox={`0 0 ${size} ${size}`}
       className="w-full touch-none"
-      style={{ maxHeight: 380 }}
+      style={{ maxHeight: 440 }}
       onClick={() => setSelectedId(null)}
     >
       <defs>
-        <marker id="network-arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-          <path d="M0,0 L10,5 L0,10 z" fill="#2563eb" />
+        <marker id={markerId} viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill={color} />
         </marker>
       </defs>
       {edges.map(e => {
-        const from = positions.get(e.assisterId)
-        const to = positions.get(e.scorerId)
+        // mode='assists' reads the pair as assister -> scorer; mode='goals'
+        // reverses it to scorer -> assister. Same pair, opposite arrow.
+        const fromId = mode === 'assists' ? e.assisterId : e.scorerId
+        const toId = mode === 'assists' ? e.scorerId : e.assisterId
+        const from = positions.get(fromId)
+        const to = positions.get(toId)
         if (!from || !to) return null
         const dimmed = selectedId != null && e.scorerId !== selectedId && e.assisterId !== selectedId
         // Curve each edge away from the straight line (perpendicular offset
@@ -281,10 +307,10 @@ function AssistNetworkGraph({ nodes, edges, mode }: { nodes: NetworkNode[]; edge
         const dx = to.x - from.x
         const dy = to.y - from.y
         const dist = Math.hypot(dx, dy) || 1
-        const curveOffset = 14
+        const curveOffset = 18
         const cx = mx + (-dy / dist) * curveOffset
         const cy = my + (dx / dist) * curveOffset
-        const strokeWidth = 1 + (e.count / maxCount) * 3
+        const strokeWidth = 1.5 + (e.count / maxCount) * 4
         // Point on the quadratic curve at t=0.5 (not the control point
         // itself), for placing the count label on the visible line.
         const labelX = 0.25 * from.x + 0.5 * cx + 0.25 * to.x
@@ -293,14 +319,14 @@ function AssistNetworkGraph({ nodes, edges, mode }: { nodes: NetworkNode[]; edge
           <g key={`${e.assisterId}-${e.scorerId}`} opacity={dimmed ? 0.12 : 1}>
             <path
               d={`M ${from.x} ${from.y} Q ${cx} ${cy} ${to.x} ${to.y}`}
-              stroke="#2563eb"
+              stroke={color}
               strokeWidth={strokeWidth}
               fill="none"
-              opacity={0.7}
-              markerEnd="url(#network-arrowhead)"
+              opacity={0.8}
+              markerEnd={`url(#${markerId})`}
             />
-            <circle cx={labelX} cy={labelY} r={6} fill="hsl(var(--card))" stroke="hsl(var(--border))" strokeWidth={0.75} />
-            <text x={labelX} y={labelY} textAnchor="middle" dominantBaseline="central" fontSize={7} fill="hsl(var(--foreground))">
+            <circle cx={labelX} cy={labelY} r={7} fill="hsl(var(--card))" stroke="hsl(var(--border))" strokeWidth={0.75} />
+            <text x={labelX} y={labelY} textAnchor="middle" dominantBaseline="central" fontSize={8} fill="hsl(var(--foreground))">
               {e.count}
             </text>
           </g>
@@ -309,7 +335,7 @@ function AssistNetworkGraph({ nodes, edges, mode }: { nodes: NetworkNode[]; edge
       {nodes.map(n => {
         const pos = positions.get(n.id)!
         const dimmed = highlightIds != null && !highlightIds.has(n.id)
-        const r = 9 + (nodeWeight(n, mode) / maxWeight) * 7
+        const r = 11 + (nodeWeight(n, mode) / maxWeight) * 8
         return (
           <g
             key={n.id}
@@ -319,7 +345,7 @@ function AssistNetworkGraph({ nodes, edges, mode }: { nodes: NetworkNode[]; edge
             onClick={e => { e.stopPropagation(); setSelectedId(id => (id === n.id ? null : n.id)) }}
           >
             <circle r={r} fill="hsl(var(--card))" stroke="hsl(var(--border))" strokeWidth={1.5} />
-            <text textAnchor="middle" dominantBaseline="central" fontSize={8} fill="hsl(var(--foreground))">
+            <text textAnchor="middle" dominantBaseline="central" fontSize={9} fill="hsl(var(--foreground))">
               {n.name}
             </text>
           </g>
@@ -347,7 +373,6 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
   const [selectedSeasonIds, setSelectedSeasonIds] = useState<number[]>([])
   const [selectedGameIds, setSelectedGameIds] = useState<number[]>([])
   const [chartTab, setChartTab] = useState<ChartTab>('combined')
-  const [networkMode, setNetworkMode] = useState<NetworkMode>('ga')
 
   // Summary Table column visibility/formulas/sort are a per-device viewing
   // preference (same convention as Strategy's transition-speed setting),
@@ -924,15 +949,6 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
                 <Share2 className="w-4 h-4" />Assist Network
               </CardTitle>
               <p className="text-xs text-muted-foreground">Tap a player to highlight their connections. Arrows point from assister to scorer; numbers are assist counts.</p>
-              <div className="flex gap-1 mt-2 bg-muted rounded-lg p-1">
-                {NETWORK_MODE_TABS.map(t => (
-                  <button key={t.key} onClick={() => setNetworkMode(t.key)}
-                    className={`flex-1 text-xs py-1.5 px-2 rounded-md font-medium transition-colors ${networkMode === t.key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
             </CardHeader>
             <CardContent className="pt-2">
               {pairingsLoading ? (
@@ -942,9 +958,18 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
               ) : pairingsError ? (
                 <div className="flex items-center justify-center h-48 text-destructive text-sm">Error: {pairingsError}</div>
               ) : networkEdges.length > 0 ? (
-                <FadeIn className="w-full flex justify-center">
-                  <div className="w-full max-w-[320px]">
-                    <AssistNetworkGraph nodes={networkNodes} edges={networkEdges} mode={networkMode} />
+                <FadeIn className="w-full space-y-6">
+                  <div>
+                    <p className="text-sm font-medium text-blue-600 dark:text-blue-400 mb-1 text-center">Assists — who fed whom</p>
+                    <AssistNetworkGraph nodes={networkNodes} edges={networkEdges} mode="assists" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-green-600 dark:text-green-400 mb-1 text-center">Goals — who scored off whom</p>
+                    <AssistNetworkGraph nodes={networkNodes} edges={networkEdges} mode="goals" />
+                  </div>
+                  <div className="pt-2 border-t border-border">
+                    <p className="text-xs font-medium text-muted-foreground mb-2">Totals</p>
+                    <NetworkTotalsList nodes={networkNodes} />
                   </div>
                 </FadeIn>
               ) : (
