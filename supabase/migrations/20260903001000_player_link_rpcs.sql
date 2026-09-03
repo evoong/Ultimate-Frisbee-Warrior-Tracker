@@ -10,12 +10,14 @@ declare
 begin
   perform public.assert_not_guest();
 
+  -- A nonexistent player id and a player on another team are collapsed into
+  -- one message so an authenticated caller cannot enumerate player ids
+  -- across tenant boundaries by distinguishing "does not exist" from
+  -- "exists but is not yours" (same anti-pattern remove_member documents
+  -- avoiding in 20260903000900_role_management.sql).
   select organization_id into v_team_id from public.players where id = p_player_id;
-  if v_team_id is null then
-    raise exception 'no such player';
-  end if;
-  if not (v_team_id = any (public.my_member_team_ids())) then
-    raise exception 'that player belongs to another team';
+  if v_team_id is null or not (v_team_id = any (public.my_member_team_ids())) then
+    raise exception 'no such player on your teams';
   end if;
 
   insert into public.player_links (team_id, player_id, user_id, status)
@@ -38,9 +40,16 @@ declare
 begin
   perform public.assert_not_guest();
 
+  -- A nonexistent player id and a player on another team are collapsed into
+  -- one message so an authenticated caller cannot enumerate player ids
+  -- across tenant boundaries by distinguishing "does not exist" from
+  -- "exists but is not yours" (same anti-pattern remove_member documents
+  -- avoiding in 20260903000900_role_management.sql). Once the caller is
+  -- known to at least belong to the player's team, "wrong role" is a fact
+  -- they are entitled to be told plainly.
   select organization_id into v_team_id from public.players where id = p_player_id;
-  if v_team_id is null then
-    raise exception 'no such player';
+  if v_team_id is null or not (v_team_id = any (public.my_member_team_ids())) then
+    raise exception 'no such player on your teams';
   end if;
   if not (v_team_id = any (public.my_manage_team_ids())) then
     raise exception 'insufficient permissions on this team';
@@ -72,9 +81,16 @@ declare
 begin
   perform public.assert_not_guest();
 
+  -- A nonexistent link id and a link on another team are collapsed into one
+  -- message so an authenticated caller cannot enumerate link ids across
+  -- tenant boundaries by distinguishing "does not exist" from "exists but
+  -- is not yours" (same anti-pattern remove_member documents avoiding in
+  -- 20260903000900_role_management.sql). Once the caller is known to at
+  -- least belong to the link's team, "wrong role" is a fact they are
+  -- entitled to be told plainly.
   select team_id into v_team_id from public.player_links where id = p_link_id;
-  if v_team_id is null then
-    raise exception 'no such claim';
+  if v_team_id is null or not (v_team_id = any (public.my_member_team_ids())) then
+    raise exception 'no such claim on your teams';
   end if;
   if not (v_team_id = any (public.my_manage_team_ids())) then
     raise exception 'insufficient permissions on this team';

@@ -27,7 +27,7 @@ select is(
 select tests.login_as('member@local.test');
 select throws_ok(
   $$ select public.claim_player(104) $$,
-  'P0001', 'that player belongs to another team',
+  'P0001', 'no such player on your teams',
   'a member cannot claim a player on a team they do not belong to'
 );
 select throws_ok(
