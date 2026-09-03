@@ -253,6 +253,72 @@ export function useGetPlayerStats() {
   return useApiCall<any[], { organizationId: number | null; seasonIds?: number[]; gameIds?: number[] }>(fn)
 }
 
+export type PairingRow = {
+  scorerId: number
+  assisterId: number
+  scorerName: string
+  assisterName: string
+  count: number
+}
+
+export function useGetAssistPairings() {
+  const fn = useCallback(async (params: { organizationId: number | null; seasonIds?: number[]; gameIds?: number[] }) => {
+    // Resolve the games in scope first, same three-way logic as useGetPlayerStats:
+    // explicit gameIds wins, else games in seasonIds, else null (all-time).
+    let gamesQuery = supabase.from('games').select('id, season_id').eq('organization_id', params.organizationId)
+    if (params?.seasonIds && params.seasonIds.length > 0) {
+      gamesQuery = gamesQuery.in('season_id', params.seasonIds)
+    }
+    const { data: games, error: gamesError } = await gamesQuery
+    if (gamesError) throw new Error(gamesError.message)
+
+    const scopedGameIds = params?.gameIds && params.gameIds.length > 0
+      ? params.gameIds
+      : params?.seasonIds && params.seasonIds.length > 0
+        ? (games ?? []).map((g: any) => g.id)
+        : null
+
+    let eventsQuery = supabase
+      .from('game_events')
+      .select('player_id, related_player_id, event_type')
+    if (scopedGameIds) eventsQuery = eventsQuery.in('game_id', scopedGameIds)
+    const { data: events, error: eventsError } = await eventsQuery
+    if (eventsError) throw new Error(eventsError.message)
+
+    const { data: players, error: playersError } = await supabase
+      .from('players')
+      .select('id, display_name')
+      .eq('organization_id', params.organizationId)
+    if (playersError) throw new Error(playersError.message)
+
+    const playersMap = new Map(players?.map((p: any) => [p.id, p.display_name as string]) ?? [])
+
+    const tally = new Map<string, { scorerId: number; assisterId: number; count: number }>()
+    ;(events ?? []).forEach((e: any) => {
+      if (e.event_type !== 'Goal' || !e.player_id || !e.related_player_id) return
+      const key = `${e.player_id}:${e.related_player_id}`
+      const row = tally.get(key) ?? { scorerId: e.player_id, assisterId: e.related_player_id, count: 0 }
+      row.count++
+      tally.set(key, row)
+    })
+
+    const rows: PairingRow[] = [...tally.values()]
+      .filter(r => playersMap.has(r.scorerId) && playersMap.has(r.assisterId))
+      .map(r => ({
+        scorerId: r.scorerId,
+        assisterId: r.assisterId,
+        scorerName: playersMap.get(r.scorerId)!,
+        assisterName: playersMap.get(r.assisterId)!,
+        count: r.count,
+      }))
+
+    rows.sort((a, b) => b.count - a.count || a.scorerName.localeCompare(b.scorerName))
+
+    return rows.slice(0, 10)
+  }, [])
+  return useApiCall<PairingRow[], { organizationId: number | null; seasonIds?: number[]; gameIds?: number[] }>(fn)
+}
+
 export function useGetCumulativeStats() {
   const fn = useCallback(async (params: { organizationId: number | null; seasonId?: number }) => {
     // Fetch the season's games first so events can be filtered server-side
