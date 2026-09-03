@@ -1,5 +1,5 @@
 begin;
-select plan(6);
+select plan(7);
 
 select tests.login_as('member@local.test');
 
@@ -28,6 +28,12 @@ select throws_ok(
   '42501',
   'permission denied for table player_links',
   'no UPDATE privilege on player_links'
+);
+select throws_ok(
+  $$ truncate public.team_members $$,
+  '42501',
+  'permission denied for table team_members',
+  'no TRUNCATE privilege on team_members'
 );
 
 select is(

@@ -1,13 +1,15 @@
 -- Membership is read-only to clients. Every change goes through a
 -- security definer RPC that derives the caller from auth.uid(). Revoking
--- the privilege outright is stronger than a policy: a policy can be
--- misread, an absent grant cannot be satisfied.
+-- every privilege outright is stronger than a policy: a policy can be
+-- misread, an absent grant cannot be satisfied. `revoke all` (not just
+-- insert/update/delete) also strips TRUNCATE, which RLS does not govern
+-- at all, plus REFERENCES and TRIGGER.
 do $$
 declare t text;
 begin
   foreach t in array array['team_members', 'team_invites', 'player_links']
   loop
-    execute format('revoke insert, update, delete on public.%I from authenticated', t);
+    execute format('revoke all on public.%I from authenticated', t);
     execute format('revoke all on public.%I from anon', t);
     execute format('grant select on public.%I to authenticated', t);
   end loop;
