@@ -112,6 +112,7 @@ async function handleAppRequest(request: Request, env: Env, ctx: ExecutionContex
           });
           return new Response(JSON.stringify(result), { status: 200, headers: { "Content-Type": "application/json" } });
         } catch (err) {
+          Sentry.captureException(err);
           return new Response(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }), { status: 500, headers: { "Content-Type": "application/json" } });
         }
       }
@@ -149,6 +150,7 @@ async function handleAppRequest(request: Request, env: Env, ctx: ExecutionContex
 
       return new Response("Not Found", { status: 404 });
     } catch (error) {
+      Sentry.captureException(error);
       console.error("Worker error:", error);
       return new Response("Internal Server Error", { status: 500 });
     }
@@ -186,7 +188,10 @@ export default Sentry.withSentry(
           supabaseSecretKey: env.SUPABASE_SECRET_KEY,
         })
           .then(result => console.log("JAM sync:", JSON.stringify(result)))
-          .catch(err => console.error("JAM sync failed:", err instanceof Error ? err.message : String(err)))
+          .catch(err => {
+            Sentry.captureException(err);
+            console.error("JAM sync failed:", err instanceof Error ? err.message : String(err));
+          })
       );
     },
   },
