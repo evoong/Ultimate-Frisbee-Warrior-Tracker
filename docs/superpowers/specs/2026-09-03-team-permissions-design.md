@@ -178,7 +178,7 @@ create table public.team_invites (
   email        text   not null check (email = lower(email)),
   role         text   not null default 'member'
                       check (role in ('editor', 'member')),
-  invited_by   uuid   not null references auth.users(id),
+  invited_by   uuid   references auth.users(id),   -- null: created by migration
   created_at   timestamptz not null default now(),
   expires_at   timestamptz not null default now() + interval '30 days',
   accepted_at  timestamptz,
@@ -571,7 +571,8 @@ to `team_members` with `user_id`; `owner` becomes `captain`, `member` stays
 `member`. **A row whose email has no account becomes a pending invite, never
 a deletion** — otherwise cutover silently revokes access from people who were
 merely slow to sign up. Applied to the audited production state below, that
-means 9 real memberships, 1 pre-created captain, and 1 pending invite.
+means 9 real memberships, 1 pre-created captain, and 3 pending invites (one
+member with no account, plus two accounts with no membership).
 
 ### Production cutover
 
@@ -613,7 +614,17 @@ button.
 3. **`errriccccccccc@gmail.com`** has no account and becomes a pending
    invite at role `member`, preserving the access they have today.
 4. **`scruffy.selling@gmail.com` and `riceboxrandompurchases@gmail.com`**
-   hold no membership. Under 017 they can currently read and write
-   everything; after cutover they have no team and no access. This is
-   intended, and is called out here because it is a real behavior change
-   rather than a no-op.
+   hold accounts but no membership. Rather than losing access outright, each
+   receives a **pending invite at role `member`**, which `accept_invite()`
+   consumes at their next login. This preserves what they can do today under
+   017 without granting anything new. Two consequences worth stating:
+
+   - `riceboxrandompurchases@gmail.com` has an **unconfirmed** email, so it
+     cannot accept until the address is confirmed. That is the invite rule
+     working as designed, not a bug to route around.
+   - Backfill-created invites get a **90-day expiry** rather than the 30-day
+     default, because the recipient is not expecting an email and may not
+     log in soon. After expiry a captain re-invites through the normal flow.
+
+   Net effect at cutover: 10 members (including the captain) and 3 pending
+   invites.
