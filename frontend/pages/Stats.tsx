@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useGetGames } from '../hooks/backend/games'
 import { useGetPlayers } from '../hooks/backend/players'
-import { useGetPlayerStats, useGetSeasons, useGetCumulativeStats, useGetAllSeasons, useGetAssistPairings, type PairingRow, useGetGoalSequences, type GoalSequenceRow } from '../hooks/backend/stats'
+import { useGetPlayerStats, useGetSeasons, useGetCumulativeStats, useGetAllSeasons, useGetAssistPairings, type PairingRow } from '../hooks/backend/stats'
 import {
   useGetLeague, useGetOpponentHistory, computeStandings,
   useCreateLeagueTeam, useUpdateLeagueTeam, useDeleteLeagueTeam, useUpdateSeasonPoints,
@@ -209,11 +209,12 @@ export default function Stats() {
   )
 }
 
-type NetworkNode = { id: number; name: string; fullName: string; goals: number; assists: number }
-// Generic directed edge: fromId -> toId, weighted by count. The Assists
-// graph uses assister -> scorer (from useGetAssistPairings); the Goals
-// graph uses previous-scorer -> this-scorer (from useGetGoalSequences) —
-// two different queries feeding the same rendering shape.
+type NetworkNode = { id: number; name: string; fullName: string; goals: number; assists: number; genderMatch: string | null }
+// Generic directed edge: fromId -> toId, weighted by count. Both the
+// Assists and Goals graphs render the exact same assister -> scorer pairs
+// (from useGetAssistPairings) — they differ only in which side of the edge
+// counts as "the selected player's own stat" and what a node's size means,
+// not in the underlying data.
 type DirectedEdge = { fromId: number; toId: number; count: number }
 
 // Greedy farthest-point placement: given items already ranked most- to
@@ -300,36 +301,68 @@ function SelectedPlayerBadge({ node }: { node: NetworkNode | undefined }) {
 }
 
 // A directed network graph: nodes at fixed shared `positions`, edges as
-// curved arrows reusing the arrowhead marker technique from the Strategy
-// board's arrow drawing, each labeled with its count. Clicking a node
-// highlights only its own edges; clicking again or clicking empty space
-// clears the highlight. Reused for both the Assists graph (assister ->
-// scorer) and the Goals graph (previous scorer -> this scorer) — same
-// rendering, different edge data and node-sizing stat per instance.
-function DirectedNetworkGraph({ nodes, edges, positions, color, arrowId, weightOf, selectedId, onSelect }: {
+// curved lines each labeled with their count. Clicking a node highlights
+// only its own edges; clicking again or clicking empty space clears the
+// highlight. Reused for both the Assists graph (own side: assister/from,
+// sized by assists) and the Goals graph (own side: scorer/to, sized by
+// goals) — both render the exact same assister->scorer edges, differing
+// only in ownEdgeSide and weightOf.
+function DirectedNetworkGraph({ nodes, edges, positions, color, weightOf, selectedId, onSelect, ownEdgeSide }: {
   nodes: NetworkNode[]
+  // Raw, per-direction edges — NOT pre-merged. Merging A->B and B->A into
+  // one visual line happens inside this component (see renderEdges below),
+  // but attribution (isOwnEdge, highlightIds) must run against the real
+  // per-direction counts: collapsing them first would let a real edge in
+  // the smaller direction vanish from its owner's own-side total whenever
+  // the reverse direction happened to be larger.
   edges: DirectedEdge[]
   positions: Map<number, { x: number; y: number }>
   color: string
-  arrowId: string
   weightOf: (n: NetworkNode) => number
   // Selection is lifted to the caller so selecting a player in one graph
   // (Assists or Goals) highlights that same player in the other.
   selectedId: number | null
   onSelect: (id: number | null) => void
+  // Which end of an edge counts as "this is the selected player's own
+  // stat" when deciding what to highlight: 'from' for Assists (they gave
+  // the assist), 'to' for Goals (the sequence edge lands on their goal).
+  // The other direction — an assist they received, or being the
+  // predecessor to someone else's goal — still involves them but isn't
+  // their own number, so it stays dimmed even though it touches their node.
+  ownEdgeSide: 'from' | 'to'
 }) {
   const size = 320
-  const maxCount = Math.max(1, ...edges.map(e => e.count))
-  const maxWeight = Math.max(1, ...nodes.map(weightOf))
+  const isOwnEdge = (e: DirectedEdge, id: number) => (ownEdgeSide === 'from' ? e.fromId === id : e.toId === id)
   const highlightIds = useMemo(() => {
     if (selectedId == null) return null
     const s = new Set<number>([selectedId])
     edges.forEach(e => {
-      if (e.fromId === selectedId) s.add(e.toId)
-      if (e.toId === selectedId) s.add(e.fromId)
+      if (isOwnEdge(e, selectedId)) s.add(ownEdgeSide === 'from' ? e.toId : e.fromId)
     })
     return s
-  }, [selectedId, edges])
+  }, [selectedId, edges, ownEdgeSide])
+
+  // One drawn line per unordered pair (see mergeBidirectionalEdges): the
+  // label/thickness reflect the combined count, direction follows whichever
+  // side is larger, but this is display-only — highlightIds/isOwnEdge above
+  // already used the real per-direction edges.
+  const renderEdges = useMemo(() => mergeBidirectionalEdges(edges), [edges])
+  const maxCount = Math.max(1, ...renderEdges.map(e => e.count))
+  const maxWeight = Math.max(1, ...nodes.map(weightOf))
+  // A merged line is "own" if either direction between this pair belonged
+  // to the selected player — otherwise a real edge of theirs (now folded
+  // into a line drawn in the other direction) would incorrectly dim out.
+  const pairIsOwn = (e: DirectedEdge, id: number) =>
+    edges.some(raw => ((raw.fromId === e.fromId && raw.toId === e.toId) || (raw.fromId === e.toId && raw.toId === e.fromId)) && isOwnEdge(raw, id))
+  // The merged line's count is the combined total of both directions —
+  // right for the unselected, whole-team view, but overstates a selected
+  // player's own number if their partner also has edges the other way
+  // (e.g. Jackson fed Eric 3 times, Eric fed Jackson 1 time: the merged
+  // line reads "4", but Eric's own contribution is 1). Once someone's
+  // selected, show only their own-direction count on lines that are theirs.
+  const ownCountFor = (e: DirectedEdge, id: number) =>
+    edges.filter(raw => ((raw.fromId === e.fromId && raw.toId === e.toId) || (raw.fromId === e.toId && raw.toId === e.fromId)) && isOwnEdge(raw, id))
+      .reduce((sum, raw) => sum + raw.count, 0)
 
   return (
     <svg
@@ -338,16 +371,13 @@ function DirectedNetworkGraph({ nodes, edges, positions, color, arrowId, weightO
       style={{ maxHeight: 440 }}
       onClick={() => onSelect(null)}
     >
-      <defs>
-        <marker id={arrowId} viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-          <path d="M0,0 L10,5 L0,10 z" fill={color} />
-        </marker>
-      </defs>
-      {edges.map(e => {
+      {renderEdges.map(e => {
         const from = positions.get(e.fromId)
         const to = positions.get(e.toId)
         if (!from || !to) return null
-        const dimmed = selectedId != null && e.fromId !== selectedId && e.toId !== selectedId
+        const isOwn = selectedId != null && pairIsOwn(e, selectedId)
+        const dimmed = selectedId != null && !isOwn
+        const displayCount = isOwn ? ownCountFor(e, selectedId!) : e.count
         // Curve each edge away from the straight line (perpendicular offset
         // from the midpoint) so edges sharing an endpoint don't overlap.
         const mx = (from.x + to.x) / 2
@@ -358,7 +388,7 @@ function DirectedNetworkGraph({ nodes, edges, positions, color, arrowId, weightO
         const curveOffset = 18
         const cx = mx + (-dy / dist) * curveOffset
         const cy = my + (dx / dist) * curveOffset
-        const strokeWidth = 1.5 + (e.count / maxCount) * 4
+        const strokeWidth = 1.5 + (displayCount / maxCount) * 4
         // Point on the quadratic curve at t=0.5 (not the control point
         // itself), for placing the count label on the visible line.
         const labelX = 0.25 * from.x + 0.5 * cx + 0.25 * to.x
@@ -371,11 +401,10 @@ function DirectedNetworkGraph({ nodes, edges, positions, color, arrowId, weightO
               strokeWidth={strokeWidth}
               fill="none"
               opacity={0.8}
-              markerEnd={`url(#${arrowId})`}
             />
             <circle cx={labelX} cy={labelY} r={7} fill="hsl(var(--card))" stroke="hsl(var(--border))" strokeWidth={0.75} />
             <text x={labelX} y={labelY} textAnchor="middle" dominantBaseline="central" fontSize={8} fill="hsl(var(--foreground))">
-              {e.count}
+              {displayCount}
             </text>
           </g>
         )
@@ -385,6 +414,7 @@ function DirectedNetworkGraph({ nodes, edges, positions, color, arrowId, weightO
         if (!pos) return null
         const dimmed = highlightIds != null && !highlightIds.has(n.id)
         const r = 11 + (weightOf(n) / maxWeight) * 8
+        const outline = n.genderMatch === 'Man' ? 'hsl(var(--gender-man))' : n.genderMatch === 'Woman' ? 'hsl(var(--gender-woman))' : 'hsl(var(--border))'
         return (
           <g
             key={n.id}
@@ -393,7 +423,7 @@ function DirectedNetworkGraph({ nodes, edges, positions, color, arrowId, weightO
             style={{ cursor: 'pointer' }}
             onClick={e => { e.stopPropagation(); onSelect(selectedId === n.id ? null : n.id) }}
           >
-            <circle r={r} fill="hsl(var(--card))" stroke="hsl(var(--border))" strokeWidth={1.5} />
+            <circle r={r} fill="hsl(var(--card))" stroke={outline} strokeWidth={2} />
             <text textAnchor="middle" dominantBaseline="central" fontSize={9} fill="hsl(var(--foreground))">
               {n.name}
             </text>
@@ -417,7 +447,9 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
   const { data: cumulativeRaw, loading: cumulativeLoading, trigger: fetchCumulative } = useGetCumulativeStats()
   const { data: progressionRoster, trigger: fetchProgressionRoster } = useGetPlayers()
   const { data: pairings, loading: pairingsLoading, error: pairingsError, trigger: fetchPairings } = useGetAssistPairings()
-  const { data: goalSequences, loading: goalSeqLoading, error: goalSeqError, trigger: fetchGoalSequences } = useGetGoalSequences()
+  // Org-wide, unscoped by season (unlike progressionRoster above) — just a
+  // gender_match lookup for the Assist Network's node outlines.
+  const { data: orgPlayers, trigger: fetchOrgPlayers } = useGetPlayers()
 
   const [filterType, setFilterType] = useState<'all' | 'season' | 'games'>('all')
   const [selectedSeasonIds, setSelectedSeasonIds] = useState<number[]>([])
@@ -426,6 +458,7 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
   // Shared between the Assists and Goals network graphs, so selecting a
   // player in one highlights them in the other too.
   const [networkSelectedId, setNetworkSelectedId] = useState<number | null>(null)
+  const [includeSubsInNetwork, setIncludeSubsInNetwork] = useState(true)
 
   // Summary Table column visibility/formulas/sort are a per-device viewing
   // preference (same convention as Strategy's transition-speed setting),
@@ -534,6 +567,7 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
     fetchGames({ organizationId: currentOrgId })
     fetchSeasons({ organizationId: currentOrgId })
     fetchAllSeasons({ organizationId: currentOrgId })
+    fetchOrgPlayers({ organizationId: currentOrgId })
   }, [currentOrgId])
 
   // Default both filters to the latest Jam season that's actually been played
@@ -554,29 +588,24 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
 
   useEffect(() => {
     if (currentOrgId == null) return
-    // limit: 200 is a practical "all pairs"/"all co-scorer pairs" ceiling —
-    // the Top Pairings card and the two Assist Network graphs each derive
-    // their own view from these two fetches (top 10 by count, and edges
-    // among the top-12-node roster, respectively) rather than hitting the
-    // network separately per view.
+    // limit: 200 is a practical "all pairs" ceiling — the Top Pairings card
+    // and the Assist Network's two graphs (Assists and Goals, which now
+    // read the same pairing data) each derive their own view from this one
+    // fetch rather than hitting the network separately per view.
     if (filterType === 'all') {
       fetchStats({ organizationId: currentOrgId })
       fetchPairings({ organizationId: currentOrgId, limit: 200 })
-      fetchGoalSequences({ organizationId: currentOrgId, limit: 200 })
     } else if (filterType === 'season') {
       if (selectedSeasonIds.length > 0) {
         fetchStats({ seasonIds: selectedSeasonIds, organizationId: currentOrgId })
         fetchPairings({ seasonIds: selectedSeasonIds, organizationId: currentOrgId, limit: 200 })
-        fetchGoalSequences({ seasonIds: selectedSeasonIds, organizationId: currentOrgId, limit: 200 })
       } else {
         fetchStats({ organizationId: currentOrgId })
         fetchPairings({ organizationId: currentOrgId, limit: 200 })
-        fetchGoalSequences({ organizationId: currentOrgId, limit: 200 })
       }
     } else if (filterType === 'games' && selectedGameIds.length > 0) {
       fetchStats({ gameIds: selectedGameIds, organizationId: currentOrgId })
       fetchPairings({ gameIds: selectedGameIds, organizationId: currentOrgId, limit: 200 })
-      fetchGoalSequences({ gameIds: selectedGameIds, organizationId: currentOrgId, limit: 200 })
     }
   }, [filterType, selectedSeasonIds, selectedGameIds, currentOrgId])
 
@@ -775,34 +804,44 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
     fullPairLabel: `${r.scorerName} ← ${r.assisterName}`,
     Assists: r.count,
   }))
-  // Assist Network's node set: the same top-12-by-(goals+assists) roster the
-  // Performance Chart already shows (see chartData above), so the two cards
-  // agree on "who counts" — plus player_id, which chartData doesn't carry.
+  // Assist Network's node set: essentially the whole roster (see the 30-cap
+  // below), ranked by goals+assists like the Performance Chart's chartData,
+  // optionally excluding subs first via includeSubsInNetwork — plus
+  // player_id and gender_match, which chartData doesn't carry.
+  const orgPlayerMap = new Map(
+    ((orgPlayers as { id: number; gender_match: string | null; is_sub: boolean }[] | undefined) ?? []).map(p => [p.id, p])
+  )
   const networkNodes: NetworkNode[] = statsArr
     ? [...statsArr]
+        .filter(p => includeSubsInNetwork || orgPlayerMap.get(p.player_id)?.is_sub !== true)
         .sort((a, b) => parseInt(b.goals) + parseInt(b.assists) - (parseInt(a.goals) + parseInt(a.assists)))
-        .slice(0, 12)
-        .map(p => ({ id: p.player_id, name: p.player_name.split(' ')[0], fullName: p.player_name, goals: parseInt(p.goals), assists: parseInt(p.assists) }))
+        // 30 is well above any real roster size, so nobody with a real
+        // connection gets silently dropped (unlike the Performance Chart's
+        // top-12 cap above, which exists purely to keep that bar chart
+        // short — this cap exists only as a sanity ceiling).
+        .slice(0, 30)
+        .map(p => ({
+          id: p.player_id,
+          name: p.player_name.split(' ')[0],
+          fullName: p.player_name,
+          goals: parseInt(p.goals),
+          assists: parseInt(p.assists),
+          genderMatch: orgPlayerMap.get(p.player_id)?.gender_match ?? null,
+        }))
     : []
   const networkNodeIds = new Set(networkNodes.map(n => n.id))
-  // Merged: two players who've assisted each other both ways (Jackson fed
-  // Eric 1, Eric fed Jackson 3) show as one connection, not two — same
-  // treatment as the Goals graph below.
-  const assistEdges: DirectedEdge[] = mergeBidirectionalEdges(
-    pairingRows
-      .filter(r => networkNodeIds.has(r.scorerId) && networkNodeIds.has(r.assisterId))
-      .map(r => ({ fromId: r.assisterId, toId: r.scorerId, count: r.count }))
-  )
-  const goalSeqRows = (goalSequences as GoalSequenceRow[] | undefined) ?? []
-  const goalSeqEdges: DirectedEdge[] = mergeBidirectionalEdges(
-    goalSeqRows
-      .filter(r => networkNodeIds.has(r.fromId) && networkNodeIds.has(r.toId))
-      .map(r => ({ fromId: r.fromId, toId: r.toId, count: r.count }))
-  )
+  // Raw, per-direction edges — NOT merged here. DirectedNetworkGraph merges
+  // A<->B into one visual line itself, but needs the real per-direction
+  // counts intact to correctly attribute "own" edges when a player is
+  // selected (see that component's comments).
+  const assistEdges: DirectedEdge[] = pairingRows
+    .filter(r => networkNodeIds.has(r.scorerId) && networkNodeIds.has(r.assisterId))
+    .map(r => ({ fromId: r.assisterId, toId: r.scorerId, count: r.count }))
   // Shared node layout for both graphs (so a player sits in the same spot
-  // in each — see circleLayout), ranked by combined Assists+Goals degree.
+  // in each — see circleLayout). Both graphs render assistEdges, so one
+  // degree map serves both.
   const networkDegree = new Map<number, number>()
-  ;[...assistEdges, ...goalSeqEdges].forEach(e => {
+  assistEdges.forEach(e => {
     networkDegree.set(e.fromId, (networkDegree.get(e.fromId) ?? 0) + e.count)
     networkDegree.set(e.toId, (networkDegree.get(e.toId) ?? 0) + e.count)
   })
@@ -1023,8 +1062,17 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
           {/* Assist Network */}
           <Card className="bg-card text-card-foreground border-border">
             <CardHeader className="pb-2">
-              <CardTitle className="text-base flex items-center gap-2">
-                <Share2 className="w-4 h-4" />Assist Network
+              <CardTitle className="text-base flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2"><Share2 className="w-4 h-4" />Assist Network</span>
+                <label className="flex items-center gap-1.5 text-xs font-normal text-muted-foreground cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={includeSubsInNetwork}
+                    onChange={e => setIncludeSubsInNetwork(e.target.checked)}
+                    className="w-3.5 h-3.5 rounded border-border"
+                  />
+                  Include subs
+                </label>
               </CardTitle>
               <p className="text-xs text-muted-foreground">Tap a player to highlight their connections. Numbers on each line are counts.</p>
             </CardHeader>
@@ -1044,10 +1092,10 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
                       edges={assistEdges}
                       positions={networkPositions}
                       color="#2563eb"
-                      arrowId="network-arrowhead-assists"
                       weightOf={n => n.assists}
                       selectedId={networkSelectedId}
                       onSelect={setNetworkSelectedId}
+                      ownEdgeSide="from"
                     />
                     <SelectedPlayerBadge node={selectedNetworkNode} />
                   </FadeIn>
@@ -1060,31 +1108,31 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
               </div>
 
               <div>
-                <p className="text-sm font-medium text-green-600 dark:text-green-400 mb-1 text-center">Goals — scoring order within each game</p>
-                {goalSeqLoading ? (
+                <p className="text-sm font-medium text-green-600 dark:text-green-400 mb-1 text-center">Goals — who scored off whom</p>
+                {pairingsLoading ? (
                   <div className="flex items-center justify-center h-64">
                     <Skeleton className="w-56 h-56 rounded-full" />
                   </div>
-                ) : goalSeqError ? (
-                  <div className="flex items-center justify-center h-48 text-destructive text-sm">Error: {goalSeqError}</div>
-                ) : goalSeqEdges.length > 0 ? (
+                ) : pairingsError ? (
+                  <div className="flex items-center justify-center h-48 text-destructive text-sm">Error: {pairingsError}</div>
+                ) : assistEdges.length > 0 ? (
                   <FadeIn className="w-full relative">
                     <DirectedNetworkGraph
                       nodes={networkNodes}
-                      edges={goalSeqEdges}
+                      edges={assistEdges}
                       positions={networkPositions}
                       color="#16a34a"
-                      arrowId="network-arrowhead-goals"
                       weightOf={n => n.goals}
                       selectedId={networkSelectedId}
                       onSelect={setNetworkSelectedId}
+                      ownEdgeSide="to"
                     />
                     <SelectedPlayerBadge node={selectedNetworkNode} />
                   </FadeIn>
                 ) : (
                   <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
                     <Target className="w-10 h-10 mb-2 opacity-40" />
-                    <p className="text-sm">{filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No consecutive goals in the same game yet'}</p>
+                    <p className="text-sm">{filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No assisted goals in this range yet'}</p>
                   </div>
                 )}
               </div>
