@@ -24,7 +24,7 @@ import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
 import {
   BarChart3, TrendingUp, LineChart as LineChartIcon, Settings2, ChevronUp, ChevronDown,
-  ChevronsUpDown, ChevronLeft, Plus, Trash2, Award, Target, Pencil, Check, X,
+  ChevronsUpDown, ChevronLeft, Plus, Trash2, Award, Target, Pencil, Check, X, Share2,
 } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -209,6 +209,126 @@ export default function Stats() {
   )
 }
 
+type NetworkNode = { id: number; name: string; fullName: string; goals: number; assists: number }
+type NetworkEdge = { scorerId: number; assisterId: number; count: number }
+type NetworkMode = 'ga' | 'goals' | 'assists'
+
+const NETWORK_MODE_TABS: { key: NetworkMode; label: string }[] = [
+  { key: 'ga', label: 'Goals + Assists' },
+  { key: 'goals', label: 'Goals' },
+  { key: 'assists', label: 'Assists' },
+]
+
+// Node size reflects the selected stat; the edges themselves (who assisted
+// whom, and how often — see NetworkEdge) never change between modes, only
+// how much visual weight each player's node carries.
+function nodeWeight(n: NetworkNode, mode: NetworkMode): number {
+  if (mode === 'goals') return n.goals
+  if (mode === 'assists') return n.assists
+  return n.goals + n.assists
+}
+
+// A directed scorer<-assister network: nodes evenly spaced on a circle (no
+// force-simulation layout — deterministic and simple, matching this file's
+// existing chart patterns), edges as curved arrows reusing the arrowhead
+// marker technique from the Strategy board's arrow drawing, each labeled
+// with its pairing count. Clicking a node highlights only its own edges;
+// clicking again or clicking empty space clears the highlight.
+function AssistNetworkGraph({ nodes, edges, mode }: { nodes: NetworkNode[]; edges: NetworkEdge[]; mode: NetworkMode }) {
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const size = 280
+  const center = size / 2
+  const radius = center - 40
+  const positions = new Map<number, { x: number; y: number }>()
+  nodes.forEach((n, i) => {
+    const angle = (i / nodes.length) * 2 * Math.PI - Math.PI / 2
+    positions.set(n.id, { x: center + radius * Math.cos(angle), y: center + radius * Math.sin(angle) })
+  })
+  const maxCount = Math.max(1, ...edges.map(e => e.count))
+  const maxWeight = Math.max(1, ...nodes.map(n => nodeWeight(n, mode)))
+  const highlightIds = useMemo(() => {
+    if (selectedId == null) return null
+    const s = new Set<number>([selectedId])
+    edges.forEach(e => {
+      if (e.scorerId === selectedId) s.add(e.assisterId)
+      if (e.assisterId === selectedId) s.add(e.scorerId)
+    })
+    return s
+  }, [selectedId, edges])
+
+  return (
+    <svg
+      viewBox={`0 0 ${size} ${size}`}
+      className="w-full touch-none"
+      style={{ maxHeight: 380 }}
+      onClick={() => setSelectedId(null)}
+    >
+      <defs>
+        <marker id="network-arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#2563eb" />
+        </marker>
+      </defs>
+      {edges.map(e => {
+        const from = positions.get(e.assisterId)
+        const to = positions.get(e.scorerId)
+        if (!from || !to) return null
+        const dimmed = selectedId != null && e.scorerId !== selectedId && e.assisterId !== selectedId
+        // Curve each edge away from the straight line (perpendicular offset
+        // from the midpoint) so a pair's two opposite-direction edges, or
+        // edges sharing an endpoint, don't render on top of each other.
+        const mx = (from.x + to.x) / 2
+        const my = (from.y + to.y) / 2
+        const dx = to.x - from.x
+        const dy = to.y - from.y
+        const dist = Math.hypot(dx, dy) || 1
+        const curveOffset = 14
+        const cx = mx + (-dy / dist) * curveOffset
+        const cy = my + (dx / dist) * curveOffset
+        const strokeWidth = 1 + (e.count / maxCount) * 3
+        // Point on the quadratic curve at t=0.5 (not the control point
+        // itself), for placing the count label on the visible line.
+        const labelX = 0.25 * from.x + 0.5 * cx + 0.25 * to.x
+        const labelY = 0.25 * from.y + 0.5 * cy + 0.25 * to.y
+        return (
+          <g key={`${e.assisterId}-${e.scorerId}`} opacity={dimmed ? 0.12 : 1}>
+            <path
+              d={`M ${from.x} ${from.y} Q ${cx} ${cy} ${to.x} ${to.y}`}
+              stroke="#2563eb"
+              strokeWidth={strokeWidth}
+              fill="none"
+              opacity={0.7}
+              markerEnd="url(#network-arrowhead)"
+            />
+            <circle cx={labelX} cy={labelY} r={6} fill="hsl(var(--card))" stroke="hsl(var(--border))" strokeWidth={0.75} />
+            <text x={labelX} y={labelY} textAnchor="middle" dominantBaseline="central" fontSize={7} fill="hsl(var(--foreground))">
+              {e.count}
+            </text>
+          </g>
+        )
+      })}
+      {nodes.map(n => {
+        const pos = positions.get(n.id)!
+        const dimmed = highlightIds != null && !highlightIds.has(n.id)
+        const r = 9 + (nodeWeight(n, mode) / maxWeight) * 7
+        return (
+          <g
+            key={n.id}
+            transform={`translate(${pos.x}, ${pos.y})`}
+            opacity={dimmed ? 0.3 : 1}
+            style={{ cursor: 'pointer' }}
+            onClick={e => { e.stopPropagation(); setSelectedId(id => (id === n.id ? null : n.id)) }}
+          >
+            <circle r={r} fill="hsl(var(--card))" stroke="hsl(var(--border))" strokeWidth={1.5} />
+            <text textAnchor="middle" dominantBaseline="central" fontSize={8} fill="hsl(var(--foreground))">
+              {n.name}
+            </text>
+          </g>
+        )
+      })}
+    </svg>
+  )
+}
+
 // Overview and Table share one Filters card and one useGetPlayerStats
 // fetch (previously split across the Stats and Ranking pages, which
 // duplicated the same filter UI and query); only the content below the
@@ -227,6 +347,7 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
   const [selectedSeasonIds, setSelectedSeasonIds] = useState<number[]>([])
   const [selectedGameIds, setSelectedGameIds] = useState<number[]>([])
   const [chartTab, setChartTab] = useState<ChartTab>('combined')
+  const [networkMode, setNetworkMode] = useState<NetworkMode>('ga')
 
   // Summary Table column visibility/formulas/sort are a per-device viewing
   // preference (same convention as Strategy's transition-speed setting),
@@ -355,20 +476,24 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
 
   useEffect(() => {
     if (currentOrgId == null) return
+    // limit: 200 is a practical "all pairs" ceiling — the Top Pairings card
+    // and the Assist Network graph both derive their own view from this one
+    // fetch (top 10 by count, and edges among the top-12-node roster,
+    // respectively) rather than each hitting the network separately.
     if (filterType === 'all') {
       fetchStats({ organizationId: currentOrgId })
-      fetchPairings({ organizationId: currentOrgId })
+      fetchPairings({ organizationId: currentOrgId, limit: 200 })
     } else if (filterType === 'season') {
       if (selectedSeasonIds.length > 0) {
         fetchStats({ seasonIds: selectedSeasonIds, organizationId: currentOrgId })
-        fetchPairings({ seasonIds: selectedSeasonIds, organizationId: currentOrgId })
+        fetchPairings({ seasonIds: selectedSeasonIds, organizationId: currentOrgId, limit: 200 })
       } else {
         fetchStats({ organizationId: currentOrgId })
-        fetchPairings({ organizationId: currentOrgId })
+        fetchPairings({ organizationId: currentOrgId, limit: 200 })
       }
     } else if (filterType === 'games' && selectedGameIds.length > 0) {
       fetchStats({ gameIds: selectedGameIds, organizationId: currentOrgId })
-      fetchPairings({ gameIds: selectedGameIds, organizationId: currentOrgId })
+      fetchPairings({ gameIds: selectedGameIds, organizationId: currentOrgId, limit: 200 })
     }
   }, [filterType, selectedSeasonIds, selectedGameIds, currentOrgId])
 
@@ -557,12 +682,29 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
   const avgAssists = statsArr && statsArr.length > 0 && gamesInFilter > 0
     ? (statsArr.reduce((s, p) => s + parseInt(p.assists), 0) / gamesInFilter).toFixed(2)
     : null
+  // pairingRows is the full fetched set (already sorted by count desc, see
+  // useGetAssistPairings), shared by the Top Pairings bar chart (top 10) and
+  // the Assist Network graph (edges among its own top-12-node roster) below.
   const pairingRows = (pairings as PairingRow[] | undefined) ?? []
-  const pairChartData = pairingRows.map(r => ({
+  const topPairingRows = pairingRows.slice(0, 10)
+  const pairChartData = topPairingRows.map(r => ({
     pairLabel: `${r.scorerName.split(' ')[0]} ← ${r.assisterName.split(' ')[0]}`,
     fullPairLabel: `${r.scorerName} ← ${r.assisterName}`,
     Assists: r.count,
   }))
+  // Assist Network's node set: the same top-12-by-(goals+assists) roster the
+  // Performance Chart already shows (see chartData above), so the two cards
+  // agree on "who counts" — plus player_id, which chartData doesn't carry.
+  const networkNodes: NetworkNode[] = statsArr
+    ? [...statsArr]
+        .sort((a, b) => parseInt(b.goals) + parseInt(b.assists) - (parseInt(a.goals) + parseInt(a.assists)))
+        .slice(0, 12)
+        .map(p => ({ id: p.player_id, name: p.player_name.split(' ')[0], fullName: p.player_name, goals: parseInt(p.goals), assists: parseInt(p.assists) }))
+    : []
+  const networkNodeIds = new Set(networkNodes.map(n => n.id))
+  const networkEdges: NetworkEdge[] = pairingRows
+    .filter(r => networkNodeIds.has(r.scorerId) && networkNodeIds.has(r.assisterId))
+    .map(r => ({ scorerId: r.scorerId, assisterId: r.assisterId, count: r.count }))
 
   return (
     <div className="space-y-4">
@@ -750,7 +892,7 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
               ) : pairingsError ? (
                 <div className="flex items-center justify-center h-48 text-destructive text-sm">Error: {pairingsError}</div>
               ) : pairingRows.length > 0 ? (
-                <FadeIn className="w-full" style={{ height: Math.max(160, pairingRows.length * 32) }}>
+                <FadeIn className="w-full" style={{ height: Math.max(160, topPairingRows.length * 32) }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
                       data={pairChartData}
@@ -769,6 +911,45 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
               ) : (
                 <div className="flex flex-col items-center justify-center h-48 text-muted-foreground">
                   <Target className="w-12 h-12 mb-3 opacity-40" />
+                  <p className="text-sm">{filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No assisted goals in this range yet'}</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Assist Network */}
+          <Card className="bg-card text-card-foreground border-border">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Share2 className="w-4 h-4" />Assist Network
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">Tap a player to highlight their connections. Arrows point from assister to scorer; numbers are assist counts.</p>
+              <div className="flex gap-1 mt-2 bg-muted rounded-lg p-1">
+                {NETWORK_MODE_TABS.map(t => (
+                  <button key={t.key} onClick={() => setNetworkMode(t.key)}
+                    className={`flex-1 text-xs py-1.5 px-2 rounded-md font-medium transition-colors ${networkMode === t.key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </CardHeader>
+            <CardContent className="pt-2">
+              {pairingsLoading ? (
+                <div className="flex items-center justify-center h-64">
+                  <Skeleton className="w-56 h-56 rounded-full" />
+                </div>
+              ) : pairingsError ? (
+                <div className="flex items-center justify-center h-48 text-destructive text-sm">Error: {pairingsError}</div>
+              ) : networkEdges.length > 0 ? (
+                <FadeIn className="w-full flex justify-center">
+                  <div className="w-full max-w-[320px]">
+                    <AssistNetworkGraph nodes={networkNodes} edges={networkEdges} mode={networkMode} />
+                  </div>
+                </FadeIn>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-48 text-muted-foreground">
+                  <Share2 className="w-12 h-12 mb-3 opacity-40" />
                   <p className="text-sm">{filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No assisted goals in this range yet'}</p>
                 </div>
               )}
