@@ -15,11 +15,13 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { McpAgent } from 'agents/mcp'
 import { registerUfwtMcpTools } from './mcpTools.js'
 import type { McpAuthProps } from './mcpOAuth.js'
+import * as Sentry from '@sentry/cloudflare'
 
 interface Env {
   SUPABASE_URL: string
   SUPABASE_SECRET_KEY: string
   MCP_ORGANIZATION_ID?: string
+  SENTRY_DSN_WORKER: string
 }
 
 // `McpAuthProps` (just `{ email }`) is the identity OAuthProvider verified
@@ -27,7 +29,7 @@ interface Env {
 // calls still run under the service-role key below (same trust model as
 // mcp-server/index.ts), so `this.props.email` isn't consulted for access
 // control yet — it's available for a future per-action attribution feature.
-export class UfwtMcp extends McpAgent<Env, {}, McpAuthProps> {
+class UfwtMcpBase extends McpAgent<Env, {}, McpAuthProps> {
   server = new McpServer({ name: 'ultimate-frisbee-warrior-tracker', version: '1.0.0' })
 
   async init() {
@@ -35,3 +37,8 @@ export class UfwtMcp extends McpAgent<Env, {}, McpAuthProps> {
     registerUfwtMcpTools(this.server, { supabaseUrl: this.env.SUPABASE_URL, supabaseSecretKey: this.env.SUPABASE_SECRET_KEY }, orgId)
   }
 }
+
+export const UfwtMcp = Sentry.instrumentDurableObjectWithSentry(
+  (env: Env) => ({ dsn: env.SENTRY_DSN_WORKER }),
+  UfwtMcpBase,
+)
