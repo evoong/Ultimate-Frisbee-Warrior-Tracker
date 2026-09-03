@@ -1,9 +1,6 @@
 begin;
 select plan(5);
 
--- EXPECTED TO FAIL until Task 14 replaces 017's `using (true)` policies.
--- Do not weaken or skip this test; it is the suite's proof of validity.
---
 -- Canary: proves RLS is actually applied under tests.login_as. If the test
 -- session were running as a table owner or BYPASSRLS role, this returns
 -- rows and every other policy test in this suite is meaningless.
