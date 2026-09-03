@@ -319,6 +319,90 @@ export function useGetAssistPairings() {
   return useApiCall<PairingRow[], { organizationId: number | null; seasonIds?: number[]; gameIds?: number[]; limit?: number }>(fn)
 }
 
+export type GoalSequenceRow = {
+  fromId: number
+  toId: number
+  fromName: string
+  toName: string
+  count: number
+}
+
+// Goal sequences: a DIRECTED relationship built purely from Goal events —
+// no assist data at all, unlike useGetAssistPairings. For each game, order
+// its goals chronologically (event_timestamp — game_events has no point
+// number to order by) and link each goal to the goal immediately before it
+// in that same game:
+// (previous scorer) -> (this scorer). Each of a player's own goals can
+// therefore contribute at most one such incoming edge (the very first goal
+// of a game contributes none), so the edges landing on a player's node sum
+// to at most their own goal count — the same "one event, one edge" shape
+// useGetAssistPairings already has for assists.
+export function useGetGoalSequences() {
+  const fn = useCallback(async (params: { organizationId: number | null; seasonIds?: number[]; gameIds?: number[]; limit?: number }) => {
+    let gamesQuery = supabase.from('games').select('id, season_id').eq('organization_id', params.organizationId)
+    if (params?.seasonIds && params.seasonIds.length > 0) {
+      gamesQuery = gamesQuery.in('season_id', params.seasonIds)
+    }
+    const { data: games, error: gamesError } = await gamesQuery
+    if (gamesError) throw new Error(gamesError.message)
+
+    const scopedGameIds = params?.gameIds && params.gameIds.length > 0
+      ? params.gameIds
+      : params?.seasonIds && params.seasonIds.length > 0
+        ? (games ?? []).map((g: any) => g.id)
+        : null
+
+    let eventsQuery = supabase
+      .from('game_events')
+      .select('player_id, event_type, game_id, event_timestamp')
+    if (scopedGameIds) eventsQuery = eventsQuery.in('game_id', scopedGameIds)
+    const { data: events, error: eventsError } = await eventsQuery
+    if (eventsError) throw new Error(eventsError.message)
+
+    const { data: players, error: playersError } = await supabase
+      .from('players')
+      .select('id, display_name')
+      .eq('organization_id', params.organizationId)
+    if (playersError) throw new Error(playersError.message)
+
+    const playersMap = new Map(players?.map((p: any) => [p.id, p.display_name as string]) ?? [])
+
+    const goalsByGame = new Map<number, { player_id: number; event_timestamp: string }[]>()
+    ;(events ?? []).forEach((e: any) => {
+      if (e.event_type !== 'Goal' || !e.player_id || !playersMap.has(e.player_id)) return
+      if (!goalsByGame.has(e.game_id)) goalsByGame.set(e.game_id, [])
+      goalsByGame.get(e.game_id)!.push(e)
+    })
+
+    const tally = new Map<string, { fromId: number; toId: number; count: number }>()
+    goalsByGame.forEach(goals => {
+      goals.sort((a, b) => new Date(a.event_timestamp).getTime() - new Date(b.event_timestamp).getTime())
+      for (let i = 1; i < goals.length; i++) {
+        const fromId = goals[i - 1]!.player_id
+        const toId = goals[i]!.player_id
+        if (fromId === toId) continue // same player scored twice in a row: not a connection
+        const key = `${fromId}:${toId}`
+        const row = tally.get(key) ?? { fromId, toId, count: 0 }
+        row.count++
+        tally.set(key, row)
+      }
+    })
+
+    const rows: GoalSequenceRow[] = [...tally.values()].map(r => ({
+      fromId: r.fromId,
+      toId: r.toId,
+      fromName: playersMap.get(r.fromId)!,
+      toName: playersMap.get(r.toId)!,
+      count: r.count,
+    }))
+
+    rows.sort((a, b) => b.count - a.count || a.fromName.localeCompare(b.fromName) || a.toName.localeCompare(b.toName))
+
+    return rows.slice(0, params.limit ?? 10)
+  }, [])
+  return useApiCall<GoalSequenceRow[], { organizationId: number | null; seasonIds?: number[]; gameIds?: number[]; limit?: number }>(fn)
+}
+
 export function useGetCumulativeStats() {
   const fn = useCallback(async (params: { organizationId: number | null; seasonId?: number }) => {
     // Fetch the season's games first so events can be filtered server-side

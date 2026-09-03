@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useGetGames } from '../hooks/backend/games'
 import { useGetPlayers } from '../hooks/backend/players'
-import { useGetPlayerStats, useGetSeasons, useGetCumulativeStats, useGetAllSeasons, useGetAssistPairings, type PairingRow } from '../hooks/backend/stats'
+import { useGetPlayerStats, useGetSeasons, useGetCumulativeStats, useGetAllSeasons, useGetAssistPairings, type PairingRow, useGetGoalSequences, type GoalSequenceRow } from '../hooks/backend/stats'
 import {
   useGetLeague, useGetOpponentHistory, computeStandings,
   useCreateLeagueTeam, useUpdateLeagueTeam, useDeleteLeagueTeam, useUpdateSeasonPoints,
@@ -210,14 +210,77 @@ export default function Stats() {
 }
 
 type NetworkNode = { id: number; name: string; fullName: string; goals: number; assists: number }
-type NetworkEdge = { scorerId: number; assisterId: number; count: number }
-type NetworkMode = 'goals' | 'assists'
+// Generic directed edge: fromId -> toId, weighted by count. The Assists
+// graph uses assister -> scorer (from useGetAssistPairings); the Goals
+// graph uses previous-scorer -> this-scorer (from useGetGoalSequences) —
+// two different queries feeding the same rendering shape.
+type DirectedEdge = { fromId: number; toId: number; count: number }
 
-// Node size reflects the selected stat; the edges themselves (who assisted
-// whom, and how often — see NetworkEdge) never change between the Goals and
-// Assists graphs, only how much visual weight each player's node carries.
-function nodeWeight(n: NetworkNode, mode: NetworkMode): number {
-  return mode === 'goals' ? n.goals : n.assists
+// Greedy farthest-point placement: given items already ranked most- to
+// least-connected, assigns slot 0 to the top item, then repeatedly gives
+// the next item whichever remaining slot is farthest (circularly) from
+// every slot already claimed. The 2nd-ranked item lands opposite the 1st,
+// the 3rd near a quarter-turn from both, and so on — so the handful of
+// heavily-connected nodes end up spread around the circle instead of
+// clustered together, which is what actually clutters a small area with
+// crossing edges. O(n^2), fine for a 12-node roster.
+function spreadOrder<T>(rankedDesc: T[]): T[] {
+  const n = rankedDesc.length
+  if (n === 0) return []
+  const claimedSlots: number[] = [0]
+  for (let k = 1; k < n; k++) {
+    let bestSlot = -1
+    let bestMinDist = -1
+    for (let s = 0; s < n; s++) {
+      if (claimedSlots.includes(s)) continue
+      const minDist = Math.min(...claimedSlots.map(u => Math.min(Math.abs(s - u), n - Math.abs(s - u))))
+      if (minDist > bestMinDist) { bestMinDist = minDist; bestSlot = s }
+    }
+    claimedSlots.push(bestSlot)
+  }
+  const result: T[] = new Array(n)
+  claimedSlots.forEach((slot, i) => { result[slot] = rankedDesc[i]! })
+  return result
+}
+
+// Circular layout shared by BOTH network graphs — computed once by the
+// caller (from combined Assists + Goals degree) and passed to both, so a
+// player sits in the same spot in both graphs rather than jumping between
+// them. Deterministic and simple (no force-simulation), matching this
+// file's existing chart patterns; node order is ranked by `degree` and run
+// through spreadOrder so the busiest nodes land apart from each other.
+function circleLayout(nodes: NetworkNode[], size: number, degree: Map<number, number>): Map<number, { x: number; y: number }> {
+  const center = size / 2
+  const radius = center - 56
+  const rankedDesc = [...nodes].sort((a, b) => (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0))
+  const ordered = spreadOrder(rankedDesc)
+  const positions = new Map<number, { x: number; y: number }>()
+  ordered.forEach((n, i) => {
+    const angle = (i / ordered.length) * 2 * Math.PI - Math.PI / 2
+    positions.set(n.id, { x: center + radius * Math.cos(angle), y: center + radius * Math.sin(angle) })
+  })
+  return positions
+}
+
+// A directed edge and its reverse (A->B, B->A) are two real, distinct facts
+// (e.g. Eric scored right before Jackson in one game, and right after him
+// in another), but drawing both makes it look like two separate
+// connections between the same two players. Collapse each unordered pair
+// into a single edge for display: keep whichever direction had the larger
+// count, with the combined total so no data is silently dropped.
+function mergeBidirectionalEdges(edges: DirectedEdge[]): DirectedEdge[] {
+  const merged = new Map<string, DirectedEdge>()
+  edges.forEach(e => {
+    const key = e.fromId < e.toId ? `${e.fromId}:${e.toId}` : `${e.toId}:${e.fromId}`
+    const existing = merged.get(key)
+    if (!existing) {
+      merged.set(key, { ...e })
+    } else {
+      const total = existing.count + e.count
+      merged.set(key, e.count > existing.count ? { fromId: e.fromId, toId: e.toId, count: total } : { ...existing, count: total })
+    }
+  })
+  return [...merged.values()]
 }
 
 // Simple per-player Goals/Assists totals list, shown alongside the two
@@ -239,41 +302,34 @@ function NetworkTotalsList({ nodes }: { nodes: NetworkNode[] }) {
   )
 }
 
-// mode='assists': arrows point assister -> scorer ("who I set up"), blue,
-// nodes sized by assists. mode='goals': the same pairs, arrows REVERSED to
-// scorer -> assister ("who I scored off"), green, nodes sized by goals.
-// Same underlying pairing data throughout — the two graphs differ in which
-// direction the relationship reads and what a bigger node means, not in a
-// separate dataset (a goal alone isn't a relationship between two players;
-// the assist is the only pairwise fact this data has).
-const NETWORK_COLOR: Record<NetworkMode, string> = { assists: '#2563eb', goals: '#16a34a' }
-
-// A directed network: nodes evenly spaced on a circle (no force-simulation
-// layout — deterministic and simple, matching this file's existing chart
-// patterns), edges as curved arrows reusing the arrowhead marker technique
-// from the Strategy board's arrow drawing, each labeled with its pairing
-// count. Clicking a node highlights only its own edges; clicking again or
-// clicking empty space clears the highlight.
-function AssistNetworkGraph({ nodes, edges, mode }: { nodes: NetworkNode[]; edges: NetworkEdge[]; mode: NetworkMode }) {
-  const [selectedId, setSelectedId] = useState<number | null>(null)
+// A directed network graph: nodes at fixed shared `positions`, edges as
+// curved arrows reusing the arrowhead marker technique from the Strategy
+// board's arrow drawing, each labeled with its count. Clicking a node
+// highlights only its own edges; clicking again or clicking empty space
+// clears the highlight. Reused for both the Assists graph (assister ->
+// scorer) and the Goals graph (previous scorer -> this scorer) — same
+// rendering, different edge data and node-sizing stat per instance.
+function DirectedNetworkGraph({ nodes, edges, positions, color, arrowId, weightOf, selectedId, onSelect }: {
+  nodes: NetworkNode[]
+  edges: DirectedEdge[]
+  positions: Map<number, { x: number; y: number }>
+  color: string
+  arrowId: string
+  weightOf: (n: NetworkNode) => number
+  // Selection is lifted to the caller so selecting a player in one graph
+  // (Assists or Goals) highlights that same player in the other.
+  selectedId: number | null
+  onSelect: (id: number | null) => void
+}) {
   const size = 320
-  const center = size / 2
-  const radius = center - 56
-  const color = NETWORK_COLOR[mode]
-  const markerId = `network-arrowhead-${mode}`
-  const positions = new Map<number, { x: number; y: number }>()
-  nodes.forEach((n, i) => {
-    const angle = (i / nodes.length) * 2 * Math.PI - Math.PI / 2
-    positions.set(n.id, { x: center + radius * Math.cos(angle), y: center + radius * Math.sin(angle) })
-  })
   const maxCount = Math.max(1, ...edges.map(e => e.count))
-  const maxWeight = Math.max(1, ...nodes.map(n => nodeWeight(n, mode)))
+  const maxWeight = Math.max(1, ...nodes.map(weightOf))
   const highlightIds = useMemo(() => {
     if (selectedId == null) return null
     const s = new Set<number>([selectedId])
     edges.forEach(e => {
-      if (e.scorerId === selectedId) s.add(e.assisterId)
-      if (e.assisterId === selectedId) s.add(e.scorerId)
+      if (e.fromId === selectedId) s.add(e.toId)
+      if (e.toId === selectedId) s.add(e.fromId)
     })
     return s
   }, [selectedId, edges])
@@ -283,25 +339,20 @@ function AssistNetworkGraph({ nodes, edges, mode }: { nodes: NetworkNode[]; edge
       viewBox={`0 0 ${size} ${size}`}
       className="w-full touch-none"
       style={{ maxHeight: 440 }}
-      onClick={() => setSelectedId(null)}
+      onClick={() => onSelect(null)}
     >
       <defs>
-        <marker id={markerId} viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <marker id={arrowId} viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0,0 L10,5 L0,10 z" fill={color} />
         </marker>
       </defs>
       {edges.map(e => {
-        // mode='assists' reads the pair as assister -> scorer; mode='goals'
-        // reverses it to scorer -> assister. Same pair, opposite arrow.
-        const fromId = mode === 'assists' ? e.assisterId : e.scorerId
-        const toId = mode === 'assists' ? e.scorerId : e.assisterId
-        const from = positions.get(fromId)
-        const to = positions.get(toId)
+        const from = positions.get(e.fromId)
+        const to = positions.get(e.toId)
         if (!from || !to) return null
-        const dimmed = selectedId != null && e.scorerId !== selectedId && e.assisterId !== selectedId
+        const dimmed = selectedId != null && e.fromId !== selectedId && e.toId !== selectedId
         // Curve each edge away from the straight line (perpendicular offset
-        // from the midpoint) so a pair's two opposite-direction edges, or
-        // edges sharing an endpoint, don't render on top of each other.
+        // from the midpoint) so edges sharing an endpoint don't overlap.
         const mx = (from.x + to.x) / 2
         const my = (from.y + to.y) / 2
         const dx = to.x - from.x
@@ -316,14 +367,14 @@ function AssistNetworkGraph({ nodes, edges, mode }: { nodes: NetworkNode[]; edge
         const labelX = 0.25 * from.x + 0.5 * cx + 0.25 * to.x
         const labelY = 0.25 * from.y + 0.5 * cy + 0.25 * to.y
         return (
-          <g key={`${e.assisterId}-${e.scorerId}`} opacity={dimmed ? 0.12 : 1}>
+          <g key={`${e.fromId}-${e.toId}`} opacity={dimmed ? 0.12 : 1}>
             <path
               d={`M ${from.x} ${from.y} Q ${cx} ${cy} ${to.x} ${to.y}`}
               stroke={color}
               strokeWidth={strokeWidth}
               fill="none"
               opacity={0.8}
-              markerEnd={`url(#${markerId})`}
+              markerEnd={`url(#${arrowId})`}
             />
             <circle cx={labelX} cy={labelY} r={7} fill="hsl(var(--card))" stroke="hsl(var(--border))" strokeWidth={0.75} />
             <text x={labelX} y={labelY} textAnchor="middle" dominantBaseline="central" fontSize={8} fill="hsl(var(--foreground))">
@@ -333,16 +384,17 @@ function AssistNetworkGraph({ nodes, edges, mode }: { nodes: NetworkNode[]; edge
         )
       })}
       {nodes.map(n => {
-        const pos = positions.get(n.id)!
+        const pos = positions.get(n.id)
+        if (!pos) return null
         const dimmed = highlightIds != null && !highlightIds.has(n.id)
-        const r = 11 + (nodeWeight(n, mode) / maxWeight) * 8
+        const r = 11 + (weightOf(n) / maxWeight) * 8
         return (
           <g
             key={n.id}
             transform={`translate(${pos.x}, ${pos.y})`}
             opacity={dimmed ? 0.3 : 1}
             style={{ cursor: 'pointer' }}
-            onClick={e => { e.stopPropagation(); setSelectedId(id => (id === n.id ? null : n.id)) }}
+            onClick={e => { e.stopPropagation(); onSelect(selectedId === n.id ? null : n.id) }}
           >
             <circle r={r} fill="hsl(var(--card))" stroke="hsl(var(--border))" strokeWidth={1.5} />
             <text textAnchor="middle" dominantBaseline="central" fontSize={9} fill="hsl(var(--foreground))">
@@ -368,11 +420,15 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
   const { data: cumulativeRaw, loading: cumulativeLoading, trigger: fetchCumulative } = useGetCumulativeStats()
   const { data: progressionRoster, trigger: fetchProgressionRoster } = useGetPlayers()
   const { data: pairings, loading: pairingsLoading, error: pairingsError, trigger: fetchPairings } = useGetAssistPairings()
+  const { data: goalSequences, loading: goalSeqLoading, error: goalSeqError, trigger: fetchGoalSequences } = useGetGoalSequences()
 
   const [filterType, setFilterType] = useState<'all' | 'season' | 'games'>('all')
   const [selectedSeasonIds, setSelectedSeasonIds] = useState<number[]>([])
   const [selectedGameIds, setSelectedGameIds] = useState<number[]>([])
   const [chartTab, setChartTab] = useState<ChartTab>('combined')
+  // Shared between the Assists and Goals network graphs, so selecting a
+  // player in one highlights them in the other too.
+  const [networkSelectedId, setNetworkSelectedId] = useState<number | null>(null)
 
   // Summary Table column visibility/formulas/sort are a per-device viewing
   // preference (same convention as Strategy's transition-speed setting),
@@ -501,24 +557,29 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
 
   useEffect(() => {
     if (currentOrgId == null) return
-    // limit: 200 is a practical "all pairs" ceiling — the Top Pairings card
-    // and the Assist Network graph both derive their own view from this one
-    // fetch (top 10 by count, and edges among the top-12-node roster,
-    // respectively) rather than each hitting the network separately.
+    // limit: 200 is a practical "all pairs"/"all co-scorer pairs" ceiling —
+    // the Top Pairings card and the two Assist Network graphs each derive
+    // their own view from these two fetches (top 10 by count, and edges
+    // among the top-12-node roster, respectively) rather than hitting the
+    // network separately per view.
     if (filterType === 'all') {
       fetchStats({ organizationId: currentOrgId })
       fetchPairings({ organizationId: currentOrgId, limit: 200 })
+      fetchGoalSequences({ organizationId: currentOrgId, limit: 200 })
     } else if (filterType === 'season') {
       if (selectedSeasonIds.length > 0) {
         fetchStats({ seasonIds: selectedSeasonIds, organizationId: currentOrgId })
         fetchPairings({ seasonIds: selectedSeasonIds, organizationId: currentOrgId, limit: 200 })
+        fetchGoalSequences({ seasonIds: selectedSeasonIds, organizationId: currentOrgId, limit: 200 })
       } else {
         fetchStats({ organizationId: currentOrgId })
         fetchPairings({ organizationId: currentOrgId, limit: 200 })
+        fetchGoalSequences({ organizationId: currentOrgId, limit: 200 })
       }
     } else if (filterType === 'games' && selectedGameIds.length > 0) {
       fetchStats({ gameIds: selectedGameIds, organizationId: currentOrgId })
       fetchPairings({ gameIds: selectedGameIds, organizationId: currentOrgId, limit: 200 })
+      fetchGoalSequences({ gameIds: selectedGameIds, organizationId: currentOrgId, limit: 200 })
     }
   }, [filterType, selectedSeasonIds, selectedGameIds, currentOrgId])
 
@@ -727,9 +788,28 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
         .map(p => ({ id: p.player_id, name: p.player_name.split(' ')[0], fullName: p.player_name, goals: parseInt(p.goals), assists: parseInt(p.assists) }))
     : []
   const networkNodeIds = new Set(networkNodes.map(n => n.id))
-  const networkEdges: NetworkEdge[] = pairingRows
-    .filter(r => networkNodeIds.has(r.scorerId) && networkNodeIds.has(r.assisterId))
-    .map(r => ({ scorerId: r.scorerId, assisterId: r.assisterId, count: r.count }))
+  // Merged: two players who've assisted each other both ways (Jackson fed
+  // Eric 1, Eric fed Jackson 3) show as one connection, not two — same
+  // treatment as the Goals graph below.
+  const assistEdges: DirectedEdge[] = mergeBidirectionalEdges(
+    pairingRows
+      .filter(r => networkNodeIds.has(r.scorerId) && networkNodeIds.has(r.assisterId))
+      .map(r => ({ fromId: r.assisterId, toId: r.scorerId, count: r.count }))
+  )
+  const goalSeqRows = (goalSequences as GoalSequenceRow[] | undefined) ?? []
+  const goalSeqEdges: DirectedEdge[] = mergeBidirectionalEdges(
+    goalSeqRows
+      .filter(r => networkNodeIds.has(r.fromId) && networkNodeIds.has(r.toId))
+      .map(r => ({ fromId: r.fromId, toId: r.toId, count: r.count }))
+  )
+  // Shared node layout for both graphs (so a player sits in the same spot
+  // in each — see circleLayout), ranked by combined Assists+Goals degree.
+  const networkDegree = new Map<number, number>()
+  ;[...assistEdges, ...goalSeqEdges].forEach(e => {
+    networkDegree.set(e.fromId, (networkDegree.get(e.fromId) ?? 0) + e.count)
+    networkDegree.set(e.toId, (networkDegree.get(e.toId) ?? 0) + e.count)
+  })
+  const networkPositions = circleLayout(networkNodes, 320, networkDegree)
 
   return (
     <div className="space-y-4">
@@ -948,34 +1028,71 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
               <CardTitle className="text-base flex items-center gap-2">
                 <Share2 className="w-4 h-4" />Assist Network
               </CardTitle>
-              <p className="text-xs text-muted-foreground">Tap a player to highlight their connections. Arrows point from assister to scorer; numbers are assist counts.</p>
+              <p className="text-xs text-muted-foreground">Tap a player to highlight their connections. Numbers on each line are counts.</p>
             </CardHeader>
-            <CardContent className="pt-2">
-              {pairingsLoading ? (
-                <div className="flex items-center justify-center h-64">
-                  <Skeleton className="w-56 h-56 rounded-full" />
-                </div>
-              ) : pairingsError ? (
-                <div className="flex items-center justify-center h-48 text-destructive text-sm">Error: {pairingsError}</div>
-              ) : networkEdges.length > 0 ? (
-                <FadeIn className="w-full space-y-6">
-                  <div>
-                    <p className="text-sm font-medium text-blue-600 dark:text-blue-400 mb-1 text-center">Assists — who fed whom</p>
-                    <AssistNetworkGraph nodes={networkNodes} edges={networkEdges} mode="assists" />
+            <CardContent className="pt-2 space-y-6">
+              <div>
+                <p className="text-sm font-medium text-blue-600 dark:text-blue-400 mb-1 text-center">Assists — who fed whom</p>
+                {pairingsLoading ? (
+                  <div className="flex items-center justify-center h-64">
+                    <Skeleton className="w-56 h-56 rounded-full" />
                   </div>
-                  <div>
-                    <p className="text-sm font-medium text-green-600 dark:text-green-400 mb-1 text-center">Goals — who scored off whom</p>
-                    <AssistNetworkGraph nodes={networkNodes} edges={networkEdges} mode="goals" />
+                ) : pairingsError ? (
+                  <div className="flex items-center justify-center h-48 text-destructive text-sm">Error: {pairingsError}</div>
+                ) : assistEdges.length > 0 ? (
+                  <FadeIn className="w-full">
+                    <DirectedNetworkGraph
+                      nodes={networkNodes}
+                      edges={assistEdges}
+                      positions={networkPositions}
+                      color="#2563eb"
+                      arrowId="network-arrowhead-assists"
+                      weightOf={n => n.assists}
+                      selectedId={networkSelectedId}
+                      onSelect={setNetworkSelectedId}
+                    />
+                  </FadeIn>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
+                    <Share2 className="w-10 h-10 mb-2 opacity-40" />
+                    <p className="text-sm">{filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No assisted goals in this range yet'}</p>
                   </div>
-                  <div className="pt-2 border-t border-border">
-                    <p className="text-xs font-medium text-muted-foreground mb-2">Totals</p>
-                    <NetworkTotalsList nodes={networkNodes} />
+                )}
+              </div>
+
+              <div>
+                <p className="text-sm font-medium text-green-600 dark:text-green-400 mb-1 text-center">Goals — scoring order within each game</p>
+                {goalSeqLoading ? (
+                  <div className="flex items-center justify-center h-64">
+                    <Skeleton className="w-56 h-56 rounded-full" />
                   </div>
-                </FadeIn>
-              ) : (
-                <div className="flex flex-col items-center justify-center h-48 text-muted-foreground">
-                  <Share2 className="w-12 h-12 mb-3 opacity-40" />
-                  <p className="text-sm">{filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No assisted goals in this range yet'}</p>
+                ) : goalSeqError ? (
+                  <div className="flex items-center justify-center h-48 text-destructive text-sm">Error: {goalSeqError}</div>
+                ) : goalSeqEdges.length > 0 ? (
+                  <FadeIn className="w-full">
+                    <DirectedNetworkGraph
+                      nodes={networkNodes}
+                      edges={goalSeqEdges}
+                      positions={networkPositions}
+                      color="#16a34a"
+                      arrowId="network-arrowhead-goals"
+                      weightOf={n => n.goals}
+                      selectedId={networkSelectedId}
+                      onSelect={setNetworkSelectedId}
+                    />
+                  </FadeIn>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
+                    <Target className="w-10 h-10 mb-2 opacity-40" />
+                    <p className="text-sm">{filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No consecutive goals in the same game yet'}</p>
+                  </div>
+                )}
+              </div>
+
+              {networkNodes.length > 0 && (
+                <div className="pt-2 border-t border-border">
+                  <p className="text-xs font-medium text-muted-foreground mb-2">Totals</p>
+                  <NetworkTotalsList nodes={networkNodes} />
                 </div>
               )}
             </CardContent>
