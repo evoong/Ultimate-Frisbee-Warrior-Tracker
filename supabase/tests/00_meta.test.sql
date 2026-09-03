@@ -24,8 +24,10 @@ select is_empty(
   'every table in public has RLS enabled'
 );
 
--- standings is deprecated and intentionally has zero policies (016 dropped
--- them); nothing reads or writes it, so no access is the correct state.
+-- standings is deprecated but still has one policy (016 dropped only its
+-- write policies, leaving "authenticated read" using (true) behind). It is
+-- excluded here because it would pass this assertion either way; the
+-- exclusion is not needed for correctness, just kept as-is.
 select is_empty(
   $$ select c.relname::text
        from pg_class c

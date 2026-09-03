@@ -1,5 +1,11 @@
--- Test-only helpers. Safe in production (the tests schema is never granted
--- to any application role), but only ever called from supabase/tests.
+-- Test-only helpers, only ever called from supabase/tests. If applied to
+-- production, `authenticated` does gain USAGE on this new schema (see the
+-- grant below); that is a real change there, not a hypothetical one. What
+-- keeps this safe: the helpers are SECURITY INVOKER, so calling them as
+-- `authenticated` cannot elevate privileges (tests.login_as would fail with
+-- "permission denied for table users", since authenticated has no access to
+-- auth.users); and PostgREST's exposed-schema allowlist does not include
+-- `tests`, so no HTTP request can reach these functions at all.
 create extension if not exists pgtap with schema extensions;
 
 create schema if not exists tests;
