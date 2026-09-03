@@ -37,6 +37,16 @@ for (const email of USERS) {
   console.log(status < 300 ? `created ${email} ${body.id}` : `skip ${email}: ${JSON.stringify(body)}`)
 }
 
+// Deliberately unconfirmed: proves accept_invite refuses an unverified
+// address, which is the invite model's load-bearing assumption.
+{
+  const { status, body } = await api('/auth/v1/admin/users', {
+    method: 'POST',
+    body: JSON.stringify({ email: 'unconfirmed@local.test', password: 'localdev123', email_confirm: false }),
+  })
+  console.log(status < 300 ? `created unconfirmed@local.test ${body.id}` : `skip: ${JSON.stringify(body)}`)
+}
+
 // A real anonymous user, so guest behavior is exercised against the same
 // shape production produces rather than a hand-faked JWT claim.
 const anon = await fetch(`${URL}/auth/v1/signup`, {
