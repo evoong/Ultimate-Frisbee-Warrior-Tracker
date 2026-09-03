@@ -14,13 +14,20 @@ insert into public.seasons (id, team_id, name, year, organization_id) overriding
 values (1, 1, 'Fall', '2026', 1), (2, 2, 'Fall', '2026', 2)
 on conflict (id) do nothing;
 
-insert into public.players (id, first_name, last_name, display_name, phone, organization_id)
+insert into public.players (id, first_name, last_name, display_name, organization_id)
 overriding system value
-values (101, 'Cap',  'Tain',  'Cap',  '555-0101', 1),
-       (102, 'Ed',   'Itor',  'Ed',   '555-0102', 1),
-       (103, 'Mem',  'Ber',   'Mem',  '555-0103', 1),
-       (104, 'Out',  'Sider', 'Out',  '555-0104', 2)
+values (101, 'Cap',  'Tain',  'Cap',  1),
+       (102, 'Ed',   'Itor',  'Ed',   1),
+       (103, 'Mem',  'Ber',   'Mem',  1),
+       (104, 'Out',  'Sider', 'Out',  2)
 on conflict (id) do nothing;
+
+insert into public.player_private (player_id, team_id, phone)
+values (101, 1, '555-0101'),
+       (102, 1, '555-0102'),
+       (103, 1, '555-0103'),
+       (104, 2, '555-0104')
+on conflict (player_id) do nothing;
 
 insert into public.games (id, season_id, opponent, game_date, our_score, their_score, organization_id)
 overriding system value
