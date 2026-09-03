@@ -52,6 +52,13 @@ begin
   v_is_captain := p_team_id = any (public.my_captain_team_ids());
   v_is_manager := p_team_id = any (public.my_manage_team_ids());
 
+  -- Caller eligibility is checked before the target lookup so that an
+  -- unauthorized caller cannot use the distinct "not on this team" error
+  -- as a membership-disclosure oracle for a team they have no relation to.
+  if not v_is_self and not v_is_manager then
+    raise exception 'insufficient permissions on this team';
+  end if;
+
   select role into v_target_role
     from public.team_members
    where team_id = p_team_id and user_id = p_user_id;
@@ -60,13 +67,8 @@ begin
     raise exception 'that person is not on this team';
   end if;
 
-  if not v_is_self then
-    if not v_is_manager then
-      raise exception 'insufficient permissions on this team';
-    end if;
-    if v_target_role <> 'member' and not v_is_captain then
-      raise exception 'only a captain can remove a captain or an editor';
-    end if;
+  if not v_is_self and v_target_role <> 'member' and not v_is_captain then
+    raise exception 'only a captain can remove a captain or an editor';
   end if;
 
   delete from public.team_members
