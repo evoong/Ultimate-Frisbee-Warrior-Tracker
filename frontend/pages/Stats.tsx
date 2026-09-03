@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useGetGames } from '../hooks/backend/games'
 import { useGetPlayers } from '../hooks/backend/players'
-import { useGetPlayerStats, useGetSeasons, useGetCumulativeStats, useGetAllSeasons } from '../hooks/backend/stats'
+import { useGetPlayerStats, useGetSeasons, useGetCumulativeStats, useGetAllSeasons, useGetAssistPairings, type PairingRow } from '../hooks/backend/stats'
 import {
   useGetLeague, useGetOpponentHistory, computeStandings,
   useCreateLeagueTeam, useUpdateLeagueTeam, useDeleteLeagueTeam, useUpdateSeasonPoints,
@@ -221,6 +221,7 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
   const { data: stats, loading, error, trigger: fetchStats } = useGetPlayerStats()
   const { data: cumulativeRaw, loading: cumulativeLoading, trigger: fetchCumulative } = useGetCumulativeStats()
   const { data: progressionRoster, trigger: fetchProgressionRoster } = useGetPlayers()
+  const { data: pairings, loading: pairingsLoading, error: pairingsError, trigger: fetchPairings } = useGetAssistPairings()
 
   const [filterType, setFilterType] = useState<'all' | 'season' | 'games'>('all')
   const [selectedSeasonIds, setSelectedSeasonIds] = useState<number[]>([])
@@ -354,12 +355,21 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
 
   useEffect(() => {
     if (currentOrgId == null) return
-    if (filterType === 'all') fetchStats({ organizationId: currentOrgId })
-    else if (filterType === 'season') {
-      if (selectedSeasonIds.length > 0) fetchStats({ seasonIds: selectedSeasonIds, organizationId: currentOrgId })
-      else fetchStats({ organizationId: currentOrgId })
+    if (filterType === 'all') {
+      fetchStats({ organizationId: currentOrgId })
+      fetchPairings({ organizationId: currentOrgId })
+    } else if (filterType === 'season') {
+      if (selectedSeasonIds.length > 0) {
+        fetchStats({ seasonIds: selectedSeasonIds, organizationId: currentOrgId })
+        fetchPairings({ seasonIds: selectedSeasonIds, organizationId: currentOrgId })
+      } else {
+        fetchStats({ organizationId: currentOrgId })
+        fetchPairings({ organizationId: currentOrgId })
+      }
+    } else if (filterType === 'games' && selectedGameIds.length > 0) {
+      fetchStats({ gameIds: selectedGameIds, organizationId: currentOrgId })
+      fetchPairings({ gameIds: selectedGameIds, organizationId: currentOrgId })
     }
-    else if (filterType === 'games' && selectedGameIds.length > 0) fetchStats({ gameIds: selectedGameIds, organizationId: currentOrgId })
   }, [filterType, selectedSeasonIds, selectedGameIds, currentOrgId])
 
   useEffect(() => {
@@ -536,6 +546,7 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
   const avgAssists = statsArr && statsArr.length > 0 && gamesInFilter > 0
     ? (statsArr.reduce((s, p) => s + parseInt(p.assists), 0) / gamesInFilter).toFixed(2)
     : null
+  const pairingRows = (pairings as PairingRow[] | undefined) ?? []
 
   return (
     <div className="space-y-4">
@@ -698,6 +709,51 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
                 <div className="flex flex-col items-center justify-center h-48 text-muted-foreground">
                   <TrendingUp className="w-12 h-12 mb-3 opacity-40" />
                   <p className="text-sm">{filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No stats available yet'}</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Top Pairings */}
+          <Card className="bg-card text-card-foreground border-border">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Target className="w-4 h-4" />Top Pairings
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-2">
+              {pairingsLoading ? (
+                <div className="space-y-4 py-2">
+                  {[0.9, 0.75, 0.6, 0.5, 0.4].map((w, i) => (
+                    <div key={i} className="flex items-center gap-3">
+                      <Skeleton className="h-3 w-24 shrink-0" />
+                      <Skeleton className="h-3.5" style={{ width: `${w * 100}%` }} />
+                    </div>
+                  ))}
+                </div>
+              ) : pairingsError ? (
+                <div className="flex items-center justify-center h-48 text-destructive text-sm">Error: {pairingsError}</div>
+              ) : pairingRows.length > 0 ? (
+                <FadeIn className="w-full" style={{ height: Math.max(160, pairingRows.length * 32) }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={pairingRows.map(r => ({ pairLabel: `${r.scorerName} ← ${r.assisterName}`, Assists: r.count }))}
+                      layout="vertical"
+                      margin={{ top: 0, right: 16, left: 0, bottom: 0 }}
+                      barCategoryGap="20%"
+                    >
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
+                      <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} />
+                      <YAxis type="category" dataKey="pairLabel" width={140} tick={{ fontSize: 11, fill: 'hsl(var(--foreground))' }} axisLine={false} tickLine={false} />
+                      <Tooltip cursor={{ fill: 'hsl(var(--accent))' }} />
+                      <Bar dataKey="Assists" fill="#2563eb" radius={[0, 3, 3, 0]} maxBarSize={14} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </FadeIn>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-48 text-muted-foreground">
+                  <Target className="w-12 h-12 mb-3 opacity-40" />
+                  <p className="text-sm">{filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No assisted goals in this range yet'}</p>
                 </div>
               )}
             </CardContent>
