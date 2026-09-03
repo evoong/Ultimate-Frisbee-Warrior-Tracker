@@ -283,21 +283,18 @@ function mergeBidirectionalEdges(edges: DirectedEdge[]): DirectedEdge[] {
   return [...merged.values()]
 }
 
-// Simple per-player Goals/Assists totals list, shown alongside the two
-// network graphs — the graphs already show connection detail (who, how
-// often); this is just the aggregate each node's size is based on.
-function NetworkTotalsList({ nodes }: { nodes: NetworkNode[] }) {
+// Selected player's own Goals/Assists total, floated over a graph's top
+// right corner — replaces an always-visible whole-team list with just the
+// one number relevant once you've actually picked someone.
+function SelectedPlayerBadge({ node }: { node: NetworkNode | undefined }) {
+  if (!node) return null
   return (
-    <div className="space-y-1.5">
-      {nodes.map(n => (
-        <div key={n.id} className="flex items-center justify-between text-sm">
-          <span className="text-foreground truncate">{n.fullName}</span>
-          <span className="flex items-center gap-3 shrink-0 ml-2 font-mono text-xs">
-            <span className="text-green-600 dark:text-green-400">{n.goals}G</span>
-            <span className="text-blue-600 dark:text-blue-400">{n.assists}A</span>
-          </span>
-        </div>
-      ))}
+    <div className="absolute top-2 right-2 bg-card border border-border rounded-lg shadow-sm px-2.5 py-1.5 text-sm pointer-events-none">
+      <div className="font-medium text-foreground truncate max-w-[140px]">{node.fullName}</div>
+      <div className="flex items-center gap-2 font-mono text-xs mt-0.5">
+        <span className="text-green-600 dark:text-green-400">{node.goals}G</span>
+        <span className="text-blue-600 dark:text-blue-400">{node.assists}A</span>
+      </div>
     </div>
   )
 }
@@ -810,6 +807,7 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
     networkDegree.set(e.toId, (networkDegree.get(e.toId) ?? 0) + e.count)
   })
   const networkPositions = circleLayout(networkNodes, 320, networkDegree)
+  const selectedNetworkNode = networkNodes.find(n => n.id === networkSelectedId)
 
   return (
     <div className="space-y-4">
@@ -1040,7 +1038,7 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
                 ) : pairingsError ? (
                   <div className="flex items-center justify-center h-48 text-destructive text-sm">Error: {pairingsError}</div>
                 ) : assistEdges.length > 0 ? (
-                  <FadeIn className="w-full">
+                  <FadeIn className="w-full relative">
                     <DirectedNetworkGraph
                       nodes={networkNodes}
                       edges={assistEdges}
@@ -1051,6 +1049,7 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
                       selectedId={networkSelectedId}
                       onSelect={setNetworkSelectedId}
                     />
+                    <SelectedPlayerBadge node={selectedNetworkNode} />
                   </FadeIn>
                 ) : (
                   <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
@@ -1069,7 +1068,7 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
                 ) : goalSeqError ? (
                   <div className="flex items-center justify-center h-48 text-destructive text-sm">Error: {goalSeqError}</div>
                 ) : goalSeqEdges.length > 0 ? (
-                  <FadeIn className="w-full">
+                  <FadeIn className="w-full relative">
                     <DirectedNetworkGraph
                       nodes={networkNodes}
                       edges={goalSeqEdges}
@@ -1080,6 +1079,7 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
                       selectedId={networkSelectedId}
                       onSelect={setNetworkSelectedId}
                     />
+                    <SelectedPlayerBadge node={selectedNetworkNode} />
                   </FadeIn>
                 ) : (
                   <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
@@ -1088,13 +1088,6 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
                   </div>
                 )}
               </div>
-
-              {networkNodes.length > 0 && (
-                <div className="pt-2 border-t border-border">
-                  <p className="text-xs font-medium text-muted-foreground mb-2">Totals</p>
-                  <NetworkTotalsList nodes={networkNodes} />
-                </div>
-              )}
             </CardContent>
           </Card>
 
