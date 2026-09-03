@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlayer, useGetPlayerGameStats, useSetGameAttendance, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer, useGetSeasonRoster, useCopyPlayersToSeason, useRemovePlayersFromSeason } from '../hooks/backend/players'
+import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlayer, useGetPlayerGameStats, useSetGameAttendance, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer, useGetSeasonRoster, useCopyPlayersToSeason, useRemovePlayersFromSeason, useGetPlayerAssistPairings, useGetPlayerTurnoverBreakdown, type AssistPairingRow, type TurnoverBreakdownRow } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons, useCreateSeason } from '../hooks/backend/stats'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
 import { isPastGame } from '../lib/gameOrder'
@@ -18,7 +18,7 @@ import { Label } from '../lib/shadcn/label'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
 import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
-import { Phone, Search, ChevronLeft, ChevronRight, Users, TrendingUp, Trophy, Trash2, Camera, Edit2, Save, X, Plus, UserCog, LayoutGrid, List } from 'lucide-react'
+import { Phone, Search, ChevronLeft, ChevronRight, Users, TrendingUp, Trophy, Trash2, Camera, Edit2, Save, X, Plus, UserCog, LayoutGrid, List, Share2 } from 'lucide-react'
 
 type Player = {
   id: number; display_name: string; first_name: string | null; last_name: string | null
@@ -54,6 +54,111 @@ function RosterCardSkeleton() {
   )
 }
 
+// Quadratic-curve path plus the point at its midpoint (t=0.5, not the
+// control point itself), for placing a count label on the visible line —
+// same construction as the Stats page's Assist Network graph.
+function egoEdgeGeometry(from: { x: number; y: number }, to: { x: number; y: number }, offset: number) {
+  const mx = (from.x + to.x) / 2
+  const my = (from.y + to.y) / 2
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const dist = Math.hypot(dx, dy) || 1
+  const cx = mx + (-dy / dist) * offset
+  const cy = my + (dx / dist) * offset
+  return {
+    d: `M ${from.x} ${from.y} Q ${cx} ${cy} ${to.x} ${to.y}`,
+    labelX: 0.25 * from.x + 0.5 * cx + 0.25 * to.x,
+    labelY: 0.25 * from.y + 0.5 * cy + 0.25 * to.y,
+  }
+}
+
+// This one player's ego-network: they sit fixed at the center, every
+// teammate they've connected with (either direction) sits on a circle
+// around them. Blue curves point inward (received: that teammate assisted
+// this player), green curves point outward (given: this player assisted
+// that teammate) — same color convention the list view above already
+// uses. A teammate connected both ways gets two separate curved lines
+// (one each color) rather than one merged line, since with at most two
+// edges per teammate here there's no clutter to solve by merging.
+function PlayerEgoNetworkGraph({ centerName, received, given }: {
+  centerName: string
+  received: AssistPairingRow[]
+  given: AssistPairingRow[]
+}) {
+  const size = 280
+  const center = size / 2
+  const radius = center - 34
+
+  const nameById = new Map<number, string>()
+  received.forEach(r => nameById.set(r.teammateId, r.teammateName))
+  given.forEach(r => nameById.set(r.teammateId, r.teammateName))
+  const teammateIds = [...nameById.keys()]
+
+  const positions = new Map<number, { x: number; y: number }>()
+  teammateIds.forEach((id, i) => {
+    const angle = (i / teammateIds.length) * 2 * Math.PI - Math.PI / 2
+    positions.set(id, { x: center + radius * Math.cos(angle), y: center + radius * Math.sin(angle) })
+  })
+
+  const receivedById = new Map(received.map(r => [r.teammateId, r.count]))
+  const givenById = new Map(given.map(r => [r.teammateId, r.count]))
+  const maxCount = Math.max(1, ...received.map(r => r.count), ...given.map(r => r.count))
+  const centerPos = { x: center, y: center }
+
+  return (
+    <svg viewBox={`0 0 ${size} ${size}`} className="w-full h-full">
+      {teammateIds.map(id => {
+        const pos = positions.get(id)!
+        const rCount = receivedById.get(id)
+        const gCount = givenById.get(id)
+        return (
+          <g key={id}>
+            {rCount != null && (() => {
+              const { d, labelX, labelY } = egoEdgeGeometry(pos, centerPos, 12)
+              const strokeWidth = 1.5 + (rCount / maxCount) * 3
+              return (
+                <g>
+                  <path d={d} stroke="#2563eb" strokeWidth={strokeWidth} fill="none" opacity={0.75} />
+                  <circle cx={labelX} cy={labelY} r={6} fill="hsl(var(--card))" stroke="hsl(var(--border))" strokeWidth={0.75} />
+                  <text x={labelX} y={labelY} textAnchor="middle" dominantBaseline="central" fontSize={7} fill="hsl(var(--foreground))">{rCount}</text>
+                </g>
+              )
+            })()}
+            {gCount != null && (() => {
+              const { d, labelX, labelY } = egoEdgeGeometry(centerPos, pos, 12)
+              const strokeWidth = 1.5 + (gCount / maxCount) * 3
+              return (
+                <g>
+                  <path d={d} stroke="#16a34a" strokeWidth={strokeWidth} fill="none" opacity={0.75} />
+                  <circle cx={labelX} cy={labelY} r={6} fill="hsl(var(--card))" stroke="hsl(var(--border))" strokeWidth={0.75} />
+                  <text x={labelX} y={labelY} textAnchor="middle" dominantBaseline="central" fontSize={7} fill="hsl(var(--foreground))">{gCount}</text>
+                </g>
+              )
+            })()}
+          </g>
+        )
+      })}
+      <g transform={`translate(${center}, ${center})`}>
+        <circle r={16} fill="hsl(var(--card))" stroke="hsl(var(--foreground))" strokeWidth={2} />
+        <text textAnchor="middle" dominantBaseline="central" fontSize={8} fontWeight="bold" fill="hsl(var(--foreground))">
+          {centerName.split(' ')[0]}
+        </text>
+      </g>
+      {teammateIds.map(id => {
+        const pos = positions.get(id)!
+        return (
+          <g key={id} transform={`translate(${pos.x}, ${pos.y})`}>
+            <circle r={12} fill="hsl(var(--card))" stroke="hsl(var(--border))" strokeWidth={1.5} />
+            <text textAnchor="middle" dominantBaseline="central" fontSize={7} fill="hsl(var(--foreground))">
+              {(nameById.get(id) ?? '').split(' ')[0]}
+            </text>
+          </g>
+        )
+      })}
+    </svg>
+  )
+}
+
 export default function Roster() {
   const { allowed, currentOrgId } = useAuth()
   const navigate = useNavigate()
@@ -63,6 +168,8 @@ export default function Roster() {
   const { playerId: playerIdParam } = useParams<{ playerId: string }>()
   const { data: rawPlayers, loading, error, trigger: fetchPlayers } = useGetPlayers()
   const { data: gameStats, loading: statsLoading, trigger: fetchGameStats } = useGetPlayerGameStats()
+  const { data: assistPairings, loading: pairingsLoading, trigger: fetchAssistPairings } = useGetPlayerAssistPairings()
+  const { data: turnoverBreakdown, trigger: fetchTurnoverBreakdown } = useGetPlayerTurnoverBreakdown()
   const { trigger: setGameAttendance } = useSetGameAttendance()
   const { data: allSeasons, trigger: fetchAllSeasons } = useGetAllSeasons()
   const { data: seasonsWithGames, trigger: fetchSeasonsWithGames } = useGetSeasons()
@@ -86,6 +193,7 @@ export default function Roster() {
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
   // Empty array means "All Seasons"
   const [seasonFilters, setSeasonFilters] = useState<string[]>([])
+  const [assistView, setAssistView] = useState<'list' | 'network'>('list')
   const [rosterSeasonIds, setRosterSeasonIds] = useState<number[]>([])
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
@@ -183,6 +291,15 @@ export default function Roster() {
     setSeasonFilters(ps.filter(s => s.active).map(s => s.id.toString()))
   }, [playerSeasons])
 
+  // Assist Connections follows the same Seasons chips as the Games/Goals/
+  // Assists summary above — refetch whenever the player or the chip
+  // selection changes (including the initial population from the effect
+  // above).
+  useEffect(() => {
+    if (!selectedPlayer) return
+    fetchAssistPairings({ playerId: selectedPlayer.id, seasonIds: seasonFilters.map(Number) })
+  }, [selectedPlayer, seasonFilters])
+
   const handleSelectPlayer = (player: Player) => {
     setSelectedPlayer(player)
     setUploadError(null)
@@ -190,6 +307,10 @@ export default function Roster() {
     setEditingSeasons(false)
     fetchGameStats({ playerId: player.id })
     fetchPlayerSeasons({ playerId: player.id })
+    fetchTurnoverBreakdown({ playerId: player.id })
+    // Assist Connections is fetched by the seasonFilters-driven effect
+    // below, once playerSeasons loads and seeds seasonFilters — not here,
+    // since seasonFilters isn't populated yet at selection time.
   }
 
   const handleBack = () => { navigate('/roster'); setSearchQuery(''); setUploadError(null); setEditing(false); setEditingSeasons(false) }
@@ -425,6 +546,48 @@ export default function Roster() {
   const avgAssists = summary.games > 0 ? (summary.assists / summary.games).toFixed(1) : '-'
 
   const formatDate = (dateStr: string) => new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+
+  // The teammate this player connects with most, combining both directions
+  // (goals they scored off this teammate's assist + goals they assisted for
+  // this teammate) — a single number that rewards a strong two-way chemistry
+  // over a lopsided one.
+  const pairings = assistPairings as { received: AssistPairingRow[]; given: AssistPairingRow[] } | undefined
+  const favoriteTeammate = (() => {
+    if (!pairings) return null
+    const combined = new Map<number, { teammateName: string; count: number }>()
+    ;[...(pairings.received ?? []), ...(pairings.given ?? [])].forEach(row => {
+      const entry = combined.get(row.teammateId) ?? { teammateName: row.teammateName, count: 0 }
+      entry.count += row.count
+      combined.set(row.teammateId, entry)
+    })
+    const sorted = [...combined.values()].sort((a, b) => b.count - a.count || a.teammateName.localeCompare(b.teammateName))
+    return sorted[0] ?? null
+  })()
+
+  // Season-by-season trend, derived from the same per-game stats behind the
+  // summary cards above (not re-fetched) — one row per season this player
+  // has any recorded games in, using every season regardless of the page's
+  // season filter so the trend isn't affected by which seasons are toggled on.
+  const seasonTrend = (() => {
+    const allStats = (gameStats as GameStat[] | undefined) ?? []
+    const pSeasonsForTrend = (playerSeasons as PlayerSeason[] | undefined) ?? []
+    const bySeasonId = new Map<number, { games: number; goals: number; assists: number; turnovers: number }>()
+    allStats.forEach(g => {
+      if (!g.in || !isPastGame(g) || g.season_id == null) return
+      const entry = bySeasonId.get(g.season_id) ?? { games: 0, goals: 0, assists: 0, turnovers: 0 }
+      entry.games += 1
+      entry.goals += parseInt(g.goals)
+      entry.assists += parseInt(g.assists)
+      entry.turnovers += parseInt(g.turnovers)
+      bySeasonId.set(g.season_id, entry)
+    })
+    return [...bySeasonId.entries()]
+      .map(([seasonId, stats]) => {
+        const season = pSeasonsForTrend.find(s => s.id === seasonId)
+        return { seasonId, label: season ? seasonLabel(season) : `Season ${seasonId}`, ...stats }
+      })
+      .sort((a, b) => b.seasonId - a.seasonId)
+  })()
 
   // ── Player Detail View ────────────────────────────────────────────────────────
   if (selectedPlayer) {
@@ -693,6 +856,99 @@ export default function Roster() {
           </div>
         )}
 
+        {/* Assist Connections */}
+        <Card className="bg-card text-card-foreground border-border">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center justify-between">
+              <span>Assist Connections</span>
+              {favoriteTeammate && (
+                <span className="text-sm font-normal text-muted-foreground">
+                  Top combo: <span className="text-foreground font-medium">{favoriteTeammate.teammateName}</span> ({favoriteTeammate.count})
+                </span>
+              )}
+            </CardTitle>
+            <div className="flex gap-1 mt-2 bg-muted rounded-lg p-1">
+              <button onClick={() => setAssistView('list')}
+                className={`flex-1 flex items-center justify-center gap-1.5 text-xs py-1.5 px-2 rounded-md font-medium transition-colors ${assistView === 'list' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                <List className="w-3.5 h-3.5" />List
+              </button>
+              <button onClick={() => setAssistView('network')}
+                className={`flex-1 flex items-center justify-center gap-1.5 text-xs py-1.5 px-2 rounded-md font-medium transition-colors ${assistView === 'network' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                <Share2 className="w-3.5 h-3.5" />Network
+              </button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {pairingsLoading ? (
+              <div className="text-center py-6 text-muted-foreground text-sm">Loading...</div>
+            ) : (pairings?.received?.length || pairings?.given?.length) ? (
+              assistView === 'network' ? (
+                <FadeIn className="w-full flex justify-center">
+                  <div className="w-full max-w-[420px] aspect-square">
+                    <PlayerEgoNetworkGraph
+                      centerName={selectedPlayer!.display_name ?? ''}
+                      received={pairings.received}
+                      given={pairings.given}
+                    />
+                  </div>
+                </FadeIn>
+              ) : (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="text-xs font-medium text-blue-600 dark:text-blue-400 mb-2">Received from</div>
+                  {pairings.received.length > 0 ? (
+                    <div className="space-y-1.5">
+                      {pairings.received.map(row => (
+                        <div key={row.teammateId} className="flex items-center justify-between text-sm">
+                          <span className="text-foreground truncate">{row.teammateName}</span>
+                          <span className="text-muted-foreground font-mono text-xs shrink-0 ml-2">{row.count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : <span className="text-xs text-muted-foreground">No assisted goals yet</span>}
+                </div>
+                <div>
+                  <div className="text-xs font-medium text-green-600 dark:text-green-400 mb-2">Assisted to</div>
+                  {pairings.given.length > 0 ? (
+                    <div className="space-y-1.5">
+                      {pairings.given.map(row => (
+                        <div key={row.teammateId} className="flex items-center justify-between text-sm">
+                          <span className="text-foreground truncate">{row.teammateName}</span>
+                          <span className="text-muted-foreground font-mono text-xs shrink-0 ml-2">{row.count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : <span className="text-xs text-muted-foreground">No assists given yet</span>}
+                </div>
+              </div>
+              )
+            ) : (
+              <div className="text-center py-6 text-muted-foreground text-sm">No assist data yet</div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Turnovers by Type */}
+        {(turnoverBreakdown as TurnoverBreakdownRow[] | undefined)?.length ? (
+          <Card className="bg-card text-card-foreground border-border">
+            <CardHeader>
+              <CardTitle className="text-base">Turnovers by Type</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex gap-2">
+                {(turnoverBreakdown as TurnoverBreakdownRow[]).map(row => (
+                  <div key={row.type} className="flex-1 bg-orange-500/5 border border-orange-500/20 rounded-lg text-center py-2">
+                    <div className="text-lg font-bold text-orange-600 dark:text-orange-400">{row.count}</div>
+                    <div className="text-xs text-muted-foreground">{row.type}</div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
+
         {/* Per-Game Breakdown */}
         <Card className="bg-card text-card-foreground border-border">
           <CardHeader>
@@ -748,6 +1004,35 @@ export default function Roster() {
             )}
           </CardContent>
         </Card>
+
+        {/* By Season */}
+        {seasonTrend.length > 1 && (
+          <Card className="bg-card text-card-foreground border-border">
+            <CardHeader>
+              <CardTitle className="text-base">By Season</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                <div className="flex items-center gap-3 px-3 text-xs text-muted-foreground font-medium">
+                  <div className="flex-1">Season</div>
+                  <div className="w-10 text-center">GP</div>
+                  <div className="w-10 text-center text-green-600 dark:text-green-400">G</div>
+                  <div className="w-10 text-center text-blue-600 dark:text-blue-400">A</div>
+                  <div className="w-10 text-center text-orange-600 dark:text-orange-400">TO</div>
+                </div>
+                {seasonTrend.map(row => (
+                  <div key={row.seasonId} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-background">
+                    <div className="flex-1 min-w-0 text-sm text-foreground truncate">{row.label}</div>
+                    <div className="w-10 text-center text-sm text-muted-foreground">{row.games}</div>
+                    <div className="w-10 text-center font-bold text-green-600 dark:text-green-400">{row.goals}</div>
+                    <div className="w-10 text-center font-bold text-blue-600 dark:text-blue-400">{row.assists}</div>
+                    <div className="w-10 text-center font-bold text-orange-600 dark:text-orange-400">{row.turnovers}</div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Delete confirm */}
         <Dialog open={deleteConfirm} onOpenChange={setDeleteConfirm}>
