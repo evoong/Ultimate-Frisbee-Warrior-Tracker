@@ -5,6 +5,9 @@ import * as Sentry from '@sentry/react'
 import './index.css'
 import App from './App'
 import { AuthProvider } from './contexts/AuthContext'
+import { injectSpeedInsights } from '@vercel/speed-insights'
+
+injectSpeedInsights()
 
 if (import.meta.env.VITE_SENTRY_DSN) {
   Sentry.init({
