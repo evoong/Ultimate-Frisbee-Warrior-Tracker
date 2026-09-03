@@ -29,10 +29,6 @@ begin
      where i.email = v_email
        and i.accepted_at is null
        and i.expires_at > now()
-       and not exists (
-         select 1 from public.team_members m
-          where m.team_id = i.team_id and m.user_id = v_uid
-       )
     returning i.team_id, i.role, i.invited_by
   ), inserted as (
     insert into public.team_members (team_id, user_id, role, invited_by)
