@@ -34,6 +34,9 @@ with a user in every role, before any of it reaches production.
 - Guests are structurally incapable of writing, not merely denied.
 - Player contact details are unreadable by guests by policy, not by the
   frontend declining to ask for them.
+- No model-visible text can widen a request's authority: the AI chat holds a
+  service-role key, and prompt injection must not be able to steer it at
+  another team's data.
 - Every stat surface that exists today keeps working, filtered by permission.
 - A future migration that adds a table without policies fails the test suite.
 
@@ -456,6 +459,17 @@ team's roster and stats through the AI chat, and write game events into it
 through chat actions. Locking down RLS without fixing this leaves a hole
 behind the new wall.
 
+**This phase is not optional and is not descopable.** The chat endpoint is
+the one place in the system where untrusted natural-language text meets a
+service-role database key. An attacker does not need to find a bug in the
+gateway: they can ask the model, in the message body, to fetch or write data
+for a different team, and the handler will comply because nothing downstream
+checks. That is prompt injection with a credential that ignores every policy
+in this document. The fix is that the team is resolved from the session and
+the role is verified in the handler, so that no instruction appearing in
+model-visible text can widen the request's authority. Model output is treated
+as data, never as authorization.
+
 Changes:
 
 - `createIsOrgMember` / `createIsEmailAllowed` in `worker.ts` (and their
@@ -556,7 +570,8 @@ the guest endpoint, service-key handlers rejecting a cross-team
 to `team_members` with `user_id`; `owner` becomes `captain`, `member` stays
 `member`. **A row whose email has no account becomes a pending invite, never
 a deletion** — otherwise cutover silently revokes access from people who were
-merely slow to sign up.
+merely slow to sign up. Applied to the audited production state below, that
+means 9 real memberships, 1 pre-created captain, and 1 pending invite.
 
 ### Production cutover
 
@@ -567,12 +582,38 @@ merely slow to sign up.
 - The `auth-system` memory and the `supabase-migration` skill both describe
   the model being replaced, and are updated in the same PR.
 
-### Two decisions needed before the production flip
+### Production state at time of writing (audited 2026-09-03)
 
-1. **Who is captain of the existing organization?** Migration 016's backfill
-   hardcoded `eric@venn.ca` as owner of "My Team". The migration should state
-   the intended captain explicitly rather than inheriting one by accident.
-2. **Membership audit.** 017 allowed anyone to self-join any organization for
-   months. A list of current memberships should be reviewed before it
-   hardens into real permissions; locking in an unintended member is worse
-   than never having had the wall.
+| | |
+|---|---|
+| Organizations | **exactly one**: `id 1`, "My Team", private |
+| Memberships | 11, all on org 1 (1 `owner`, 10 `member`) |
+| Auth users | 11 |
+| Members with **no** auth account | `eric@venn.ca`, `errriccccccccc@gmail.com` |
+| Auth accounts with **no** membership | `scruffy.selling@gmail.com`, `riceboxrandompurchases@gmail.com` (unconfirmed) |
+
+Because only one organization exists, the captain-less team case does not
+arise at cutover. The rule still stands for the future: **a team with no
+captain has no self-service adoption path.** "Claim this ownerless team" is
+precisely the recovery flow an attacker would aim at; assigning a captain to
+an orphaned team is a service-role operation performed deliberately, never a
+button.
+
+### Cutover decisions (resolved)
+
+1. **Team 1 is renamed "My Team" -> "Disc-iples"**, and `eric@venn.ca`
+   becomes its captain. Note "Disc-iples" is also the name of squad `id 1`;
+   the two are different objects in different tables and the collision is
+   cosmetic.
+2. **`eric@venn.ca` has no auth account**, so the migration creates one
+   (admin API, no email sent) and writes the captain row against that uid.
+   He claims the account through a password reset at first login. This is
+   also the stronger security posture: an existing account means the address
+   cannot later be signed up by someone else to claim the captaincy.
+3. **`errriccccccccc@gmail.com`** has no account and becomes a pending
+   invite at role `member`, preserving the access they have today.
+4. **`scruffy.selling@gmail.com` and `riceboxrandompurchases@gmail.com`**
+   hold no membership. Under 017 they can currently read and write
+   everything; after cutover they have no team and no access. This is
+   intended, and is called out here because it is a real behavior change
+   rather than a no-op.
