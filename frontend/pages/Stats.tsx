@@ -519,6 +519,17 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
     )
   }
 
+  const PairTooltip = ({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string }) => {
+    if (!active || !payload?.length) return null
+    const full = pairChartData.find(d => d.pairLabel === label)
+    return (
+      <div className="bg-card border border-border rounded-lg shadow-md p-3 text-sm">
+        <p className="font-semibold text-foreground mb-1">{full?.fullPairLabel ?? label}</p>
+        {payload.map(entry => <p key={entry.name} style={{ color: entry.color }} className="font-medium">{entry.name}: {entry.value}</p>)}
+      </div>
+    )
+  }
+
   const LineTooltip = ({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string }) => {
     if (!active || !payload?.length) return null
     const point = lineData.find(d => d.label === label)
@@ -547,6 +558,11 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
     ? (statsArr.reduce((s, p) => s + parseInt(p.assists), 0) / gamesInFilter).toFixed(2)
     : null
   const pairingRows = (pairings as PairingRow[] | undefined) ?? []
+  const pairChartData = pairingRows.map(r => ({
+    pairLabel: `${r.scorerName.split(' ')[0]} ← ${r.assisterName.split(' ')[0]}`,
+    fullPairLabel: `${r.scorerName} ← ${r.assisterName}`,
+    Assists: r.count,
+  }))
 
   return (
     <div className="space-y-4">
@@ -737,7 +753,7 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
                 <FadeIn className="w-full" style={{ height: Math.max(160, pairingRows.length * 32) }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
-                      data={pairingRows.map(r => ({ pairLabel: `${r.scorerName} ← ${r.assisterName}`, Assists: r.count }))}
+                      data={pairChartData}
                       layout="vertical"
                       margin={{ top: 0, right: 16, left: 0, bottom: 0 }}
                       barCategoryGap="20%"
@@ -745,7 +761,7 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
                       <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
                       <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} />
                       <YAxis type="category" dataKey="pairLabel" width={140} tick={{ fontSize: 11, fill: 'hsl(var(--foreground))' }} axisLine={false} tickLine={false} />
-                      <Tooltip cursor={{ fill: 'hsl(var(--accent))' }} />
+                      <Tooltip content={<PairTooltip />} cursor={{ fill: 'hsl(var(--accent))' }} />
                       <Bar dataKey="Assists" fill="#2563eb" radius={[0, 3, 3, 0]} maxBarSize={14} />
                     </BarChart>
                   </ResponsiveContainer>

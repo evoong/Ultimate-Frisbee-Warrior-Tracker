@@ -312,7 +312,7 @@ export function useGetAssistPairings() {
         count: r.count,
       }))
 
-    rows.sort((a, b) => b.count - a.count || a.scorerName.localeCompare(b.scorerName))
+    rows.sort((a, b) => b.count - a.count || a.scorerName.localeCompare(b.scorerName) || a.assisterName.localeCompare(b.assisterName))
 
     return rows.slice(0, 10)
   }, [])
