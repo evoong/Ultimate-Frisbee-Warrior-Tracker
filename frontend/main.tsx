@@ -5,8 +5,10 @@ import * as Sentry from '@sentry/react'
 import './index.css'
 import App from './App'
 import { AuthProvider } from './contexts/AuthContext'
+import { inject } from '@vercel/analytics'
 import { injectSpeedInsights } from '@vercel/speed-insights'
 
+inject()
 injectSpeedInsights()
 
 if (import.meta.env.VITE_SENTRY_DSN) {
