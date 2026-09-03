@@ -18,7 +18,8 @@ alter table public.team_members enable row level security;
 
 -- A captain-less team is an escalation vector: "this team has no captain"
 -- invites a recovery path an attacker can aim at. There is no such path;
--- the last captain simply cannot be removed or demoted.
+-- the last captain simply cannot be removed, demoted, or moved to another
+-- team, when doing so would leave their origin team with none.
 create or replace function public.enforce_last_captain()
 returns trigger
 language plpgsql
@@ -29,7 +30,8 @@ declare
   v_team_id bigint := coalesce(old.team_id, new.team_id);
   v_remaining int;
 begin
-  if tg_op = 'UPDATE' and old.role = 'captain' and new.role = 'captain' then
+  if tg_op = 'UPDATE' and old.role = 'captain' and new.role = 'captain'
+     and new.team_id = old.team_id then
     return new;
   end if;
   if old.role is distinct from 'captain' then
@@ -48,8 +50,11 @@ end;
 $$;
 
 -- Trigger-only function: Postgres fires it as the table owner regardless
--- of caller privileges, so no role needs (or gets) direct EXECUTE.
+-- of caller privileges, so no role needs (or gets) direct EXECUTE. Grant
+-- stated explicitly (even though redundant) to match the codebase's
+-- security-definer convention in 016_organizations.sql.
 revoke all on function public.enforce_last_captain() from public, anon;
+grant execute on function public.enforce_last_captain() to authenticated;
 
 create trigger team_members_require_captain
   before update or delete on public.team_members
