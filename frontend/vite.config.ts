@@ -3,6 +3,9 @@ import react from '@vitejs/plugin-react'
 import path from 'path'
 
 export default defineConfig({
+  // Repo convention is a single .env at the project root (see CLAUDE.md);
+  // point Vite there instead of expecting a separate frontend/.env.
+  envDir: path.resolve(__dirname, '..'),
   plugins: [react()],
   resolve: {
     alias: {
