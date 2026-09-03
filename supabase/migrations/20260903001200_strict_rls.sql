@@ -11,6 +11,19 @@
 -- bigint[]-returning function; a bare `any (public.fn())` with no inner
 -- select compiles but loses the InitPlan (once-per-query) semantics the
 -- Global Constraint requires, evaluating instead as a per-row SubPlan.
+--
+-- tier_b also carries lineup_templates, lineup_template_groups,
+-- lineup_template_players, strategy_highlights and strategy_lines -- five
+-- organization_id-bearing tables the brief's original inventory omitted
+-- from both tiers, which left them on 017's permissive policies. All five
+-- go to tier B: strategy_highlights/strategy_lines are siblings of the
+-- other strategy_* tables already there; a lineup template is a reusable
+-- formation a coach prefers -- tactical planning material, not the public
+-- record of a played game that puts game_lineups/game_lineup_groups in
+-- tier A. organization_members also carries organization_id and is
+-- deliberately in neither tier: its policies are already membership-scoped
+-- via is_org_member()/is_org_owner() from migration 016, and Plan 4 owns
+-- its retirement.
 
 do $$
 declare
@@ -26,7 +39,9 @@ declare
   tier_b text[] := array[
     'strategy_plays', 'strategy_steps', 'strategy_positions',
     'strategy_opponent_markers', 'strategy_arrows', 'strategy_text_boxes',
-    'chat_logs', 'calendar_sources', 'jam_sync_conflicts'
+    'strategy_highlights', 'strategy_lines',
+    'chat_logs', 'calendar_sources', 'jam_sync_conflicts',
+    'lineup_templates', 'lineup_template_groups', 'lineup_template_players'
   ];
   read_clause text;
 begin

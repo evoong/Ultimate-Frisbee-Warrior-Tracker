@@ -1,5 +1,14 @@
 begin;
-select plan(10);
+select plan(12);
+
+-- Seeded while still running as postgres, before any login. An empty
+-- table is exactly what let 017's leftover permissive policies hide on
+-- lineup_templates and its siblings during the first pass at this task --
+-- querying an empty table as an outsider returns zero rows either way,
+-- leak or no leak. This row gives the later assertions something to fail
+-- on if a permissive policy resurfaces.
+insert into public.lineup_templates (organization_id, season_id, name)
+values (1, 1, 'Org 1 Template');
 
 -- Tier A: public teams are readable by anyone, including guests.
 select tests.login_as_guest();
@@ -69,6 +78,24 @@ select tests.login_as('editor@local.test');
 select lives_ok(
   $$ update public.organizations set name = 'Renamed By Editor' where id = 1 $$,
   'an editor can rename the team'
+);
+
+-- Regression coverage for the tier-B table-inventory gap: lineup_templates
+-- (and its siblings, added to tier_b alongside it) originally kept 017's
+-- permissive policies because neither array named them. outsider@ is a
+-- real captain of org 2, with no relationship to org 1 at all.
+select tests.logout();
+select tests.login_as('outsider@local.test');
+select is_empty(
+  $$ select id from public.lineup_templates where organization_id = 1 $$,
+  'an outsider cannot read another team''s lineup templates'
+);
+select throws_ok(
+  $$ insert into public.lineup_templates (organization_id, season_id, name)
+     values (1, 1, 'Hijacked Template') $$,
+  '42501',
+  null,
+  'an outsider cannot write into another team''s lineup templates'
 );
 
 select tests.logout();
