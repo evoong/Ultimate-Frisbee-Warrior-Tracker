@@ -11,6 +11,7 @@ import { nodeAdapter } from "../gateway/node-adapter.js";
 import { getVaultSecret } from "../gateway/secrets.js";
 import { runJamSync } from "../gateway/jamSync.js";
 import { CHAT_FUNCTION_DECLARATIONS, callChatFunction, type ActionsConfig } from "../gateway/gameActions.js";
+import { track, trackError, shutdown } from "./lib/posthog.js";
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
@@ -552,6 +553,10 @@ app.get("/api/cron/sync-jam", async (req, res) => {
 if (!process.env.VERCEL) {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`API server running on http://0.0.0.0:${PORT}`);
+  });
+  process.on("SIGTERM", async () => {
+    await shutdown();
+    process.exit(0);
   });
 }
 
