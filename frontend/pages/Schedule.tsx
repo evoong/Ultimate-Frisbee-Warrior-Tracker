@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
-import { useGetGames, useCreateGame, useUpdateGame, useDeleteGame, useGetLineups, useAddToLineup, useRemoveFromLineup, useMoveLineupEntry, useUpdateLineupSortOrder, useUpdateLineupRole, useGetLineupGroups, useCreateLineupGroup, useRenameLineupGroup, useReorderLineupGroups, useDeleteLineupGroup, useGetPreviousGameLineups, useGetLineupTemplates, useGetLineupTemplateDetail, useSaveLineupTemplate, useDeleteLineupTemplate, type LineupGroup, type LineupTemplate } from '../hooks/backend/games'
+import { useParams, useNavigate } from 'react-router-dom'
+import { useGetGames, useGetGame, useCreateGame, useUpdateGame, useDeleteGame, useGetLineups, useAddToLineup, useRemoveFromLineup, useMoveLineupEntry, useUpdateLineupSortOrder, useUpdateLineupRole, useGetLineupGroups, useCreateLineupGroup, useRenameLineupGroup, useReorderLineupGroups, useDeleteLineupGroup, useGetRecentLineupGames, useGetLineupTemplates, useGetLineupTemplateDetail, useSaveLineupTemplate, useDeleteLineupTemplate, type LineupGroup, type LineupTemplate, type RecentLineupGame } from '../hooks/backend/games'
 import { useGetGameEvents, useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useUpdateEventTimestamp, useGetEventTypes } from '../hooks/backend/events'
 import { useGetSeasonRoster, useGetPlayersNotInSeason, useCreatePlayerForGame, useDeleteSubPlayer, useAddPlayerToGame } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons, useCreateSeason, useUpdateSeason, useGetSeasonsMeta, useGetPlayerStats } from '../hooks/backend/stats'
@@ -14,7 +15,7 @@ import { todayLocalStr } from '../lib/seasonUtils'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../lib/shadcn/dialog'
 import { Input } from '../lib/shadcn/input'
 import { Label } from '../lib/shadcn/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
@@ -97,7 +98,13 @@ const OUTCOME_OPTIONS = ['Win', 'Loss', 'Tie', 'Default Win', 'Default Loss', 'F
 
 export default function Schedule() {
   const { allowed, currentOrgId } = useAuth()
+  const navigate = useNavigate()
+  // The selected game mirrors this URL segment (see the effect near
+  // handleSelectGame below), so a reload, browser back/forward, or a
+  // bookmarked/shared link lands on that game's detail view directly.
+  const { gameId: gameIdParam } = useParams<{ gameId: string }>()
   const { data: games, loading, error, trigger: fetchGames } = useGetGames()
+  const { trigger: fetchGameById } = useGetGame()
   const { data: events, loading: eventsLoading, trigger: fetchEvents } = useGetGameEvents()
   const { data: players, trigger: fetchPlayers } = useGetSeasonRoster()
   const { data: otherPlayers, trigger: fetchOtherPlayers } = useGetPlayersNotInSeason()
@@ -123,7 +130,7 @@ export default function Schedule() {
   const { trigger: renameLineupGroup } = useRenameLineupGroup()
   const { trigger: reorderLineupGroups } = useReorderLineupGroups()
   const { trigger: deleteLineupGroup } = useDeleteLineupGroup()
-  const { trigger: fetchPreviousGameLineups } = useGetPreviousGameLineups()
+  const { data: recentLineupGames, trigger: fetchRecentLineupGames } = useGetRecentLineupGames()
   const { data: lineupTemplates, trigger: fetchLineupTemplates } = useGetLineupTemplates()
   const { trigger: fetchLineupTemplateDetail } = useGetLineupTemplateDetail()
   const { trigger: saveLineupTemplate } = useSaveLineupTemplate()
@@ -226,6 +233,8 @@ export default function Schedule() {
   const [lineupName, setLineupName] = useState('Lineup 1')
   const [lineupPopoverOpen, setLineupPopoverOpen] = useState(false)
   const [copyingLineup, setCopyingLineup] = useState(false)
+  const [showCopyLineupDialog, setShowCopyLineupDialog] = useState(false)
+  const [selectedCopyGameId, setSelectedCopyGameId] = useState<number | null>(null)
   const [savingTemplateOpen, setSavingTemplateOpen] = useState(false)
   const [templateNameInput, setTemplateNameInput] = useState('')
   const [savingTemplate, setSavingTemplate] = useState(false)
@@ -331,112 +340,140 @@ export default function Schedule() {
   // instead of making you find it in the list. Only does this once per page
   // load so navigating back to the list afterward doesn't re-trigger it.
   useEffect(() => {
-    if (autoOpenedRef.current || selectedGame) return
+    if (autoOpenedRef.current || gameIdParam) return
     const g = (games as Game[] | undefined) ?? []
     if (g.length === 0) return
     const now = Date.now()
     const imminent = g.find(gm => Math.abs(gameStartsAt(gm).getTime() - now) <= IMMINENT_WINDOW_MS)
     if (imminent) {
       autoOpenedRef.current = true
-      handleSelectGame(imminent)
+      navigate(`/schedule/${imminent.id}`)
     }
-  }, [games])
+  }, [games, gameIdParam])
 
-  // Filling a game's lineups from the previous game (or a fresh
-  // gender-balanced split if there is no previous one) is explicit now, via
-  // the "Copy Last Game's Lineup" button shown while the game has no one
-  // placed yet — it used to run automatically on open, which surprised
-  // people who wanted to build a lineup from scratch instead of starting
-  // from a copy. If the season's immediately-previous game has lineups,
-  // this copies its group names, keeps returning non-sub players in the
-  // same group they were in, and slots any newcomer into whichever copied
-  // group is currently smallest. Otherwise (no previous game, or it was
-  // never lineup'd) it falls back to two groups, "Lineup 1"/"Lineup 2",
-  // with the season's non-sub roster split evenly and gender-balanced
-  // between them. Subs are never auto-placed either way — they're always
-  // added to a specific game by hand. Placing a player also marks them
+  // Filling a game's lineups is explicit now, via buttons shown while the
+  // game has no one placed yet — it used to auto-copy the previous game on
+  // open, which surprised people who wanted to build a lineup from scratch.
+  // Two paths: pick a recent game to copy from a preview-first dialog (see
+  // "Copy Recent Lineup" below), or start from a fresh gender-balanced
+  // split. Either way, subs are never auto-placed — they're always added to
+  // a specific game by hand — and placing a player also marks them
   // attending (see useAddToLineup), since attendance is derived from
   // lineup membership rather than tracked separately.
   //
-  // Guarded on zero *placed players* (game_lineups), not zero *groups*
-  // (game_lineup_groups): a game can have empty group shells with nobody in
-  // them yet (e.g. a group created by hand and never filled), and those
-  // still count as fair game for this button — checking only "do groups
+  // Both paths are guarded on zero *placed players* (game_lineups), not
+  // zero *groups* (game_lineup_groups): a game can have empty group shells
+  // with nobody in them yet (e.g. a group created by hand and never
+  // filled), and those still count as fair game — checking only "do groups
   // exist" would treat the game as already set up and refuse to fill it.
-  const handleCopyPreviousLineup = async () => {
+  const applyLineupGroupsAndAssignment = async (game: Game, groupNames: string[], assignment: Map<number, string>) => {
+    await Promise.all(groupNames.map((name, i) =>
+      createLineupGroup({ gameId: game.id, lineupName: name, sortOrder: i, organizationId: currentOrgId })
+    ))
+    const sortCounters = new Map<string, number>()
+    await Promise.all([...assignment.entries()].map(([playerId, targetGroup]) => {
+      const sortOrder = sortCounters.get(targetGroup) ?? 0
+      sortCounters.set(targetGroup, sortOrder + 1)
+      return addToLineup({ gameId: game.id, player_id: playerId, lineup_name: targetGroup, seasonId: game.season_id, sortOrder, organizationId: currentOrgId })
+    }))
+    fetchLineupGroups({ gameId: game.id })
+    fetchLineups({ gameId: game.id })
+    fetchAttendance({ gameId: game.id })
+  }
+
+  // Opens the "Copy Recent Lineup" picker: fetches the season's recent
+  // lineup'd games so each can be previewed before committing to one,
+  // instead of blindly copying whichever game happened to be last.
+  const handleOpenCopyLineupDialog = async () => {
     const game = selectedGame
     if (!game) return
     const existingEntries = (lineups as LineupEntry[] | undefined) ?? []
     if (existingEntries.length > 0) return
-    const roster = (players as Player[] | undefined) ?? []
-    setCopyingLineup(true)
-    try {
-      if (!game.season_id) {
-        // No season context to draw a roster from: seed two empty groups,
-        // same as before this button existed.
+    if (!game.season_id) {
+      // No season context to draw prior lineups (or a roster) from: seed
+      // two empty groups, same as this button's original fallback.
+      setCopyingLineup(true)
+      try {
         await Promise.all([
           createLineupGroup({ gameId: game.id, lineupName: 'Lineup 1', sortOrder: 0, organizationId: currentOrgId }),
           createLineupGroup({ gameId: game.id, lineupName: 'Lineup 2', sortOrder: 1, organizationId: currentOrgId }),
         ])
         fetchLineupGroups({ gameId: game.id })
-        return
+      } finally {
+        setCopyingLineup(false)
       }
+      return
+    }
+    setSelectedCopyGameId(null)
+    setShowCopyLineupDialog(true)
+    await fetchRecentLineupGames({ organizationId: currentOrgId, seasonId: game.season_id, gameId: game.id })
+  }
 
-      const nonSubRoster = roster.filter(p => !p.is_sub)
-      const previous = await fetchPreviousGameLineups({ organizationId: currentOrgId, seasonId: game.season_id, gameId: game.id })
-
-      let groupNames: string[]
+  // Applies the picked game's groups: returning non-sub players keep the
+  // group they were in last time, newcomers fill whichever copied group is
+  // currently smallest.
+  const handleCopySelectedLineup = async () => {
+    const game = selectedGame
+    const source = (recentLineupGames as RecentLineupGame[] | undefined)?.find(g => g.game_id === selectedCopyGameId)
+    if (!game?.season_id || !source) return
+    const existingEntries = (lineups as LineupEntry[] | undefined) ?? []
+    if (existingEntries.length > 0) return
+    const roster = (players as Player[] | undefined) ?? []
+    const nonSubRoster = roster.filter(p => !p.is_sub)
+    setCopyingLineup(true)
+    try {
+      const groupNames = source.groups.map(g => g.lineup_name)
+      const counts = new Map(groupNames.map(n => [n, 0]))
       const assignment = new Map<number, string>() // player_id -> lineup_name
-
-      if (previous && previous.groups.length > 0) {
-        groupNames = previous.groups.map(g => g.lineup_name)
-        const counts = new Map(groupNames.map(n => [n, 0]))
-        const prevByPlayer = new Map(previous.entries.map(e => [e.player_id, e.lineup_name]))
-        // Returning players keep their previous group.
-        for (const p of nonSubRoster) {
-          const prevGroup = prevByPlayer.get(p.id)
-          if (prevGroup && groupNames.includes(prevGroup)) {
-            assignment.set(p.id, prevGroup)
-            counts.set(prevGroup, (counts.get(prevGroup) ?? 0) + 1)
-          }
-        }
-        // Newcomers fill whichever copied group is currently smallest.
-        for (const p of nonSubRoster) {
-          if (assignment.has(p.id)) continue
-          let smallest = groupNames[0]!
-          for (const name of groupNames) if ((counts.get(name) ?? 0) < (counts.get(smallest) ?? 0)) smallest = name
-          assignment.set(p.id, smallest)
-          counts.set(smallest, (counts.get(smallest) ?? 0) + 1)
-        }
-      } else {
-        groupNames = ['Lineup 1', 'Lineup 2']
-        const byGender = new Map<string, Player[]>()
-        for (const p of nonSubRoster) {
-          const key = p.gender_match ?? 'unknown'
-          if (!byGender.has(key)) byGender.set(key, [])
-          byGender.get(key)!.push(p)
-        }
-        // Alternating within each gender bucket keeps both the head count and
-        // the gender mix roughly even across the two lineups.
-        for (const bucket of byGender.values()) {
-          bucket.forEach((p, i) => assignment.set(p.id, groupNames[i % 2]!))
+      const prevByPlayer = new Map(source.entries.map(e => [e.player_id, e.lineup_name]))
+      for (const p of nonSubRoster) {
+        const prevGroup = prevByPlayer.get(p.id)
+        if (prevGroup && groupNames.includes(prevGroup)) {
+          assignment.set(p.id, prevGroup)
+          counts.set(prevGroup, (counts.get(prevGroup) ?? 0) + 1)
         }
       }
+      for (const p of nonSubRoster) {
+        if (assignment.has(p.id)) continue
+        let smallest = groupNames[0]!
+        for (const name of groupNames) if ((counts.get(name) ?? 0) < (counts.get(smallest) ?? 0)) smallest = name
+        assignment.set(p.id, smallest)
+        counts.set(smallest, (counts.get(smallest) ?? 0) + 1)
+      }
+      await applyLineupGroupsAndAssignment(game, groupNames, assignment)
+      setShowCopyLineupDialog(false)
+      setSelectedCopyGameId(null)
+    } finally {
+      setCopyingLineup(false)
+    }
+  }
 
-      await Promise.all(groupNames.map((name, i) =>
-        createLineupGroup({ gameId: game.id, lineupName: name, sortOrder: i, organizationId: currentOrgId })
-      ))
-
-      const sortCounters = new Map<string, number>()
-      await Promise.all([...assignment.entries()].map(([playerId, targetGroup]) => {
-        const sortOrder = sortCounters.get(targetGroup) ?? 0
-        sortCounters.set(targetGroup, sortOrder + 1)
-        return addToLineup({ gameId: game.id, player_id: playerId, lineup_name: targetGroup, seasonId: game.season_id, sortOrder, organizationId: currentOrgId })
-      }))
-
-      fetchLineupGroups({ gameId: game.id })
-      fetchLineups({ gameId: game.id })
-      fetchAttendance({ gameId: game.id })
+  // Fallback with no history to copy from: two groups, "Lineup 1"/"Lineup
+  // 2", with the season's non-sub roster split evenly and gender-balanced
+  // between them (alternating within each gender bucket keeps both the
+  // head count and the mix even).
+  const handleStartFreshLineup = async () => {
+    const game = selectedGame
+    if (!game) return
+    const existingEntries = (lineups as LineupEntry[] | undefined) ?? []
+    if (existingEntries.length > 0) return
+    const roster = (players as Player[] | undefined) ?? []
+    const nonSubRoster = roster.filter(p => !p.is_sub)
+    setCopyingLineup(true)
+    try {
+      const groupNames = ['Lineup 1', 'Lineup 2']
+      const assignment = new Map<number, string>()
+      const byGender = new Map<string, Player[]>()
+      for (const p of nonSubRoster) {
+        const key = p.gender_match ?? 'unknown'
+        if (!byGender.has(key)) byGender.set(key, [])
+        byGender.get(key)!.push(p)
+      }
+      for (const bucket of byGender.values()) {
+        bucket.forEach((p, i) => assignment.set(p.id, groupNames[i % 2]!))
+      }
+      await applyLineupGroupsAndAssignment(game, groupNames, assignment)
+      setShowCopyLineupDialog(false)
     } finally {
       setCopyingLineup(false)
     }
@@ -540,7 +577,26 @@ export default function Schedule() {
     }
   }
 
-  const handleBack = () => { setSelectedGame(null); setEditingEventId(null) }
+  const handleBack = () => { navigate('/schedule'); setEditingEventId(null) }
+
+  // Resolve selectedGame from the URL rather than only from click handlers,
+  // so a reload/back-forward/shared link opens the right game directly.
+  // `games` is scoped to the current season filter and may not include the
+  // linked game (a different season, or not loaded yet), so fall back to a
+  // direct by-id fetch that ignores that filter.
+  useEffect(() => {
+    if (!gameIdParam) { setSelectedGame(null); return }
+    const id = parseInt(gameIdParam, 10)
+    if (isNaN(id)) { navigate('/schedule', { replace: true }); return }
+    if (selectedGame?.id === id) return
+    const fromList = (games as Game[] | undefined)?.find(g => g.id === id)
+    if (fromList) { handleSelectGame(fromList); return }
+    if (currentOrgId == null) return
+    fetchGameById({ gameId: id, organizationId: currentOrgId }).then(g => {
+      if (g) handleSelectGame(g as Game)
+      else navigate('/schedule', { replace: true })
+    })
+  }, [gameIdParam, games, currentOrgId])
 
   const handleSeasonSelect = (value: string) => {
     if (value === '__new__') { setShowNewSeason(true); setFormData(f => ({ ...f, season_id: '' })) }
@@ -606,7 +662,7 @@ export default function Schedule() {
   const handleDeleteGame = async (gameId: number) => {
     await deleteGame({ gameId })
     setDeleteConfirmId(null)
-    setSelectedGame(null)
+    navigate('/schedule')
     fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentOrgId })
   }
 
@@ -1229,7 +1285,11 @@ export default function Schedule() {
         if (e.player_id && sn) { ensurePlayer(e.player_id, sn); playerMap[e.player_id]!.turnovers++ }
       }
     })
-    const playerStats = Object.values(playerMap).sort((a, b) => b.goals - a.goals || b.assists - a.assists)
+    // Same ranking as the Stats page's Player Rankings: goals+assists desc,
+    // ties broken by goals desc (see useGetPlayerStats in stats.ts).
+    const playerStats = Object.values(playerMap).sort((a, b) =>
+      (b.goals + b.assists) - (a.goals + a.assists) || b.goals - a.goals
+    )
     const lineupEntries = (lineups as LineupEntry[] | undefined) ?? []
     const lineupByGroup = lineupEntries.reduce((acc, e) => {
       if (!acc[e.lineup_name]) acc[e.lineup_name] = []
@@ -1741,11 +1801,11 @@ export default function Schedule() {
                     type="button"
                     size="sm"
                     variant="outline"
-                    onClick={handleCopyPreviousLineup}
+                    onClick={handleOpenCopyLineupDialog}
                     disabled={copyingLineup}
                     className="bg-card border-border"
                   >
-                    {copyingLineup ? 'Copying...' : "Copy Last Game's Lineup"}
+                    {copyingLineup ? 'Copying...' : 'Copy Recent Lineup'}
                   </Button>
                   {((lineupTemplates as LineupTemplate[] | undefined) ?? []).length > 0 && (
                     <div className="flex items-center justify-center gap-2 max-w-xs mx-auto">
@@ -1782,6 +1842,89 @@ export default function Schedule() {
                   )}
                 </div>
               )}
+
+              {/* Copy Recent Lineup picker: preview each candidate game's
+                  groups/players before committing, rather than silently
+                  guessing "the last game". */}
+              <Dialog open={showCopyLineupDialog} onOpenChange={setShowCopyLineupDialog}>
+                <DialogContent className="bg-card text-card-foreground max-w-md max-h-[85vh] flex flex-col overflow-hidden">
+                  <DialogHeader>
+                    <DialogTitle>Copy a recent lineup</DialogTitle>
+                    <DialogDescription>Pick a past game to see who was on each line, then copy it into this one.</DialogDescription>
+                  </DialogHeader>
+                  {((recentLineupGames as RecentLineupGame[] | undefined) ?? []).length === 0 ? (
+                    <div className="text-center py-6 text-muted-foreground text-sm space-y-3">
+                      <p>No earlier games in this season have a lineup to copy from yet.</p>
+                      <Button type="button" size="sm" variant="outline" onClick={handleStartFreshLineup} disabled={copyingLineup} className="bg-card border-border">
+                        {copyingLineup ? 'Creating...' : 'Start With an Even Split'}
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex-1 min-h-0 overflow-y-auto -mx-6 px-6 space-y-2.5">
+                        {(recentLineupGames as RecentLineupGame[]).map(g => {
+                          const isSelected = selectedCopyGameId === g.game_id
+                          return (
+                            <button
+                              key={g.game_id}
+                              type="button"
+                              onClick={() => setSelectedCopyGameId(id => id === g.game_id ? null : g.game_id)}
+                              className={`w-full text-left rounded-xl border p-3.5 transition-colors ${
+                                isSelected ? 'border-primary ring-1 ring-primary bg-primary/5' : 'border-border bg-background hover:border-primary/40 hover:bg-accent/50'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-semibold text-sm truncate">vs {g.opponent ?? 'TBD'}</span>
+                                <span className="flex items-center gap-1.5 shrink-0">
+                                  <span className="text-xs text-muted-foreground">{g.game_date ? formatDate(g.game_date) : 'TBD'}</span>
+                                  <span className={`w-4 h-4 rounded-full border flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-border'}`}>
+                                    {isSelected && <Check className="w-2.5 h-2.5 text-primary-foreground" />}
+                                  </span>
+                                </span>
+                              </div>
+                              <div className="mt-2.5 space-y-2">
+                                {g.groups.map(group => {
+                                  const groupEntries = g.entries.filter(e => e.lineup_name === group.lineup_name)
+                                  return (
+                                    <div key={group.lineup_name}>
+                                      <div className="flex items-center gap-1.5 mb-1">
+                                        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                          {group.lineup_name} <span className="font-normal normal-case">· {groupEntries.length} players</span>
+                                        </p>
+                                        <GenderRatio entries={groupEntries} />
+                                      </div>
+                                      <div className="flex flex-wrap gap-1">
+                                        {groupEntries.length === 0 ? (
+                                          <span className="text-xs text-muted-foreground">—</span>
+                                        ) : (
+                                          groupEntries.map(e => (
+                                            <span key={e.player_id} className="inline-flex items-center gap-1 text-[11px] leading-none px-1.5 py-1 rounded-md bg-accent text-foreground/90">
+                                              <GenderTag value={e.gender_match} />
+                                              {e.display_name ?? 'Unknown'}
+                                            </span>
+                                          ))
+                                        )}
+                                      </div>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            </button>
+                          )
+                        })}
+                      </div>
+                      <div className="flex items-center justify-between gap-2 pt-3 border-t border-border">
+                        <Button type="button" size="sm" variant="ghost" onClick={handleStartFreshLineup} disabled={copyingLineup}>
+                          Start fresh instead
+                        </Button>
+                        <Button type="button" size="sm" onClick={handleCopySelectedLineup} disabled={!selectedCopyGameId || copyingLineup}>
+                          {copyingLineup ? 'Copying...' : 'Copy This Lineup'}
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                </DialogContent>
+              </Dialog>
 
               {/* Lineup groups */}
               {orderedGroups.length > 0 && (
@@ -1982,6 +2125,7 @@ export default function Schedule() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-xs text-muted-foreground font-medium">
+                      <th className="w-8 text-center font-medium pb-2">#</th>
                       <th className="text-left font-medium px-3 pb-2">Player</th>
                       <th className="w-10 text-center font-medium text-green-600 dark:text-green-400 pb-2">G</th>
                       <th className="w-10 text-center font-medium text-blue-600 dark:text-blue-400 pb-2">A</th>
@@ -1989,8 +2133,9 @@ export default function Schedule() {
                     </tr>
                   </thead>
                   <tbody>
-                    {playerStats.map(p => (
+                    {playerStats.map((p, i) => (
                       <tr key={p.name} className="border-t border-border">
+                        <td className="w-8 text-center tabular-nums text-muted-foreground">{i + 1}</td>
                         <td className="px-3 py-2 font-medium text-foreground">{p.name}</td>
                         <td className="w-10 text-center font-bold text-green-600 dark:text-green-400">{p.goals}</td>
                         <td className="w-10 text-center font-bold text-blue-600 dark:text-blue-400">{p.assists}</td>
@@ -2118,15 +2263,29 @@ export default function Schedule() {
   }
 
   const renderGameCard = (game: Game, index: number, isPlayed: boolean) => {
-    const displayResult = game.outcome_override ?? game.result
+    // our_score/their_score are derived live from game_events (see
+    // useGetGames), but games.result is a stored column no write path ever
+    // populates, so it reads as null for every normally-scored game — an
+    // outcome_override beats the score the same way Standings treats it,
+    // but otherwise the live score itself is the source of truth, not
+    // game.result.
+    const displayResult = game.outcome_override
+    const outcome: 'win' | 'loss' | 'tie' | null = !isPlayed ? null
+      : displayResult ? (displayResult.startsWith('Win') || displayResult === 'Default Win' ? 'win' : displayResult === 'Tie' ? 'tie' : 'loss')
+      : game.our_score > game.their_score ? 'win' : game.our_score < game.their_score ? 'loss' : 'tie'
     // Redundant once a single season is already the active filter; only earns
     // its place in the meta line when the list is mixing seasons together.
     const showSeasonLabel = game.season_id && scheduleSeasonIds.length !== 1
     const badge = dateBadgeParts(game.game_date)
+    const scoreColorClass = outcome === 'win' ? 'text-green-600 dark:text-green-400'
+      : outcome === 'loss' ? 'text-red-600 dark:text-red-400'
+      : outcome === 'tie' ? 'text-yellow-600 dark:text-yellow-400'
+      : 'text-primary'
+    const outcomeLabel = outcome === 'win' ? 'Win' : outcome === 'loss' ? 'Loss' : outcome === 'tie' ? 'Tie' : null
     return (
       <FadeIn key={game.id} delay={index * 40}>
         <Card
-          onClick={() => handleSelectGame(game)}
+          onClick={() => navigate(`/schedule/${game.id}`)}
           className="bg-card text-card-foreground border-border cursor-pointer hover:bg-accent/50 active:scale-[0.99] transition-all"
         >
           <CardContent className="py-3.5">
@@ -2167,13 +2326,13 @@ export default function Schedule() {
                 {isPlayed ? (
                   <div className="text-right">
                     <div className="text-2xl font-bold leading-none">
-                      <span className="text-primary">{game.our_score}</span>
+                      <span className={scoreColorClass}>{game.our_score}</span>
                       <span className="text-muted-foreground mx-1">-</span>
                       <span className="text-muted-foreground">{game.their_score}</span>
                     </div>
-                    {displayResult && (
-                      <div className={`text-xs font-medium mt-1 ${displayResult.startsWith('Win') || displayResult === 'Default Win' ? 'text-green-600 dark:text-green-400' : displayResult === 'Tie' ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-600 dark:text-red-400'}`}>
-                        {displayResult}
+                    {outcomeLabel && (
+                      <div className={`text-xs font-medium mt-1 ${scoreColorClass}`}>
+                        {game.outcome_override || outcomeLabel}
                         {game.outcome_override && <span className="text-[10px] opacity-60 ml-0.5">*</span>}
                       </div>
                     )}
@@ -2202,7 +2361,7 @@ export default function Schedule() {
     return (
       <FadeIn key={game.id}>
         <Card
-          onClick={() => handleSelectGame(game)}
+          onClick={() => navigate(`/schedule/${game.id}`)}
           className="bg-card border-primary/40 ring-1 ring-primary/20 cursor-pointer hover:border-primary/70 active:scale-[0.99] transition-all"
         >
           <CardContent className="p-4 flex items-center gap-4">
@@ -2510,12 +2669,14 @@ export default function Schedule() {
                   <div key={day} className={`min-h-[52px] p-1 rounded border ${isToday ? 'border-primary/40 bg-primary/5' : 'border-transparent'}`}>
                     <div className={`text-xs font-medium mb-0.5 ${isToday ? 'text-primary' : 'text-foreground'}`}>{day}</div>
                     {dayGames.map(g => (
-                      <button key={g.id} onClick={() => handleSelectGame(g)}
+                      <button key={g.id} onClick={() => navigate(`/schedule/${g.id}`)}
                         className={`w-full text-left text-[10px] px-1 py-0.5 rounded mb-0.5 truncate ${
                           g.result?.startsWith('Win') || g.outcome_override === 'Win' || g.outcome_override === 'Default Win'
                             ? 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-200'
                             : g.result?.startsWith('Loss') || g.outcome_override === 'Loss' || g.outcome_override === 'Default Loss'
                             ? 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200'
+                            : g.result === 'Tie' || g.outcome_override === 'Tie'
+                            ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-950 dark:text-yellow-200'
                             : 'bg-primary/10 text-primary'
                         }`}>
                         vs {g.opponent}

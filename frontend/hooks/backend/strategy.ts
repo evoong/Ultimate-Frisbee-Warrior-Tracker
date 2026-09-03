@@ -5,7 +5,9 @@ export type StrategyPlay = { id: number; name: string; created_at: string; updat
 export type StrategyStep = { id: number; play_id: number; step_number: number }
 export type StrategyPosition = { player_id: number; x: number; y: number }
 export type StrategyOpponentMarker = { id: number; label: string; x: number; y: number }
-export type StrategyTextBox = { id: number; text: string; x: number; y: number }
+export type StrategyTextBox = { id: number; text: string; x: number; y: number; color: string | null; filled: boolean; width: number }
+export type StrategyHighlight = { id: number; points: { x: number; y: number }[]; color: string; is_straight: boolean; locked: boolean }
+export type StrategyLine = { id: number; points: { x: number; y: number }[]; color: string; is_straight: boolean; locked: boolean }
 export type StrategyArrow = {
   id: number
   x1: number; y1: number
@@ -261,7 +263,7 @@ export function useGetStrategyTextBoxes() {
   const fn = useCallback(async (params: { stepId: number }) => {
     const { data, error } = await supabase
       .from('strategy_text_boxes')
-      .select('id, text, x, y')
+      .select('id, text, x, y, color, filled, width')
       .eq('step_id', params.stepId)
       .order('id')
     if (error) throw new Error(error.message)
@@ -283,7 +285,7 @@ export function useCreateStrategyTextBox() {
 }
 
 export function useUpdateStrategyTextBox() {
-  const fn = useCallback(async (params: { id: number; x?: number; y?: number; text?: string }) => {
+  const fn = useCallback(async (params: { id: number; x?: number; y?: number; text?: string; color?: string | null; filled?: boolean; width?: number }) => {
     const { id, ...body } = params
     const { error } = await supabase
       .from('strategy_text_boxes')
@@ -292,7 +294,7 @@ export function useUpdateStrategyTextBox() {
     if (error) throw new Error(error.message)
     return true
   }, [])
-  return useApiCall<boolean, { id: number; x?: number; y?: number; text?: string }>(fn)
+  return useApiCall<boolean, { id: number; x?: number; y?: number; text?: string; color?: string | null; filled?: boolean; width?: number }>(fn)
 }
 
 export function useDeleteStrategyTextBox() {
@@ -361,6 +363,127 @@ export function useDeleteStrategyArrow() {
   const fn = useCallback(async (params: { id: number }) => {
     const { error } = await supabase
       .from('strategy_arrows')
+      .delete()
+      .eq('id', params.id)
+    if (error) throw new Error(error.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { id: number }>(fn)
+}
+
+// Freehand or straight-corner highlighted zones (a throwing lane, a cone,
+// an area to attack): a step-scoped filled polygon. Color is always
+// editable in place (useUpdateStrategyHighlight); a straight-drawn one
+// (is_straight) also has its individual corner points draggable, since
+// each vertex is a deliberate tap rather than one of hundreds of freehand
+// samples — a freehand trace still means delete and redraw to reshape. The
+// whole shape (any shape, freehand or straight) can also be dragged as one
+// piece — same points update, just translating every point by the same
+// delta instead of moving one — and `locked` opts a shape out of that drag
+// once it's positioned correctly, so it can't be nudged by accident.
+export function useGetStrategyHighlights() {
+  const fn = useCallback(async (params: { stepId: number }) => {
+    const { data, error } = await supabase
+      .from('strategy_highlights')
+      .select('id, points, color, is_straight, locked')
+      .eq('step_id', params.stepId)
+      .order('id')
+    if (error) throw new Error(error.message)
+    return (data ?? []) as StrategyHighlight[]
+  }, [])
+  return useApiCall<StrategyHighlight[], { stepId: number }>(fn)
+}
+
+export function useCreateStrategyHighlight() {
+  const fn = useCallback(async (params: { organizationId: number | null; stepId: number; points: { x: number; y: number }[]; color: string; isStraight: boolean }) => {
+    const { data, error } = await supabase
+      .from('strategy_highlights')
+      .insert({ organization_id: params.organizationId, step_id: params.stepId, points: params.points, color: params.color, is_straight: params.isStraight })
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0] as StrategyHighlight
+  }, [])
+  return useApiCall<StrategyHighlight, { organizationId: number | null; stepId: number; points: { x: number; y: number }[]; color: string; isStraight: boolean }>(fn)
+}
+
+export function useUpdateStrategyHighlight() {
+  const fn = useCallback(async (params: { id: number; color?: string; points?: { x: number; y: number }[]; locked?: boolean }) => {
+    const patch: { color?: string; points?: { x: number; y: number }[]; locked?: boolean } = {}
+    if (params.color !== undefined) patch.color = params.color
+    if (params.points !== undefined) patch.points = params.points
+    if (params.locked !== undefined) patch.locked = params.locked
+    const { error } = await supabase
+      .from('strategy_highlights')
+      .update(patch)
+      .eq('id', params.id)
+    if (error) throw new Error(error.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { id: number; color?: string; points?: { x: number; y: number }[]; locked?: boolean }>(fn)
+}
+
+export function useDeleteStrategyHighlight() {
+  const fn = useCallback(async (params: { id: number }) => {
+    const { error } = await supabase
+      .from('strategy_highlights')
+      .delete()
+      .eq('id', params.id)
+    if (error) throw new Error(error.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { id: number }>(fn)
+}
+
+// Plain unfilled lines (freehand pencil strokes or straight-corner
+// segments): a step-scoped open polyline, distinct from a highlight (which
+// is always a closed filled zone) and from an arrow (which always has an
+// arrowhead and can anchor to a player/opponent). Same editable-color, and
+// same straight-corners-are-draggable model, as highlights above.
+export function useGetStrategyLines() {
+  const fn = useCallback(async (params: { stepId: number }) => {
+    const { data, error } = await supabase
+      .from('strategy_lines')
+      .select('id, points, color, is_straight, locked')
+      .eq('step_id', params.stepId)
+      .order('id')
+    if (error) throw new Error(error.message)
+    return (data ?? []) as StrategyLine[]
+  }, [])
+  return useApiCall<StrategyLine[], { stepId: number }>(fn)
+}
+
+export function useCreateStrategyLine() {
+  const fn = useCallback(async (params: { organizationId: number | null; stepId: number; points: { x: number; y: number }[]; color: string; isStraight: boolean }) => {
+    const { data, error } = await supabase
+      .from('strategy_lines')
+      .insert({ organization_id: params.organizationId, step_id: params.stepId, points: params.points, color: params.color, is_straight: params.isStraight })
+      .select()
+    if (error) throw new Error(error.message)
+    return data?.[0] as StrategyLine
+  }, [])
+  return useApiCall<StrategyLine, { organizationId: number | null; stepId: number; points: { x: number; y: number }[]; color: string; isStraight: boolean }>(fn)
+}
+
+export function useUpdateStrategyLine() {
+  const fn = useCallback(async (params: { id: number; color?: string; points?: { x: number; y: number }[]; locked?: boolean }) => {
+    const patch: { color?: string; points?: { x: number; y: number }[]; locked?: boolean } = {}
+    if (params.color !== undefined) patch.color = params.color
+    if (params.points !== undefined) patch.points = params.points
+    if (params.locked !== undefined) patch.locked = params.locked
+    const { error } = await supabase
+      .from('strategy_lines')
+      .update(patch)
+      .eq('id', params.id)
+    if (error) throw new Error(error.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { id: number; color?: string; points?: { x: number; y: number }[]; locked?: boolean }>(fn)
+}
+
+export function useDeleteStrategyLine() {
+  const fn = useCallback(async (params: { id: number }) => {
+    const { error } = await supabase
+      .from('strategy_lines')
       .delete()
       .eq('id', params.id)
     if (error) throw new Error(error.message)

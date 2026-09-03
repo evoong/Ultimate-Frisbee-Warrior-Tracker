@@ -1,0 +1,45 @@
+# Ultimate Frisbee Warrior Tracker
+
+> A free, web-based Ultimate Frisbee team and league management app: live game
+> scoring, roster and lineup management, player stats and league standings, a
+> drag-and-drop strategy board, and an AI assistant. Signup is open; anyone can
+> create or join a team.
+
+Ultimate Frisbee Warrior Tracker helps team captains, coaches, and league
+organizers run a season end to end in one place, replacing a mix of
+spreadsheets, group chats, and paper lineup sheets.
+
+## Core features
+
+- Live scoring: a real-time scoreboard for logging goals and assists during a
+  game, with an undo button and a full event log.
+- Roster management: track players, their position, and whether they are a
+  full player or a substitute, per season.
+- Lineups: build and reorder lineup groups for a game; attendance is derived
+  automatically from lineup placement.
+- Player stats and rankings: goals, assists, turnovers, and customizable
+  computed columns (e.g. goals per game), sortable and filterable by season.
+- League standings: win/loss/tie records, points, and point differential
+  computed automatically from game results across a season.
+- Strategy board: diagram named plays as an ordered sequence of steps, with
+  player positions, opponent markers, and run/throw arrows, then step through
+  them like a play-by-play animation.
+- AI assistant: an in-app chat that can answer questions about a team's stats
+  and, once confirmed, log game events or manage lineups. The same
+  capabilities are exposed to external AI tools (such as Claude) over MCP
+  (Model Context Protocol).
+
+## Who it's for
+
+- Team captains and coaches running a single club or pickup team.
+- League organizers tracking standings and results across multiple teams.
+
+## Pricing
+
+Free to sign up and use. Multi-tenant: each user creates or joins an
+organization (team), and the app is currently in an open soft launch.
+
+## Learn more
+
+- Homepage: https://your-domain.example/
+- Sign in / sign up: https://your-domain.example/login

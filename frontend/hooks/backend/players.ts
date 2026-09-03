@@ -1,12 +1,37 @@
 import { useState, useCallback, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
-import { isTurnoverEvent } from '../../lib/eventUtils'
+import { isTurnoverEvent, TURNOVER_EVENT_TYPES } from '../../lib/eventUtils'
 
 type HookResult<T, P = void> = {
   data: T | undefined
   loading: boolean
   error: string | null
   trigger: P extends void ? () => Promise<T | undefined> : (params?: P) => Promise<T | undefined>
+}
+
+// A player can be placed into a lineup name that has no game_lineup_groups
+// row yet — e.g. the Events tab's Scorer/Assister quick-pick falls back to
+// defaultLineupName ('Lineup 1' or similar) when the game has no groups at
+// all set up yet (see Schedule.tsx). Without ensuring the group row exists
+// first, the resulting game_lineups entry is an orphan with no group to
+// render it in: the Lineups tab shows neither the player nor any "start a
+// lineup" affordance (its empty-state guard is "zero entries", and this
+// game already has one). ignoreDuplicates so this is a no-op once the
+// group already exists; sort_order only matters the first time it's
+// created, so an existing-groups count race is harmless.
+async function ensureLineupGroupExists(organizationId: number | null, gameId: number, lineupName: string) {
+  const { count, error: countError } = await supabase
+    .from('game_lineup_groups')
+    .select('id', { count: 'exact', head: true })
+    .eq('game_id', gameId)
+  if (countError) throw new Error(countError.message)
+  const { error } = await supabase
+    .from('game_lineup_groups')
+    .upsert(
+      { organization_id: organizationId, game_id: gameId, lineup_name: lineupName, sort_order: count ?? 0 },
+      { onConflict: 'game_id,lineup_name', ignoreDuplicates: true },
+    )
+  if (error) throw new Error(error.message)
 }
 
 function useApiCall<T, P = void>(fn: (params: P) => Promise<T>): HookResult<T, P> {
@@ -191,9 +216,12 @@ export function useCreatePlayerForGame() {
     const playerId = playerData?.[0]?.id
     if (!playerId) throw new Error('Failed to create player')
 
+    const lineupName = params.lineupName ?? 'Starting'
+    await ensureLineupGroupExists(params.organizationId, params.gameId, lineupName)
+
     const { data, error } = await supabase
       .from('game_lineups')
-      .insert({ organization_id: params.organizationId, game_id: params.gameId, player_id: playerId, lineup_name: params.lineupName ?? 'Starting' })
+      .insert({ organization_id: params.organizationId, game_id: params.gameId, player_id: playerId, lineup_name: lineupName })
       .select()
     if (error) throw new Error(error.message)
 
@@ -234,9 +262,12 @@ export function useDeleteSubPlayer() {
 
 export function useAddPlayerToGame() {
   const fn = useCallback(async (params: { organizationId: number | null; gameId: number; playerId: number; seasonId?: number | null; lineupName?: string }) => {
+    const lineupName = params.lineupName ?? 'Starting'
+    await ensureLineupGroupExists(params.organizationId, params.gameId, lineupName)
+
     const { data, error } = await supabase
       .from('game_lineups')
-      .insert({ organization_id: params.organizationId, game_id: params.gameId, player_id: params.playerId, lineup_name: params.lineupName ?? 'Starting' })
+      .insert({ organization_id: params.organizationId, game_id: params.gameId, player_id: params.playerId, lineup_name: lineupName })
       .select()
     if (error) throw new Error(error.message)
 
@@ -443,6 +474,101 @@ export function useGetPlayerGameStats() {
     return [...statsMap.values()].sort((a, b) => b.game_date.localeCompare(a.game_date)) as any[]
   }, [])
   return useApiCall<any[], { playerId: number }>(fn)
+}
+
+export type AssistPairingRow = { teammateId: number; teammateName: string; count: number }
+export type PlayerAssistPairings = { received: AssistPairingRow[]; given: AssistPairingRow[] }
+
+// "Received" = goals this player scored, broken down by who assisted them
+// (game_events.related_player_id on their own Goal rows). "Given" = goals
+// this player assisted, broken down by who scored (game_events.player_id
+// on Goal rows where they're the related_player_id) — the two directions
+// of the same Goal-event relationship used by the Stats tab's Top Pairings
+// card (useGetAssistPairings in hooks/backend/stats.ts), just scoped to one player.
+//
+// seasonIds mirrors the Roster detail page's own Seasons chips (seasonFilters
+// there), not the Stats page's season-filter convention: an empty array here
+// means "no seasons selected" and returns nothing, matching how that page's
+// own Games/Goals/Assists summary already goes to zero in that state —
+// it does NOT mean "all-time" the way other hooks' optional seasonIds do.
+export function useGetPlayerAssistPairings() {
+  const fn = useCallback(async (params: { playerId: number; seasonIds: number[] }): Promise<PlayerAssistPairings> => {
+    let scopedGameIds: number[] = []
+    if (params.seasonIds.length > 0) {
+      const { data: games, error: gamesError } = await supabase
+        .from('games')
+        .select('id')
+        .in('season_id', params.seasonIds)
+      if (gamesError) throw new Error(gamesError.message)
+      scopedGameIds = (games ?? []).map((g: any) => g.id)
+    }
+    if (scopedGameIds.length === 0) return { received: [], given: [] }
+
+    const { data: receivedEvents, error: receivedError } = await supabase
+      .from('game_events')
+      .select('related_player_id')
+      .eq('player_id', params.playerId)
+      .eq('event_type', 'Goal')
+      .not('related_player_id', 'is', null)
+      .in('game_id', scopedGameIds)
+    if (receivedError) throw new Error(receivedError.message)
+
+    const { data: givenEvents, error: givenError } = await supabase
+      .from('game_events')
+      .select('player_id')
+      .eq('related_player_id', params.playerId)
+      .eq('event_type', 'Goal')
+      .not('player_id', 'is', null)
+      .in('game_id', scopedGameIds)
+    if (givenError) throw new Error(givenError.message)
+
+    const teammateIds = new Set<number>()
+    ;(receivedEvents ?? []).forEach((e: any) => teammateIds.add(e.related_player_id))
+    ;(givenEvents ?? []).forEach((e: any) => teammateIds.add(e.player_id))
+    if (teammateIds.size === 0) return { received: [], given: [] }
+
+    const { data: teammates, error: teammatesError } = await supabase
+      .from('players')
+      .select('id, display_name')
+      .in('id', [...teammateIds])
+    if (teammatesError) throw new Error(teammatesError.message)
+    const nameMap = new Map(teammates?.map((p: any) => [p.id, p.display_name as string]) ?? [])
+
+    const tally = (rows: any[], key: 'related_player_id' | 'player_id'): AssistPairingRow[] => {
+      const counts = new Map<number, number>()
+      rows.forEach(r => counts.set(r[key], (counts.get(r[key]) ?? 0) + 1))
+      return [...counts.entries()]
+        .map(([teammateId, count]) => ({ teammateId, teammateName: nameMap.get(teammateId) ?? 'Unknown', count }))
+        .sort((a, b) => b.count - a.count || a.teammateName.localeCompare(b.teammateName))
+    }
+
+    return {
+      received: tally(receivedEvents ?? [], 'related_player_id'),
+      given: tally(givenEvents ?? [], 'player_id'),
+    }
+  }, [])
+  return useApiCall<PlayerAssistPairings, { playerId: number; seasonIds: number[] }>(fn)
+}
+
+export type TurnoverBreakdownRow = { type: string; count: number }
+
+// Splits the same total shown in the Roster summary card's TOs count (see
+// isTurnoverEvent) into its component event types, so a player known for
+// drops vs. throwaways shows up differently even when their TO totals match.
+export function useGetPlayerTurnoverBreakdown() {
+  const fn = useCallback(async (params: { playerId: number }): Promise<TurnoverBreakdownRow[]> => {
+    const { data, error } = await supabase
+      .from('game_events')
+      .select('event_type')
+      .eq('player_id', params.playerId)
+      .in('event_type', [...TURNOVER_EVENT_TYPES])
+    if (error) throw new Error(error.message)
+
+    const counts = new Map<string, number>()
+    ;(data ?? []).forEach((e: any) => counts.set(e.event_type, (counts.get(e.event_type) ?? 0) + 1))
+    return TURNOVER_EVENT_TYPES.map(type => ({ type, count: counts.get(type) ?? 0 })).filter(r => r.count > 0)
+  }, [])
+  return useApiCall<TurnoverBreakdownRow[], { playerId: number }>(fn)
 }
 
 // Roster's per-game breakdown lets you toggle whether a player was in a

@@ -1,15 +1,17 @@
-import { useEffect, useState } from 'react'
-import Schedule from './pages/Schedule'
-import Roster from './pages/Roster'
-import Stats from './pages/Stats'
-import Strategy from './pages/Strategy'
-import Chat from './pages/Chat'
-import Login from './pages/Login'
-import ResetPassword from './pages/ResetPassword'
-import CreateOrganization from './pages/CreateOrganization'
+import { lazy, Suspense, useEffect, useState } from 'react'
+import { useLocation, useNavigate, Routes, Route } from 'react-router-dom'
+const Schedule = lazy(() => import('./pages/Schedule'))
+const Roster = lazy(() => import('./pages/Roster'))
+const Stats = lazy(() => import('./pages/Stats'))
+const Strategy = lazy(() => import('./pages/Strategy'))
+const Chat = lazy(() => import('./pages/Chat'))
+const Home = lazy(() => import('./pages/Home'))
+const Login = lazy(() => import('./pages/Login'))
+const ResetPassword = lazy(() => import('./pages/ResetPassword'))
+const CreateOrganization = lazy(() => import('./pages/CreateOrganization'))
 import { useAuth } from './contexts/AuthContext'
 import { Moon, Sun, Loader2, LogOut, KeyRound, Settings } from 'lucide-react'
-import { NAV_ITEMS, type Tab } from './lib/nav'
+import { NAV_ITEMS, tabForPath, pathForTab, isKnownPath, type Tab } from './lib/nav'
 import { useMediaQuery } from './lib/shadcn/use-media-query'
 import { SidebarProvider, SidebarInset, SidebarTrigger } from './lib/shadcn/sidebar'
 import AppSidebar from './components/AppSidebar'
@@ -25,8 +27,21 @@ function getInitialTheme(): 'light' | 'dark' {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
+const PageFallback = () => (
+  <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
+    <Loader2 className="w-8 h-8 animate-spin text-primary" />
+  </div>
+)
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('schedule')
+  const location = useLocation()
+  const navigate = useNavigate()
+  // The active tab is derived from the URL (not its own state) so the
+  // browser's back/forward buttons, a reload, or a bookmarked/shared link
+  // all land on the right page. Switching tabs pushes a real history entry
+  // via navigate() instead of just re-rendering in place.
+  const activeTab = tabForPath(location.pathname)
+  const setActiveTab = (tab: Tab) => navigate(pathForTab(tab))
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme)
   const [passkeysOpen, setPasskeysOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -39,6 +54,17 @@ export default function App() {
     else root.classList.remove('dark')
     localStorage.setItem(THEME_KEY, theme)
   }, [theme])
+
+  // Any unrecognized authenticated-tab URL (e.g. a stale/typo'd link)
+  // redirects to the default tab rather than silently rendering Schedule at
+  // a URL that doesn't say so. Scoped to signed-in users only: while signed
+  // out, '/' and '/login' are real public pages (Home/Login below), not
+  // unrecognized paths to bounce from.
+  useEffect(() => {
+    if (!user) return
+    if (location.pathname === '/reset-password') return
+    if (!isKnownPath(location.pathname)) navigate(pathForTab('schedule'), { replace: true })
+  }, [location.pathname, user])
 
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
 
@@ -53,31 +79,63 @@ export default function App() {
   // Recovery-link landing page (the auth gateway redirects here after
   // verifying the email token and setting session cookies).
   if (window.location.pathname === '/reset-password') {
-    return <ResetPassword />
+    return (
+      <Suspense fallback={<PageFallback />}>
+        <ResetPassword />
+      </Suspense>
+    )
   }
 
   // Anyone signed in may enter (read-only, or read-write for a public org
   // they don't belong to). The `allowed` flag means "member of the current
   // organization — can write"; write controls are gated on it, and the
   // DB's RLS is the real enforcement (016_organizations.sql).
+  //
+  // Signed out: '/login' is the sign-in/sign-up form; every other path
+  // (including '/', the marketing homepage, and any unrecognized URL) shows
+  // Home, so a shared/bookmarked deep link to the app still lands on a real
+  // page instead of a redirect loop. Once signed in, the unknown-path effect
+  // above takes over and these two paths stop being special.
   if (!user) {
-    return <Login />
+    return (
+      <Suspense fallback={<PageFallback />}>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="*" element={<Home theme={theme} toggleTheme={toggleTheme} />} />
+        </Routes>
+      </Suspense>
+    )
   }
 
   // Every domain table requires an organization_id, so a user with zero
   // memberships has nothing to see yet: send them to create one first.
   if (organizations.length === 0) {
-    return <CreateOrganization />
+    return (
+      <Suspense fallback={<PageFallback />}>
+        <CreateOrganization />
+      </Suspense>
+    )
   }
 
+  // Each tab additionally accepts one sub-path (a specific game, player,
+  // play, or stats sub-tab), so the page component itself reads that piece
+  // of state from useParams() rather than only ever owning it as in-memory
+  // state — see the "selected game/player/play mirrors the URL" comments in
+  // Schedule.tsx/Roster.tsx/Strategy.tsx and Stats.tsx's subtab handling.
   const pageContent = (
-    <>
-      {activeTab === 'schedule' && <Schedule />}
-      {activeTab === 'roster' && <Roster />}
-      {activeTab === 'stats' && <Stats />}
-      {activeTab === 'strategy' && <Strategy />}
-      {activeTab === 'chat' && <Chat />}
-    </>
+    <Suspense fallback={<PageFallback />}>
+      <Routes>
+        <Route path="/schedule" element={<Schedule />} />
+        <Route path="/schedule/:gameId" element={<Schedule />} />
+        <Route path="/roster" element={<Roster />} />
+        <Route path="/roster/:playerId" element={<Roster />} />
+        <Route path="/stats" element={<Stats />} />
+        <Route path="/stats/:subtab" element={<Stats />} />
+        <Route path="/plays" element={<Strategy />} />
+        <Route path="/plays/:playId" element={<Strategy />} />
+        <Route path="/ai" element={<Chat />} />
+      </Routes>
+    </Suspense>
   )
 
   const readOnlyNotice = !allowed && (

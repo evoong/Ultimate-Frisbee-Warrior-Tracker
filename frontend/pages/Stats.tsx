@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { useGetGames } from '../hooks/backend/games'
 import { useGetPlayers } from '../hooks/backend/players'
-import { useGetPlayerStats, useGetSeasons, useGetCumulativeStats, useGetAllSeasons } from '../hooks/backend/stats'
+import { useGetPlayerStats, useGetSeasons, useGetCumulativeStats, useGetAllSeasons, useGetAssistPairings, type PairingRow } from '../hooks/backend/stats'
 import {
-  useGetLeague, computeStandings,
+  useGetLeague, useGetOpponentHistory, computeStandings,
   useCreateLeagueTeam, useUpdateLeagueTeam, useDeleteLeagueTeam, useUpdateSeasonPoints,
   type LeagueTeam,
 } from '../hooks/backend/league'
@@ -23,7 +24,7 @@ import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
 import {
   BarChart3, TrendingUp, LineChart as LineChartIcon, Settings2, ChevronUp, ChevronDown,
-  ChevronsUpDown, Plus, Trash2, Award, Target, Pencil, Check, X,
+  ChevronsUpDown, ChevronLeft, Plus, Trash2, Award, Target, Pencil, Check, X, Share2,
 } from 'lucide-react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -135,7 +136,7 @@ function seasonLabel(s: { name: string; year: number; organizer: string | null }
 
 type PageTab = 'overview' | 'table' | 'standings'
 
-type StandingsSortKey = 'rank' | 'team' | 'games_played' | 'wins' | 'point_diff' | 'points'
+type StandingsSortKey = 'rank' | 'team' | 'games_played' | 'wins' | 'points_for' | 'points_against' | 'point_diff' | 'points'
 
 // Shared sortable-header button for the League Standings table: shows a
 // sort-direction chevron only on the active column, an inert double-chevron
@@ -160,14 +161,30 @@ function StandingsSortHeader({ label, sortKey, activeKey, dir, onClick, align }:
     </button>
   )
 }
-const PAGE_TABS: { key: PageTab; label: string }[] = [
-  { key: 'overview', label: 'Overview' },
-  { key: 'table', label: 'Player Rankings' },
-  { key: 'standings', label: 'League Standings' },
+// URL words for each tab, readable rather than the internal PageTab keys
+// ("table" predates the "Player Rankings" label — see the PageTab comment
+// above and doesn't belong in a URL a person actually reads).
+const PAGE_TABS: { key: PageTab; label: string; slug: string }[] = [
+  { key: 'overview', label: 'Overview', slug: 'overview' },
+  { key: 'table', label: 'Player Rankings', slug: 'rankings' },
+  { key: 'standings', label: 'League Standings', slug: 'standings' },
 ]
 
+function pageTabForSlug(slug: string | undefined): PageTab {
+  return PAGE_TABS.find(t => t.slug === slug)?.key ?? 'overview'
+}
+
 export default function Stats() {
-  const [pageTab, setPageTab] = useState<PageTab>('overview')
+  const navigate = useNavigate()
+  // The active sub-tab mirrors this URL segment, so a reload, browser
+  // back/forward, or a bookmarked/shared link lands on the right sub-tab
+  // instead of always resetting to Overview.
+  const { subtab } = useParams<{ subtab: string }>()
+  const pageTab = pageTabForSlug(subtab)
+
+  useEffect(() => {
+    if (subtab && !PAGE_TABS.some(t => t.slug === subtab)) navigate('/stats', { replace: true })
+  }, [subtab])
 
   return (
     <div className="space-y-4">
@@ -177,7 +194,7 @@ export default function Stats() {
         {PAGE_TABS.map(t => (
           <button
             key={t.key}
-            onClick={() => setPageTab(t.key)}
+            onClick={() => navigate(t.key === 'overview' ? '/stats' : `/stats/${t.slug}`)}
             className={`py-1.5 rounded-md text-sm font-medium transition-colors ${
               pageTab === t.key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
             }`}
@@ -189,6 +206,231 @@ export default function Stats() {
 
       {pageTab === 'standings' ? <Standings /> : <PlayerStatsView tab={pageTab} />}
     </div>
+  )
+}
+
+type NetworkNode = { id: number; name: string; fullName: string; goals: number; assists: number; genderMatch: string | null }
+// Generic directed edge: fromId -> toId, weighted by count. Both the
+// Assists and Goals graphs render the exact same assister -> scorer pairs
+// (from useGetAssistPairings) — they differ only in which side of the edge
+// counts as "the selected player's own stat" and what a node's size means,
+// not in the underlying data.
+type DirectedEdge = { fromId: number; toId: number; count: number }
+
+// Greedy farthest-point placement: given items already ranked most- to
+// least-connected, assigns slot 0 to the top item, then repeatedly gives
+// the next item whichever remaining slot is farthest (circularly) from
+// every slot already claimed. The 2nd-ranked item lands opposite the 1st,
+// the 3rd near a quarter-turn from both, and so on — so the handful of
+// heavily-connected nodes end up spread around the circle instead of
+// clustered together, which is what actually clutters a small area with
+// crossing edges. O(n^2), fine for a 12-node roster.
+function spreadOrder<T>(rankedDesc: T[]): T[] {
+  const n = rankedDesc.length
+  if (n === 0) return []
+  const claimedSlots: number[] = [0]
+  for (let k = 1; k < n; k++) {
+    let bestSlot = -1
+    let bestMinDist = -1
+    for (let s = 0; s < n; s++) {
+      if (claimedSlots.includes(s)) continue
+      const minDist = Math.min(...claimedSlots.map(u => Math.min(Math.abs(s - u), n - Math.abs(s - u))))
+      if (minDist > bestMinDist) { bestMinDist = minDist; bestSlot = s }
+    }
+    claimedSlots.push(bestSlot)
+  }
+  const result: T[] = new Array(n)
+  claimedSlots.forEach((slot, i) => { result[slot] = rankedDesc[i]! })
+  return result
+}
+
+// Circular layout shared by BOTH network graphs — computed once by the
+// caller (from combined Assists + Goals degree) and passed to both, so a
+// player sits in the same spot in both graphs rather than jumping between
+// them. Deterministic and simple (no force-simulation), matching this
+// file's existing chart patterns; node order is ranked by `degree` and run
+// through spreadOrder so the busiest nodes land apart from each other.
+function circleLayout(nodes: NetworkNode[], size: number, degree: Map<number, number>): Map<number, { x: number; y: number }> {
+  const center = size / 2
+  const radius = center - 56
+  const rankedDesc = [...nodes].sort((a, b) => (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0))
+  const ordered = spreadOrder(rankedDesc)
+  const positions = new Map<number, { x: number; y: number }>()
+  ordered.forEach((n, i) => {
+    const angle = (i / ordered.length) * 2 * Math.PI - Math.PI / 2
+    positions.set(n.id, { x: center + radius * Math.cos(angle), y: center + radius * Math.sin(angle) })
+  })
+  return positions
+}
+
+// A directed edge and its reverse (A->B, B->A) are two real, distinct facts
+// (e.g. Eric scored right before Jackson in one game, and right after him
+// in another), but drawing both makes it look like two separate
+// connections between the same two players. Collapse each unordered pair
+// into a single edge for display: keep whichever direction had the larger
+// count, with the combined total so no data is silently dropped.
+function mergeBidirectionalEdges(edges: DirectedEdge[]): DirectedEdge[] {
+  const merged = new Map<string, DirectedEdge>()
+  edges.forEach(e => {
+    const key = e.fromId < e.toId ? `${e.fromId}:${e.toId}` : `${e.toId}:${e.fromId}`
+    const existing = merged.get(key)
+    if (!existing) {
+      merged.set(key, { ...e })
+    } else {
+      const total = existing.count + e.count
+      merged.set(key, e.count > existing.count ? { fromId: e.fromId, toId: e.toId, count: total } : { ...existing, count: total })
+    }
+  })
+  return [...merged.values()]
+}
+
+// Selected player's own Goals/Assists total, floated over a graph's top
+// right corner — replaces an always-visible whole-team list with just the
+// one number relevant once you've actually picked someone.
+function SelectedPlayerBadge({ node }: { node: NetworkNode | undefined }) {
+  if (!node) return null
+  return (
+    <div className="absolute top-2 right-2 bg-card border border-border rounded-lg shadow-sm px-2.5 py-1.5 text-sm pointer-events-none">
+      <div className="font-medium text-foreground truncate max-w-[140px]">{node.fullName}</div>
+      <div className="flex items-center gap-2 font-mono text-xs mt-0.5">
+        <span className="text-green-600 dark:text-green-400">{node.goals}G</span>
+        <span className="text-blue-600 dark:text-blue-400">{node.assists}A</span>
+      </div>
+    </div>
+  )
+}
+
+// A directed network graph: nodes at fixed shared `positions`, edges as
+// curved lines each labeled with their count. Clicking a node highlights
+// only its own edges; clicking again or clicking empty space clears the
+// highlight. Reused for both the Assists graph (own side: assister/from,
+// sized by assists) and the Goals graph (own side: scorer/to, sized by
+// goals) — both render the exact same assister->scorer edges, differing
+// only in ownEdgeSide and weightOf.
+function DirectedNetworkGraph({ nodes, edges, positions, color, weightOf, selectedId, onSelect, ownEdgeSide }: {
+  nodes: NetworkNode[]
+  // Raw, per-direction edges — NOT pre-merged. Merging A->B and B->A into
+  // one visual line happens inside this component (see renderEdges below),
+  // but attribution (isOwnEdge, highlightIds) must run against the real
+  // per-direction counts: collapsing them first would let a real edge in
+  // the smaller direction vanish from its owner's own-side total whenever
+  // the reverse direction happened to be larger.
+  edges: DirectedEdge[]
+  positions: Map<number, { x: number; y: number }>
+  color: string
+  weightOf: (n: NetworkNode) => number
+  // Selection is lifted to the caller so selecting a player in one graph
+  // (Assists or Goals) highlights that same player in the other.
+  selectedId: number | null
+  onSelect: (id: number | null) => void
+  // Which end of an edge counts as "this is the selected player's own
+  // stat" when deciding what to highlight: 'from' for Assists (they gave
+  // the assist), 'to' for Goals (the sequence edge lands on their goal).
+  // The other direction — an assist they received, or being the
+  // predecessor to someone else's goal — still involves them but isn't
+  // their own number, so it stays dimmed even though it touches their node.
+  ownEdgeSide: 'from' | 'to'
+}) {
+  const size = 320
+  const isOwnEdge = (e: DirectedEdge, id: number) => (ownEdgeSide === 'from' ? e.fromId === id : e.toId === id)
+  const highlightIds = useMemo(() => {
+    if (selectedId == null) return null
+    const s = new Set<number>([selectedId])
+    edges.forEach(e => {
+      if (isOwnEdge(e, selectedId)) s.add(ownEdgeSide === 'from' ? e.toId : e.fromId)
+    })
+    return s
+  }, [selectedId, edges, ownEdgeSide])
+
+  // One drawn line per unordered pair (see mergeBidirectionalEdges): the
+  // label/thickness reflect the combined count, direction follows whichever
+  // side is larger, but this is display-only — highlightIds/isOwnEdge above
+  // already used the real per-direction edges.
+  const renderEdges = useMemo(() => mergeBidirectionalEdges(edges), [edges])
+  const maxCount = Math.max(1, ...renderEdges.map(e => e.count))
+  const maxWeight = Math.max(1, ...nodes.map(weightOf))
+  // A merged line is "own" if either direction between this pair belonged
+  // to the selected player — otherwise a real edge of theirs (now folded
+  // into a line drawn in the other direction) would incorrectly dim out.
+  const pairIsOwn = (e: DirectedEdge, id: number) =>
+    edges.some(raw => ((raw.fromId === e.fromId && raw.toId === e.toId) || (raw.fromId === e.toId && raw.toId === e.fromId)) && isOwnEdge(raw, id))
+  // The merged line's count is the combined total of both directions —
+  // right for the unselected, whole-team view, but overstates a selected
+  // player's own number if their partner also has edges the other way
+  // (e.g. Jackson fed Eric 3 times, Eric fed Jackson 1 time: the merged
+  // line reads "4", but Eric's own contribution is 1). Once someone's
+  // selected, show only their own-direction count on lines that are theirs.
+  const ownCountFor = (e: DirectedEdge, id: number) =>
+    edges.filter(raw => ((raw.fromId === e.fromId && raw.toId === e.toId) || (raw.fromId === e.toId && raw.toId === e.fromId)) && isOwnEdge(raw, id))
+      .reduce((sum, raw) => sum + raw.count, 0)
+
+  return (
+    <svg
+      viewBox={`0 0 ${size} ${size}`}
+      className="w-full touch-none"
+      style={{ maxHeight: 440 }}
+      onClick={() => onSelect(null)}
+    >
+      {renderEdges.map(e => {
+        const from = positions.get(e.fromId)
+        const to = positions.get(e.toId)
+        if (!from || !to) return null
+        const isOwn = selectedId != null && pairIsOwn(e, selectedId)
+        const dimmed = selectedId != null && !isOwn
+        const displayCount = isOwn ? ownCountFor(e, selectedId!) : e.count
+        // Curve each edge away from the straight line (perpendicular offset
+        // from the midpoint) so edges sharing an endpoint don't overlap.
+        const mx = (from.x + to.x) / 2
+        const my = (from.y + to.y) / 2
+        const dx = to.x - from.x
+        const dy = to.y - from.y
+        const dist = Math.hypot(dx, dy) || 1
+        const curveOffset = 18
+        const cx = mx + (-dy / dist) * curveOffset
+        const cy = my + (dx / dist) * curveOffset
+        const strokeWidth = 1.5 + (displayCount / maxCount) * 4
+        // Point on the quadratic curve at t=0.5 (not the control point
+        // itself), for placing the count label on the visible line.
+        const labelX = 0.25 * from.x + 0.5 * cx + 0.25 * to.x
+        const labelY = 0.25 * from.y + 0.5 * cy + 0.25 * to.y
+        return (
+          <g key={`${e.fromId}-${e.toId}`} opacity={dimmed ? 0.12 : 1}>
+            <path
+              d={`M ${from.x} ${from.y} Q ${cx} ${cy} ${to.x} ${to.y}`}
+              stroke={color}
+              strokeWidth={strokeWidth}
+              fill="none"
+              opacity={0.8}
+            />
+            <circle cx={labelX} cy={labelY} r={7} fill="hsl(var(--card))" stroke="hsl(var(--border))" strokeWidth={0.75} />
+            <text x={labelX} y={labelY} textAnchor="middle" dominantBaseline="central" fontSize={8} fill="hsl(var(--foreground))">
+              {displayCount}
+            </text>
+          </g>
+        )
+      })}
+      {nodes.map(n => {
+        const pos = positions.get(n.id)
+        if (!pos) return null
+        const dimmed = highlightIds != null && !highlightIds.has(n.id)
+        const r = 11 + (weightOf(n) / maxWeight) * 8
+        const outline = n.genderMatch === 'Man' ? 'hsl(var(--gender-man))' : n.genderMatch === 'Woman' ? 'hsl(var(--gender-woman))' : 'hsl(var(--border))'
+        return (
+          <g
+            key={n.id}
+            transform={`translate(${pos.x}, ${pos.y})`}
+            opacity={dimmed ? 0.3 : 1}
+            style={{ cursor: 'pointer' }}
+            onClick={e => { e.stopPropagation(); onSelect(selectedId === n.id ? null : n.id) }}
+          >
+            <circle r={r} fill="hsl(var(--card))" stroke={outline} strokeWidth={2} />
+            <text textAnchor="middle" dominantBaseline="central" fontSize={9} fill="hsl(var(--foreground))">
+              {n.name}
+            </text>
+          </g>
+        )
+      })}
+    </svg>
   )
 }
 
@@ -204,11 +446,19 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
   const { data: stats, loading, error, trigger: fetchStats } = useGetPlayerStats()
   const { data: cumulativeRaw, loading: cumulativeLoading, trigger: fetchCumulative } = useGetCumulativeStats()
   const { data: progressionRoster, trigger: fetchProgressionRoster } = useGetPlayers()
+  const { data: pairings, loading: pairingsLoading, error: pairingsError, trigger: fetchPairings } = useGetAssistPairings()
+  // Org-wide, unscoped by season (unlike progressionRoster above) — just a
+  // gender_match lookup for the Assist Network's node outlines.
+  const { data: orgPlayers, trigger: fetchOrgPlayers } = useGetPlayers()
 
   const [filterType, setFilterType] = useState<'all' | 'season' | 'games'>('all')
   const [selectedSeasonIds, setSelectedSeasonIds] = useState<number[]>([])
   const [selectedGameIds, setSelectedGameIds] = useState<number[]>([])
   const [chartTab, setChartTab] = useState<ChartTab>('combined')
+  // Shared between the Assists and Goals network graphs, so selecting a
+  // player in one highlights them in the other too.
+  const [networkSelectedId, setNetworkSelectedId] = useState<number | null>(null)
+  const [includeSubsInNetwork, setIncludeSubsInNetwork] = useState(true)
 
   // Summary Table column visibility/formulas/sort are a per-device viewing
   // preference (same convention as Strategy's transition-speed setting),
@@ -317,6 +567,7 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
     fetchGames({ organizationId: currentOrgId })
     fetchSeasons({ organizationId: currentOrgId })
     fetchAllSeasons({ organizationId: currentOrgId })
+    fetchOrgPlayers({ organizationId: currentOrgId })
   }, [currentOrgId])
 
   // Default both filters to the latest Jam season that's actually been played
@@ -337,12 +588,25 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
 
   useEffect(() => {
     if (currentOrgId == null) return
-    if (filterType === 'all') fetchStats({ organizationId: currentOrgId })
-    else if (filterType === 'season') {
-      if (selectedSeasonIds.length > 0) fetchStats({ seasonIds: selectedSeasonIds, organizationId: currentOrgId })
-      else fetchStats({ organizationId: currentOrgId })
+    // limit: 200 is a practical "all pairs" ceiling — the Top Pairings card
+    // and the Assist Network's two graphs (Assists and Goals, which now
+    // read the same pairing data) each derive their own view from this one
+    // fetch rather than hitting the network separately per view.
+    if (filterType === 'all') {
+      fetchStats({ organizationId: currentOrgId })
+      fetchPairings({ organizationId: currentOrgId, limit: 200 })
+    } else if (filterType === 'season') {
+      if (selectedSeasonIds.length > 0) {
+        fetchStats({ seasonIds: selectedSeasonIds, organizationId: currentOrgId })
+        fetchPairings({ seasonIds: selectedSeasonIds, organizationId: currentOrgId, limit: 200 })
+      } else {
+        fetchStats({ organizationId: currentOrgId })
+        fetchPairings({ organizationId: currentOrgId, limit: 200 })
+      }
+    } else if (filterType === 'games' && selectedGameIds.length > 0) {
+      fetchStats({ gameIds: selectedGameIds, organizationId: currentOrgId })
+      fetchPairings({ gameIds: selectedGameIds, organizationId: currentOrgId, limit: 200 })
     }
-    else if (filterType === 'games' && selectedGameIds.length > 0) fetchStats({ gameIds: selectedGameIds, organizationId: currentOrgId })
   }, [filterType, selectedSeasonIds, selectedGameIds, currentOrgId])
 
   useEffect(() => {
@@ -492,6 +756,17 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
     )
   }
 
+  const PairTooltip = ({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string }) => {
+    if (!active || !payload?.length) return null
+    const full = pairChartData.find(d => d.pairLabel === label)
+    return (
+      <div className="bg-card border border-border rounded-lg shadow-md p-3 text-sm">
+        <p className="font-semibold text-foreground mb-1">{full?.fullPairLabel ?? label}</p>
+        {payload.map(entry => <p key={entry.name} style={{ color: entry.color }} className="font-medium">{entry.name}: {entry.value}</p>)}
+      </div>
+    )
+  }
+
   const LineTooltip = ({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string }) => {
     if (!active || !payload?.length) return null
     const point = lineData.find(d => d.label === label)
@@ -519,6 +794,59 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
   const avgAssists = statsArr && statsArr.length > 0 && gamesInFilter > 0
     ? (statsArr.reduce((s, p) => s + parseInt(p.assists), 0) / gamesInFilter).toFixed(2)
     : null
+  // pairingRows is the full fetched set (already sorted by count desc, see
+  // useGetAssistPairings), shared by the Top Pairings bar chart (top 10) and
+  // the Assist Network graph (edges among its own top-12-node roster) below.
+  const pairingRows = (pairings as PairingRow[] | undefined) ?? []
+  const topPairingRows = pairingRows.slice(0, 10)
+  const pairChartData = topPairingRows.map(r => ({
+    pairLabel: `${r.scorerName.split(' ')[0]} ← ${r.assisterName.split(' ')[0]}`,
+    fullPairLabel: `${r.scorerName} ← ${r.assisterName}`,
+    Assists: r.count,
+  }))
+  // Assist Network's node set: essentially the whole roster (see the 30-cap
+  // below), ranked by goals+assists like the Performance Chart's chartData,
+  // optionally excluding subs first via includeSubsInNetwork — plus
+  // player_id and gender_match, which chartData doesn't carry.
+  const orgPlayerMap = new Map(
+    ((orgPlayers as { id: number; gender_match: string | null; is_sub: boolean }[] | undefined) ?? []).map(p => [p.id, p])
+  )
+  const networkNodes: NetworkNode[] = statsArr
+    ? [...statsArr]
+        .filter(p => includeSubsInNetwork || orgPlayerMap.get(p.player_id)?.is_sub !== true)
+        .sort((a, b) => parseInt(b.goals) + parseInt(b.assists) - (parseInt(a.goals) + parseInt(a.assists)))
+        // 30 is well above any real roster size, so nobody with a real
+        // connection gets silently dropped (unlike the Performance Chart's
+        // top-12 cap above, which exists purely to keep that bar chart
+        // short — this cap exists only as a sanity ceiling).
+        .slice(0, 30)
+        .map(p => ({
+          id: p.player_id,
+          name: p.player_name.split(' ')[0],
+          fullName: p.player_name,
+          goals: parseInt(p.goals),
+          assists: parseInt(p.assists),
+          genderMatch: orgPlayerMap.get(p.player_id)?.gender_match ?? null,
+        }))
+    : []
+  const networkNodeIds = new Set(networkNodes.map(n => n.id))
+  // Raw, per-direction edges — NOT merged here. DirectedNetworkGraph merges
+  // A<->B into one visual line itself, but needs the real per-direction
+  // counts intact to correctly attribute "own" edges when a player is
+  // selected (see that component's comments).
+  const assistEdges: DirectedEdge[] = pairingRows
+    .filter(r => networkNodeIds.has(r.scorerId) && networkNodeIds.has(r.assisterId))
+    .map(r => ({ fromId: r.assisterId, toId: r.scorerId, count: r.count }))
+  // Shared node layout for both graphs (so a player sits in the same spot
+  // in each — see circleLayout). Both graphs render assistEdges, so one
+  // degree map serves both.
+  const networkDegree = new Map<number, number>()
+  assistEdges.forEach(e => {
+    networkDegree.set(e.fromId, (networkDegree.get(e.fromId) ?? 0) + e.count)
+    networkDegree.set(e.toId, (networkDegree.get(e.toId) ?? 0) + e.count)
+  })
+  const networkPositions = circleLayout(networkNodes, 320, networkDegree)
+  const selectedNetworkNode = networkNodes.find(n => n.id === networkSelectedId)
 
   return (
     <div className="space-y-4">
@@ -683,6 +1011,131 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
                   <p className="text-sm">{filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No stats available yet'}</p>
                 </div>
               )}
+            </CardContent>
+          </Card>
+
+          {/* Top Pairings */}
+          <Card className="bg-card text-card-foreground border-border">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Target className="w-4 h-4" />Top Pairings
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-2">
+              {pairingsLoading ? (
+                <div className="space-y-4 py-2">
+                  {[0.9, 0.75, 0.6, 0.5, 0.4].map((w, i) => (
+                    <div key={i} className="flex items-center gap-3">
+                      <Skeleton className="h-3 w-24 shrink-0" />
+                      <Skeleton className="h-3.5" style={{ width: `${w * 100}%` }} />
+                    </div>
+                  ))}
+                </div>
+              ) : pairingsError ? (
+                <div className="flex items-center justify-center h-48 text-destructive text-sm">Error: {pairingsError}</div>
+              ) : pairingRows.length > 0 ? (
+                <FadeIn className="w-full" style={{ height: Math.max(160, topPairingRows.length * 32) }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={pairChartData}
+                      layout="vertical"
+                      margin={{ top: 0, right: 16, left: 0, bottom: 0 }}
+                      barCategoryGap="20%"
+                    >
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
+                      <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} />
+                      <YAxis type="category" dataKey="pairLabel" width={140} tick={{ fontSize: 11, fill: 'hsl(var(--foreground))' }} axisLine={false} tickLine={false} />
+                      <Tooltip content={<PairTooltip />} cursor={{ fill: 'hsl(var(--accent))' }} />
+                      <Bar dataKey="Assists" fill="#2563eb" radius={[0, 3, 3, 0]} maxBarSize={14} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </FadeIn>
+              ) : (
+                <div className="flex flex-col items-center justify-center h-48 text-muted-foreground">
+                  <Target className="w-12 h-12 mb-3 opacity-40" />
+                  <p className="text-sm">{filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No assisted goals in this range yet'}</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Assist Network */}
+          <Card className="bg-card text-card-foreground border-border">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2"><Share2 className="w-4 h-4" />Assist Network</span>
+                <label className="flex items-center gap-1.5 text-xs font-normal text-muted-foreground cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={includeSubsInNetwork}
+                    onChange={e => setIncludeSubsInNetwork(e.target.checked)}
+                    className="w-3.5 h-3.5 rounded border-border"
+                  />
+                  Include subs
+                </label>
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">Tap a player to highlight their connections. Numbers on each line are counts.</p>
+            </CardHeader>
+            <CardContent className="pt-2 space-y-6">
+              <div>
+                <p className="text-sm font-medium text-blue-600 dark:text-blue-400 mb-1 text-center">Assists — who fed whom</p>
+                {pairingsLoading ? (
+                  <div className="flex items-center justify-center h-64">
+                    <Skeleton className="w-56 h-56 rounded-full" />
+                  </div>
+                ) : pairingsError ? (
+                  <div className="flex items-center justify-center h-48 text-destructive text-sm">Error: {pairingsError}</div>
+                ) : assistEdges.length > 0 ? (
+                  <FadeIn className="w-full relative">
+                    <DirectedNetworkGraph
+                      nodes={networkNodes}
+                      edges={assistEdges}
+                      positions={networkPositions}
+                      color="#2563eb"
+                      weightOf={n => n.assists}
+                      selectedId={networkSelectedId}
+                      onSelect={setNetworkSelectedId}
+                      ownEdgeSide="from"
+                    />
+                    <SelectedPlayerBadge node={selectedNetworkNode} />
+                  </FadeIn>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
+                    <Share2 className="w-10 h-10 mb-2 opacity-40" />
+                    <p className="text-sm">{filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No assisted goals in this range yet'}</p>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <p className="text-sm font-medium text-green-600 dark:text-green-400 mb-1 text-center">Goals — who scored off whom</p>
+                {pairingsLoading ? (
+                  <div className="flex items-center justify-center h-64">
+                    <Skeleton className="w-56 h-56 rounded-full" />
+                  </div>
+                ) : pairingsError ? (
+                  <div className="flex items-center justify-center h-48 text-destructive text-sm">Error: {pairingsError}</div>
+                ) : assistEdges.length > 0 ? (
+                  <FadeIn className="w-full relative">
+                    <DirectedNetworkGraph
+                      nodes={networkNodes}
+                      edges={assistEdges}
+                      positions={networkPositions}
+                      color="#16a34a"
+                      weightOf={n => n.goals}
+                      selectedId={networkSelectedId}
+                      onSelect={setNetworkSelectedId}
+                      ownEdgeSide="to"
+                    />
+                    <SelectedPlayerBadge node={selectedNetworkNode} />
+                  </FadeIn>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
+                    <Target className="w-10 h-10 mb-2 opacity-40" />
+                    <p className="text-sm">{filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No assisted goals in this range yet'}</p>
+                  </div>
+                )}
+              </div>
             </CardContent>
           </Card>
 
@@ -1014,10 +1467,17 @@ function Standings() {
 
   const [selectedSeasonId, setSelectedSeasonId] = useState<number | undefined>(undefined)
 
-  // Team detail dialog
+  // Team detail page: all-time history (every season, not just the one
+  // currently selected in the filter above) for whichever team row was
+  // clicked in the standings table.
   const [detailTeam, setDetailTeam] = useState<LeagueTeam | null>(null)
   const [notesValue, setNotesValue] = useState('')
   const [editingNotes, setEditingNotes] = useState(false)
+  const { data: oppHistory, loading: oppHistoryLoading, trigger: fetchOppHistory } = useGetOpponentHistory()
+
+  useEffect(() => {
+    if (detailTeam && currentOrgId != null) fetchOppHistory({ organizationId: currentOrgId, name: detailTeam.name })
+  }, [detailTeam, currentOrgId])
 
   // Manage league dialog (teams + points config)
   const [manageOpen, setManageOpen] = useState(false)
@@ -1077,6 +1537,8 @@ function Standings() {
         : standingsSortKey === 'rank' ? a.rank - b.rank
         : standingsSortKey === 'games_played' ? a.games_played - b.games_played
         : standingsSortKey === 'wins' ? a.wins - b.wins
+        : standingsSortKey === 'points_for' ? a.points_for - b.points_for
+        : standingsSortKey === 'points_against' ? a.points_against - b.points_against
         : standingsSortKey === 'point_diff' ? a.point_diff - b.point_diff
         : a.points - b.points
       return standingsSortDir === 'asc' ? cmp : -cmp
@@ -1084,7 +1546,8 @@ function Standings() {
     return arr
   }, [standings, standingsSortKey, standingsSortDir])
 
-  // Last-5 form guide per team, oldest to newest, from decided regular games.
+  // Form guide per team, oldest to newest, from every decided regular
+  // game this season (not capped: one dot per game played).
   const formByTeam = useMemo(() => {
     const map = new Map<number, ('W' | 'L' | 'T')[]>()
     if (!league) return map
@@ -1103,14 +1566,8 @@ function Standings() {
         map.set(teamId, arr)
       }
     }
-    map.forEach((arr, id) => map.set(id, arr.slice(-5)))
     return map
   }, [league])
-
-  const teamName = (id: number | null) => {
-    if (id == null) return 'TBD'
-    return league?.teams.find(t => t.id === id)?.name ?? 'TBD'
-  }
 
   const handleAddTeam = async () => {
     if (!newTeamName.trim() || selectedSeasonId == null || currentOrgId == null) return
@@ -1149,31 +1606,6 @@ function Standings() {
     refresh()
   }
 
-  // Head-to-head and season results for the team detail dialog.
-  const detailGames = useMemo(() => {
-    if (!detailTeam || !league) return []
-    return league.games
-      .filter(g => g.eff_home_team_id === detailTeam.id || g.eff_away_team_id === detailTeam.id)
-      .sort((a, b) => (a.game_date ?? '9999').localeCompare(b.game_date ?? '9999'))
-  }, [detailTeam, league])
-
-  const h2h = useMemo(() => {
-    if (!detailTeam || !usTeam || detailTeam.id === usTeam.id) return null
-    const record = { w: 0, l: 0, t: 0 }
-    for (const g of detailGames) {
-      if (!g.is_final || g.eff_home_score == null || g.eff_away_score == null) continue
-      const usHome = g.eff_home_team_id === usTeam.id
-      const usAway = g.eff_away_team_id === usTeam.id
-      if (!usHome && !usAway) continue
-      const our = usHome ? g.eff_home_score : g.eff_away_score
-      const their = usHome ? g.eff_away_score : g.eff_home_score
-      if (our > their) record.w++
-      else if (our < their) record.l++
-      else record.t++
-    }
-    return record
-  }, [detailTeam, detailGames, usTeam])
-
   const formDot = (o: 'W' | 'L' | 'T', i: number) => (
     <span
       key={i}
@@ -1185,6 +1617,163 @@ function Standings() {
 
   const seasons = (allSeasons as Season[] | undefined) ?? []
   const loading = leagueLoading || league == null
+
+  // ── Opponent detail page ────────────────────────────────────────────────
+  // Full history for one opponent name across every season it's appeared
+  // in, not just the season currently selected by the filter above.
+  if (detailTeam) {
+    const oppTeams = oppHistory?.teams ?? []
+    const oppGames = oppHistory?.games ?? []
+    const usTeamsBySeasonId = oppHistory?.usTeamsBySeasonId ?? new Map<number, { id: number; name: string }>()
+    const teamNamesById = oppHistory?.teamNamesById ?? new Map<number, string>()
+    const nameForTeamId = (id: number | null) => (id == null ? 'TBD' : teamNamesById.get(id) ?? 'TBD')
+
+    let allTimeH2h: { w: number; l: number; t: number } | null = null
+    if (!detailTeam.is_us) {
+      const record = { w: 0, l: 0, t: 0 }
+      for (const g of oppGames) {
+        if (!g.is_final || g.eff_home_score == null || g.eff_away_score == null) continue
+        const us = usTeamsBySeasonId.get(g.season_id)
+        if (!us) continue
+        const weAreHome = g.eff_home_team_id === us.id
+        const ourScore = weAreHome ? g.eff_home_score : g.eff_away_score
+        const theirScore = weAreHome ? g.eff_away_score : g.eff_home_score
+        if (ourScore > theirScore) record.w++
+        else if (ourScore < theirScore) record.l++
+        else record.t++
+      }
+      allTimeH2h = record
+    }
+
+    const detailSeason = oppTeams.find(t => t.id === detailTeam.id)
+
+    return (
+      <div className="space-y-4">
+        <button
+          onClick={() => { setDetailTeam(null); setEditingNotes(false) }}
+          className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ChevronLeft className="w-5 h-5" />
+          <span className="text-sm font-medium">Back to Standings</span>
+        </button>
+
+        <div className="flex items-center gap-2">
+          <h2 className="text-xl font-bold text-foreground">{detailTeam.name}</h2>
+          {detailTeam.is_us && <span className="text-xs font-normal text-primary">Us</span>}
+        </div>
+
+        {oppHistoryLoading && !oppHistory ? (
+          <p className="text-sm text-muted-foreground">Loading...</p>
+        ) : (
+          <>
+            {allTimeH2h && (
+              <Card className="bg-card text-card-foreground border-border">
+                <CardContent className="p-4 text-center">
+                  <p className="text-xs text-muted-foreground mb-1">All-time head-to-head vs us</p>
+                  <p className="text-lg font-bold tabular-nums">
+                    <span className="text-green-600 dark:text-green-400">{allTimeH2h.w}W</span>
+                    <span className="mx-2 text-red-600 dark:text-red-400">{allTimeH2h.l}L</span>
+                    <span className="text-yellow-600 dark:text-yellow-400">{allTimeH2h.t}T</span>
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
+            <Card className="bg-card text-card-foreground border-border">
+              <CardHeader><CardTitle className="text-base">Seasons Played</CardTitle></CardHeader>
+              <CardContent>
+                {oppTeams.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No seasons yet.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {oppTeams.map(t => (
+                      <span key={t.id} className="text-xs font-medium px-2 py-1 rounded-full bg-accent text-foreground">
+                        {seasonLabel({ name: t.season_name, year: t.season_year, organizer: t.season_organizer })}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card text-card-foreground border-border">
+              <CardHeader><CardTitle className="text-base">All Games</CardTitle></CardHeader>
+              <CardContent>
+                {oppGames.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No games yet.</p>
+                ) : (
+                  <div className="divide-y divide-border">
+                    {oppGames.map(g => {
+                      const thisTeamId = oppTeams.find(t => t.season_id === g.season_id)?.id ?? null
+                      const isThisTeamHome = g.eff_home_team_id === thisTeamId
+                      const otherName = nameForTeamId(isThisTeamHome ? g.eff_away_team_id : g.eff_home_team_id)
+                      const mine = isThisTeamHome ? g.eff_home_score : g.eff_away_score
+                      const theirs = isThisTeamHome ? g.eff_away_score : g.eff_home_score
+                      const decided = g.is_final && mine != null && theirs != null
+                      const season = oppTeams.find(t => t.season_id === g.season_id)
+                      return (
+                        <div key={g.id} className="flex items-center justify-between text-sm py-2 gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate">vs {otherName}</p>
+                            <p className="text-xs text-muted-foreground truncate">
+                              {season ? seasonLabel({ name: season.season_name, year: season.season_year, organizer: season.season_organizer }) : ''}
+                              {' · '}{g.game_date ?? 'TBD'}
+                            </p>
+                          </div>
+                          {decided ? (
+                            <span className={`tabular-nums font-semibold shrink-0 ${mine! > theirs! ? 'text-green-600 dark:text-green-400' : mine! < theirs! ? 'text-red-600 dark:text-red-400' : 'text-yellow-600 dark:text-yellow-400'}`}>
+                              {mine}-{theirs}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground shrink-0">Upcoming</span>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {!detailTeam.is_us && (
+              <Card className="bg-card text-card-foreground border-border">
+                <CardHeader className="flex flex-row items-center justify-between">
+                  <CardTitle className="text-base">
+                    Notes
+                    {detailSeason && <span className="text-xs font-normal text-muted-foreground ml-2">({seasonLabel({ name: detailSeason.season_name, year: detailSeason.season_year, organizer: detailSeason.season_organizer })})</span>}
+                  </CardTitle>
+                  {allowed && !editingNotes && (
+                    <button onClick={() => setEditingNotes(true)} className="text-xs text-primary hover:underline">Edit</button>
+                  )}
+                </CardHeader>
+                <CardContent>
+                  {editingNotes ? (
+                    <div className="space-y-2">
+                      <textarea
+                        value={notesValue}
+                        onChange={e => setNotesValue(e.target.value)}
+                        rows={4}
+                        className="w-full rounded-md border border-border bg-background text-foreground text-sm p-2"
+                        placeholder="Scouting notes: their zone looks beatable deep..."
+                      />
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={handleSaveNotes}>Save</Button>
+                        <Button size="sm" variant="ghost" onClick={() => { setEditingNotes(false); setNotesValue(detailTeam.notes ?? '') }}>Cancel</Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                      {detailTeam.notes || 'No notes yet.'}
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+          </>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-4">
@@ -1246,6 +1835,12 @@ function Standings() {
                         <StandingsSortHeader label="W-L-T" sortKey="wins" activeKey={standingsSortKey} dir={standingsSortDir} onClick={handleStandingsSortClick} align="center" />
                       </th>
                       <th className="text-center font-medium py-2.5 px-2">
+                        <StandingsSortHeader label="GF" sortKey="points_for" activeKey={standingsSortKey} dir={standingsSortDir} onClick={handleStandingsSortClick} align="center" />
+                      </th>
+                      <th className="text-center font-medium py-2.5 px-2">
+                        <StandingsSortHeader label="GA" sortKey="points_against" activeKey={standingsSortKey} dir={standingsSortDir} onClick={handleStandingsSortClick} align="center" />
+                      </th>
+                      <th className="text-center font-medium py-2.5 px-2">
                         <StandingsSortHeader label="+/-" sortKey="point_diff" activeKey={standingsSortKey} dir={standingsSortDir} onClick={handleStandingsSortClick} align="center" />
                       </th>
                       <th className="text-center font-medium py-2.5 px-2 pr-4">
@@ -1265,10 +1860,12 @@ function Standings() {
                         <td className={`py-2.5 pl-4 pr-2 tabular-nums ${r.team.is_us ? 'font-bold text-primary' : 'text-muted-foreground'}`}>{r.rank}</td>
                         <td className="py-2.5 px-2">
                           <div className={`truncate max-w-[9rem] ${r.team.is_us ? 'font-bold' : 'font-medium'}`}>{r.team.name}</div>
-                          <div className="flex gap-1 mt-1">{(formByTeam.get(r.team.id) ?? []).map(formDot)}</div>
+                          <div className="flex flex-wrap gap-1 mt-1 max-w-[9rem]">{(formByTeam.get(r.team.id) ?? []).map(formDot)}</div>
                         </td>
                         <td className="text-center py-2.5 px-2 tabular-nums">{r.games_played}</td>
                         <td className="text-center py-2.5 px-2 tabular-nums whitespace-nowrap">{r.wins}-{r.losses}-{r.ties}</td>
+                        <td className="text-center py-2.5 px-2 tabular-nums">{r.points_for}</td>
+                        <td className="text-center py-2.5 px-2 tabular-nums">{r.points_against}</td>
                         <td className={`text-center py-2.5 px-2 tabular-nums ${r.point_diff > 0 ? 'text-green-600 dark:text-green-400' : r.point_diff < 0 ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground'}`}>
                           {r.point_diff > 0 ? `+${r.point_diff}` : r.point_diff}
                         </td>
@@ -1282,84 +1879,6 @@ function Standings() {
           </Card>
         </FadeIn>
       )}
-
-      {/* Team detail: head-to-head, results, scouting notes */}
-      <Dialog open={detailTeam != null} onOpenChange={open => { if (!open) setDetailTeam(null) }}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              {detailTeam?.name}
-              {detailTeam?.is_us && <span className="text-xs font-normal text-primary ml-2">Us</span>}
-            </DialogTitle>
-          </DialogHeader>
-          {detailTeam && (
-            <div className="space-y-4">
-              {h2h && (
-                <div className="rounded-lg bg-accent p-3 text-center">
-                  <p className="text-xs text-muted-foreground mb-1">Head to head vs us</p>
-                  <p className="text-lg font-bold tabular-nums">
-                    <span className="text-green-600 dark:text-green-400">{h2h.w}W</span>
-                    <span className="mx-2 text-red-600 dark:text-red-400">{h2h.l}L</span>
-                    <span className="text-yellow-600 dark:text-yellow-400">{h2h.t}T</span>
-                  </p>
-                </div>
-              )}
-              <div className="space-y-1 max-h-48 overflow-y-auto">
-                <p className="text-xs font-semibold text-muted-foreground">Season results</p>
-                {detailGames.length === 0 && <p className="text-sm text-muted-foreground">No games yet.</p>}
-                {detailGames.map(g => {
-                  const isHome = g.eff_home_team_id === detailTeam.id
-                  const oppName = teamName(isHome ? g.eff_away_team_id : g.eff_home_team_id)
-                  const mine = isHome ? g.eff_home_score : g.eff_away_score
-                  const theirs = isHome ? g.eff_away_score : g.eff_home_score
-                  const decided = g.is_final && mine != null && theirs != null
-                  return (
-                    <div key={g.id} className="flex items-center justify-between text-sm py-1">
-                      <span className="truncate">vs {oppName}</span>
-                      {decided ? (
-                        <span className={`tabular-nums font-semibold ${mine! > theirs! ? 'text-green-600 dark:text-green-400' : mine! < theirs! ? 'text-red-600 dark:text-red-400' : 'text-yellow-600 dark:text-yellow-400'}`}>
-                          {mine}-{theirs}
-                        </span>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">{g.game_date ?? 'TBD'}</span>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-              {!detailTeam.is_us && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs font-semibold text-muted-foreground">Notes</p>
-                    {allowed && !editingNotes && (
-                      <button onClick={() => setEditingNotes(true)} className="text-xs text-primary hover:underline">Edit</button>
-                    )}
-                  </div>
-                  {editingNotes ? (
-                    <div className="space-y-2">
-                      <textarea
-                        value={notesValue}
-                        onChange={e => setNotesValue(e.target.value)}
-                        rows={3}
-                        className="w-full rounded-md border border-border bg-background text-foreground text-sm p-2"
-                        placeholder="Scouting notes: their zone looks beatable deep..."
-                      />
-                      <div className="flex gap-2">
-                        <Button size="sm" onClick={handleSaveNotes}>Save</Button>
-                        <Button size="sm" variant="ghost" onClick={() => { setEditingNotes(false); setNotesValue(detailTeam.notes ?? '') }}>Cancel</Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-                      {detailTeam.notes || 'No notes yet.'}
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
 
       {/* Manage league: teams and points config */}
       <Dialog open={manageOpen} onOpenChange={setManageOpen}>

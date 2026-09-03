@@ -1,4 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { Button } from '../lib/shadcn/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../lib/shadcn/card'
@@ -22,7 +23,11 @@ const PASSWORD_MIN_LENGTH = 8
 
 export default function Login() {
   const { login, signup, loginWithGoogle, loginWithPasskey, forgotPassword } = useAuth()
-  const [mode, setMode] = useState<Mode>('login')
+  // Home's "Get started free" CTA links here with ?mode=signup so the form
+  // opens straight on the signup tab instead of requiring an extra click.
+  const [mode, setMode] = useState<Mode>(
+    () => (new URLSearchParams(window.location.search).get('mode') === 'signup' ? 'signup' : 'login')
+  )
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -86,7 +91,9 @@ export default function Login() {
     <div className="min-h-screen bg-background text-foreground flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-6">
-          <h1 className="text-2xl font-bold text-primary">Warrior Tracker</h1>
+          <Link to="/" className="text-2xl font-bold text-primary hover:opacity-80 transition-opacity">
+            Warrior Tracker
+          </Link>
         </div>
 
         <Card>

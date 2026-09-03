@@ -3,7 +3,172 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Ultimate Frisbee Warrior Tracker</title>
+
+    <title>Ultimate Frisbee Warrior Tracker | Team, Roster & Stats App</title>
+    <meta
+      name="description"
+      content="Run your Ultimate Frisbee team or league from one app: live scoring, rosters, lineups, stats, standings, and a strategy board. Free to get started."
+    />
+    <meta
+      name="keywords"
+      content="ultimate frisbee app, ultimate frisbee team management app, ultimate frisbee stats tracker, ultimate frisbee roster management, ultimate frisbee lineup app, ultimate frisbee live scoring, ultimate frisbee attendance tracker, ultimate frisbee league standings, ultimate frisbee strategy board, ultimate frisbee playbook, ultimate frisbee AI assistant, frisbee team tracker"
+    />
+    <!--
+      Explicit crawler directives, not just the default: max-snippet:-1 and
+      max-image-preview:large tell Google's snippet generator (which also
+      feeds AI Overviews) it may quote as much of a page as it wants and use
+      a large preview image, rather than defaulting to a short auto-picked
+      snippet. Matches what ultistackr.com (the closest direct competitor,
+      see the "Warrior Tracker vs. the field" comparison) sets.
+    -->
+    <meta name="robots" content="index, follow" />
+    <meta name="googlebot" content="index, follow, max-image-preview:large, max-snippet:-1" />
+    <meta name="theme-color" content="#18181b" />
+    <link rel="canonical" href="https://your-domain.example/" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%2318181b'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%23fafafa' stroke-width='2'/%3E%3C/svg%3E"
+    />
+
+    <!-- Open Graph / Facebook, LinkedIn, iMessage, Slack unfurls -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Ultimate Frisbee Warrior Tracker" />
+    <meta property="og:title" content="Ultimate Frisbee Warrior Tracker | Team, Roster & Stats App" />
+    <meta
+      property="og:description"
+      content="Live game scoring, rosters and lineups, player stats and league standings, a strategy board, and an AI assistant, all in one Ultimate Frisbee team app."
+    />
+    <meta property="og:url" content="https://your-domain.example/" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:image" content="https://your-domain.example/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Ultimate Frisbee Warrior Tracker: live scoring, rosters and lineups, stats, standings, and a strategy board." />
+
+    <!-- Twitter / X card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Ultimate Frisbee Warrior Tracker" />
+    <meta
+      name="twitter:description"
+      content="Live game scoring, rosters and lineups, player stats and league standings, a strategy board, and an AI assistant, all in one Ultimate Frisbee team app."
+    />
+    <meta name="twitter:image" content="https://your-domain.example/og-image.png" />
+    <meta name="twitter:image:alt" content="Ultimate Frisbee Warrior Tracker: live scoring, rosters and lineups, stats, standings, and a strategy board." />
+
+    <!--
+      Structured data for search engines and AI answer engines (ChatGPT,
+      Perplexity, Google AI Overviews, ...). Kept as static JSON-LD so it is
+      readable without executing the app's JS. The FAQ entries here must stay
+      in sync with the visible FAQ section rendered by frontend/pages/Home.tsx
+      (see the SEO/AEO section of CLAUDE.md) since mismatched schema/visible
+      content is treated as low-trust by answer engines.
+
+      WebSite/SoftwareApplication/Organization are combined into one @graph
+      with @id cross-references (SoftwareApplication.publisher points at the
+      Organization node) rather than three separate <script> blocks, matching
+      the pattern ultistackr.com uses: it lets search engines resolve them as
+      one connected entity instead of three unrelated ones.
+    -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://your-domain.example/#website",
+            "url": "https://your-domain.example/",
+            "name": "Ultimate Frisbee Warrior Tracker",
+            "description": "Ultimate Frisbee team and league management app: live game scoring, roster and lineup management, player stats and league standings, a strategy board, and an AI assistant."
+          },
+          {
+            "@type": "Organization",
+            "@id": "https://your-domain.example/#organization",
+            "name": "Ultimate Frisbee Warrior Tracker",
+            "url": "https://your-domain.example/"
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://your-domain.example/#app",
+            "name": "Ultimate Frisbee Warrior Tracker",
+            "url": "https://your-domain.example/",
+            "image": "https://your-domain.example/og-image.png",
+            "applicationCategory": "SportsApplication",
+            "operatingSystem": "Web",
+            "description": "Ultimate Frisbee team and league management app: live game scoring, roster and lineup management, player stats and league standings, a strategy board, and an AI assistant.",
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD",
+              "availability": "https://schema.org/InStock"
+            },
+            "publisher": { "@id": "https://your-domain.example/#organization" }
+          }
+        ]
+      }
+    </script>
+    <!--
+      Note: Google retired FAQ rich results for all sites on 2026-05-07, so
+      this block no longer earns a SERP feature. Kept anyway since it costs
+      nothing and may still feed AI-answer-engine grounding (unconfirmed);
+      do not add more FAQPage blocks elsewhere expecting a Google SERP
+      benefit from them.
+    -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Is Ultimate Frisbee Warrior Tracker free to use?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. Signup is open, and any signed-in user can create a new team or join an existing one for free."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can I track live scores during a game?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. The Schedule page's Events tab has a live scoreboard for logging goals and assists in real time, with an undo button for mistakes."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does it support a whole league, not just one team?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. An organization can run one team or several, and League Standings automatically tracks every team's record, points, and point differential for a season as games are scored."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can I diagram and animate strategy plays?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. The Strategy board lets you build named plays step by step with player positions, opponent markers, and arrows, then step through them like a play-by-play animation."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Is there an AI assistant?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. The built-in AI chat can answer questions about your team's stats and, once you confirm, log events or manage lineups for you. The same tools are also available to external AI clients over MCP."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Do I need to install anything?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. Ultimate Frisbee Warrior Tracker runs in the browser on desktop and mobile, with no app download required."
+            }
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

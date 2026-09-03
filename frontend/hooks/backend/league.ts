@@ -106,6 +106,61 @@ function linkedGameIsFinal(g: { game_date: string | null; game_time: string | nu
   return Date.now() > start.getTime() + GAME_DURATION_MS
 }
 
+// Shared by useGetLeague (one season) and useGetOpponentHistory (a single
+// opponent name across every season it's appeared in): resolves eff_home/
+// away_score, is_final, and our_override for a batch of league_games rows,
+// deriving scores for any matchup linked to one of our tracked games from
+// that game's goal events rather than a stored score (see LeagueGame).
+// `usId` is the "us" league_teams id for the rows' season; every row passed
+// in must belong to the season that `usId` was resolved against, since a
+// different season's "us" team has a different id.
+async function enrichLeagueGames(rows: LeagueGame[], usId: number | null): Promise<EnrichedLeagueGame[]> {
+  const linkedIds = rows.map(r => r.our_game_id).filter((id): id is number => id != null)
+  const linkedGames = new Map<number, { game_date: string | null; game_time: string | null; outcome_override: string | null }>()
+  const eventScores = new Map<number, { our: number; their: number }>()
+  if (linkedIds.length > 0) {
+    const [gRes, eRes] = await Promise.all([
+      supabase.from('games').select('id, game_date, game_time, outcome_override').in('id', linkedIds),
+      supabase.from('game_events').select('game_id, event_type').in('game_id', linkedIds).in('event_type', ['Goal', 'Opponent Goal']),
+    ])
+    if (gRes.error) throw new Error(gRes.error.message)
+    if (eRes.error) throw new Error(eRes.error.message)
+    ;(gRes.data ?? []).forEach((g: any) => linkedGames.set(g.id, g))
+    ;(eRes.data ?? []).forEach((e: any) => {
+      if (!eventScores.has(e.game_id)) eventScores.set(e.game_id, { our: 0, their: 0 })
+      const s = eventScores.get(e.game_id)!
+      if (e.event_type === 'Goal') s.our++
+      else s.their++
+    })
+  }
+
+  return rows.map(r => {
+    const base: EnrichedLeagueGame = {
+      ...r,
+      eff_home_team_id: r.home_team_id,
+      eff_away_team_id: r.away_team_id,
+      eff_home_score: r.home_score,
+      eff_away_score: r.away_score,
+      is_final: r.our_game_id == null && r.home_score != null && r.away_score != null,
+      involves_us: usId != null && (r.home_team_id === usId || r.away_team_id === usId),
+      our_override: null,
+    }
+    if (r.our_game_id != null) {
+      const linked = linkedGames.get(r.our_game_id)
+      const score = eventScores.get(r.our_game_id)
+      const our = score?.our ?? 0
+      const their = score?.their ?? 0
+      const weAreHome = usId != null && r.home_team_id === usId
+      base.eff_home_score = weAreHome ? our : their
+      base.eff_away_score = weAreHome ? their : our
+      base.involves_us = true
+      base.our_override = linked?.outcome_override ?? null
+      base.is_final = linked ? linkedGameIsFinal(linked, our + their > 0) : false
+    }
+    return base
+  })
+}
+
 export function useGetLeague() {
   const fn = useCallback(async (params: { seasonId: number }): Promise<LeagueData> => {
     const [seasonRes, teamsRes, gamesRes] = await Promise.all([
@@ -121,52 +176,7 @@ export function useGetLeague() {
     const teams = (teamsRes.data ?? []) as LeagueTeam[]
     const rows = (gamesRes.data ?? []) as LeagueGame[]
     const usId = teams.find(t => t.is_us)?.id ?? null
-
-    // Derive scores for matchups linked to one of our tracked games.
-    const linkedIds = rows.map(r => r.our_game_id).filter((id): id is number => id != null)
-    const linkedGames = new Map<number, { game_date: string | null; game_time: string | null; outcome_override: string | null }>()
-    const eventScores = new Map<number, { our: number; their: number }>()
-    if (linkedIds.length > 0) {
-      const [gRes, eRes] = await Promise.all([
-        supabase.from('games').select('id, game_date, game_time, outcome_override').in('id', linkedIds),
-        supabase.from('game_events').select('game_id, event_type').in('game_id', linkedIds).in('event_type', ['Goal', 'Opponent Goal']),
-      ])
-      if (gRes.error) throw new Error(gRes.error.message)
-      if (eRes.error) throw new Error(eRes.error.message)
-      ;(gRes.data ?? []).forEach((g: any) => linkedGames.set(g.id, g))
-      ;(eRes.data ?? []).forEach((e: any) => {
-        if (!eventScores.has(e.game_id)) eventScores.set(e.game_id, { our: 0, their: 0 })
-        const s = eventScores.get(e.game_id)!
-        if (e.event_type === 'Goal') s.our++
-        else s.their++
-      })
-    }
-
-    const enriched: EnrichedLeagueGame[] = rows.map(r => {
-      const base: EnrichedLeagueGame = {
-        ...r,
-        eff_home_team_id: r.home_team_id,
-        eff_away_team_id: r.away_team_id,
-        eff_home_score: r.home_score,
-        eff_away_score: r.away_score,
-        is_final: r.our_game_id == null && r.home_score != null && r.away_score != null,
-        involves_us: usId != null && (r.home_team_id === usId || r.away_team_id === usId),
-        our_override: null,
-      }
-      if (r.our_game_id != null) {
-        const linked = linkedGames.get(r.our_game_id)
-        const score = eventScores.get(r.our_game_id)
-        const our = score?.our ?? 0
-        const their = score?.their ?? 0
-        const weAreHome = usId != null && r.home_team_id === usId
-        base.eff_home_score = weAreHome ? our : their
-        base.eff_away_score = weAreHome ? their : our
-        base.involves_us = true
-        base.our_override = linked?.outcome_override ?? null
-        base.is_final = linked ? linkedGameIsFinal(linked, our + their > 0) : false
-      }
-      return base
-    })
+    const enriched = await enrichLeagueGames(rows, usId)
 
     return {
       season: {
@@ -180,6 +190,84 @@ export function useGetLeague() {
     }
   }, [])
   return useApiCall<LeagueData, { seasonId: number }>(fn)
+}
+
+// One opponent's full history across every season it has appeared in
+// (league_teams rows are per season, so the same opponent name gets a new
+// row each season it's re-encountered — see "Standings (part of Stats)" in
+// CLAUDE.md). Used by the opponent detail page linked from a Standings row.
+export type OpponentSeasonTeam = LeagueTeam & { season_name: string; season_year: number; season_organizer: string | null }
+export type OpponentHistory = {
+  teams: OpponentSeasonTeam[]
+  games: EnrichedLeagueGame[]
+  // "Us" team id/name per season, since a game's other side is always our
+  // own per-season team row, not another OpponentSeasonTeam.
+  usTeamsBySeasonId: Map<number, { id: number; name: string }>
+  // Every team id referenced by `games`, by name. Covers third-party
+  // opponents too: when the clicked team IS "us", the other side of each
+  // game is neither one of `teams` nor `usTeamsBySeasonId`.
+  teamNamesById: Map<number, string>
+}
+
+export function useGetOpponentHistory() {
+  const fn = useCallback(async (params: { organizationId: number; name: string }): Promise<OpponentHistory> => {
+    const [teamsRes, usTeamsRes] = await Promise.all([
+      supabase.from('league_teams').select('*').eq('organization_id', params.organizationId).eq('name', params.name),
+      supabase.from('league_teams').select('id, season_id, name').eq('organization_id', params.organizationId).eq('is_us', true),
+    ])
+    if (teamsRes.error) throw new Error(teamsRes.error.message)
+    if (usTeamsRes.error) throw new Error(usTeamsRes.error.message)
+    const teams = (teamsRes.data ?? []) as LeagueTeam[]
+    const usTeamsBySeasonId = new Map<number, { id: number; name: string }>()
+    ;(usTeamsRes.data ?? []).forEach((t: any) => usTeamsBySeasonId.set(t.season_id, { id: t.id, name: t.name }))
+    if (teams.length === 0) return { teams: [], games: [], usTeamsBySeasonId, teamNamesById: new Map() }
+    const usBySeasonId = new Map<number, number>()
+    usTeamsBySeasonId.forEach((t, seasonId) => usBySeasonId.set(seasonId, t.id))
+
+    const seasonIds = [...new Set(teams.map(t => t.season_id))]
+    const seasonsRes = await supabase.from('seasons').select('id, name, year, organizer').in('id', seasonIds)
+    if (seasonsRes.error) throw new Error(seasonsRes.error.message)
+    const seasonById = new Map<number, { name: string; year: number; organizer: string | null }>()
+    ;(seasonsRes.data ?? []).forEach((s: any) => seasonById.set(s.id, s))
+
+    const teamIds = teams.map(t => t.id)
+    const gamesRes = await supabase.from('league_games').select('*')
+      .eq('organization_id', params.organizationId)
+      .or(`home_team_id.in.(${teamIds.join(',')}),away_team_id.in.(${teamIds.join(',')})`)
+    if (gamesRes.error) throw new Error(gamesRes.error.message)
+    const rows = (gamesRes.data ?? []) as LeagueGame[]
+
+    // Score/is_final derivation needs the "us" team id for a row's own
+    // season (a different season's "us" team has a different id), so
+    // enrich one season's rows at a time.
+    const bySeason = new Map<number, LeagueGame[]>()
+    rows.forEach(r => { const arr = bySeason.get(r.season_id) ?? []; arr.push(r); bySeason.set(r.season_id, arr) })
+    const enrichedGroups = await Promise.all(
+      [...bySeason.entries()].map(([seasonId, seasonRows]) => enrichLeagueGames(seasonRows, usBySeasonId.get(seasonId) ?? null))
+    )
+    const games = enrichedGroups.flat().sort((a, b) => (b.game_date ?? '').localeCompare(a.game_date ?? '') || (b.game_time ?? '').localeCompare(a.game_time ?? ''))
+
+    const teamNamesById = new Map<number, string>()
+    teams.forEach(t => teamNamesById.set(t.id, t.name))
+    usTeamsBySeasonId.forEach(t => teamNamesById.set(t.id, t.name))
+    const unknownIds = [...new Set(games.flatMap(g => [g.eff_home_team_id, g.eff_away_team_id])
+      .filter((id): id is number => id != null && !teamNamesById.has(id)))]
+    if (unknownIds.length > 0) {
+      const othersRes = await supabase.from('league_teams').select('id, name').in('id', unknownIds)
+      if (othersRes.error) throw new Error(othersRes.error.message)
+      ;(othersRes.data ?? []).forEach((t: any) => teamNamesById.set(t.id, t.name))
+    }
+
+    const enrichedTeams: OpponentSeasonTeam[] = teams
+      .map(t => {
+        const s = seasonById.get(t.season_id)
+        return { ...t, season_name: s?.name ?? '', season_year: s?.year ?? 0, season_organizer: s?.organizer ?? null }
+      })
+      .sort((a, b) => b.season_year - a.season_year || b.season_id - a.season_id)
+
+    return { teams: enrichedTeams, games, usTeamsBySeasonId, teamNamesById }
+  }, [])
+  return useApiCall<OpponentHistory, { organizationId: number; name: string }>(fn)
 }
 
 // Pure standings computation so the table derives entirely from entered

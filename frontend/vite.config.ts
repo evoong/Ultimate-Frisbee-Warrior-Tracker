@@ -9,6 +9,25 @@ export default defineConfig({
       '@': path.resolve(__dirname, './'),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Split the vendor bundle by package group so no single chunk
+        // trips Vite's 500kB-after-minification warning; each group is
+        // large but stable, so it also caches independently across
+        // deploys that only touch app code.
+        codeSplitting: {
+          groups: [
+            { name: 'vendor-radix', test: /node_modules\/@radix-ui/ },
+            { name: 'vendor-supabase', test: /node_modules\/@supabase/ },
+            { name: 'vendor-router', test: /node_modules\/react-router/ },
+            { name: 'vendor-react', test: /node_modules\/(react|react-dom|scheduler)\// },
+            { name: 'vendor', test: /node_modules/ },
+          ],
+        },
+      },
+    },
+  },
   server: {
     host: '0.0.0.0',
     port: process.env.PORT ? Number(process.env.PORT) : 5000,

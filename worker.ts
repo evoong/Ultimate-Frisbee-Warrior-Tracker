@@ -4,6 +4,7 @@ import { runJamSync } from './gateway/jamSync.js'
 import { UfwtMcp } from './gateway/mcpAgent.js'
 import { createUfwtOAuthProvider } from './gateway/mcpOAuth.js'
 import type { OAuthHelpers } from '@cloudflare/workers-oauth-provider'
+import * as Sentry from '@sentry/cloudflare'
 
 export { UfwtMcp }
 
@@ -26,6 +27,7 @@ interface Env {
   UFWT_MCP: DurableObjectNamespace;
   MCP_ORGANIZATION_ID?: string;
   OAUTH_PROVIDER: OAuthHelpers;
+  SENTRY_DSN_WORKER: string;
 }
 
 // Minimal local alias so this file doesn't need @cloudflare/workers-types.
@@ -110,6 +112,7 @@ async function handleAppRequest(request: Request, env: Env, ctx: ExecutionContex
           });
           return new Response(JSON.stringify(result), { status: 200, headers: { "Content-Type": "application/json" } });
         } catch (err) {
+          Sentry.captureException(err);
           return new Response(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }), { status: 500, headers: { "Content-Type": "application/json" } });
         }
       }
@@ -147,6 +150,7 @@ async function handleAppRequest(request: Request, env: Env, ctx: ExecutionContex
 
       return new Response("Not Found", { status: 404 });
     } catch (error) {
+      Sentry.captureException(error);
       console.error("Worker error:", error);
       return new Response("Internal Server Error", { status: 500 });
     }
@@ -169,20 +173,26 @@ const oauthProvider = createUfwtOAuthProvider<Env>(
   handleAppRequest,
 );
 
-export default {
-  fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    return oauthProvider.fetch(request, env as any, ctx as any);
-  },
+export default Sentry.withSentry(
+  (env: Env) => ({ dsn: env.SENTRY_DSN_WORKER }),
+  {
+    fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+      return oauthProvider.fetch(request, env as any, ctx as any);
+    },
 
-  // Daily JAM Sports calendar sync at 6am Eastern (see wrangler.jsonc's triggers.crons).
-  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(
-      runJamSync({
-        supabaseUrl: env.SUPABASE_URL,
-        supabaseSecretKey: env.SUPABASE_SECRET_KEY,
-      })
-        .then(result => console.log("JAM sync:", JSON.stringify(result)))
-        .catch(err => console.error("JAM sync failed:", err instanceof Error ? err.message : String(err)))
-    );
+    // Daily JAM Sports calendar sync at 6am Eastern (see wrangler.jsonc's triggers.crons).
+    async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+      ctx.waitUntil(
+        runJamSync({
+          supabaseUrl: env.SUPABASE_URL,
+          supabaseSecretKey: env.SUPABASE_SECRET_KEY,
+        })
+          .then(result => console.log("JAM sync:", JSON.stringify(result)))
+          .catch(err => {
+            Sentry.captureException(err);
+            console.error("JAM sync failed:", err instanceof Error ? err.message : String(err));
+          })
+      );
+    },
   },
-};
+);

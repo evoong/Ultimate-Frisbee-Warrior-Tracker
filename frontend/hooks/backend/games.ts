@@ -69,6 +69,34 @@ export function useGetGames() {
   return useApiCall<any[], { organizationId: number | null; seasonIds?: number[] }>(fn)
 }
 
+// Resolves a single game by id, ignoring any season filter — used to load a
+// deep-linked /schedule/:gameId whose game isn't in the currently-filtered
+// list (useGetGames above), e.g. a different season or before that list has
+// loaded at all.
+export function useGetGame() {
+  const fn = useCallback(async (params: { gameId: number; organizationId: number | null }) => {
+    const { data, error } = await supabase
+      .from('games')
+      .select('*')
+      .eq('id', params.gameId)
+      .eq('organization_id', params.organizationId)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    if (!data) return undefined
+
+    const { data: goalEvents } = await supabase
+      .from('game_events')
+      .select('event_type')
+      .eq('game_id', params.gameId)
+      .in('event_type', ['Goal', 'Opponent Goal'])
+    let our = 0, their = 0
+    ;(goalEvents ?? []).forEach((e: any) => { if (e.event_type === 'Goal') our++; else their++ })
+
+    return { ...data, our_score: our, their_score: their } as any
+  }, [])
+  return useApiCall<any, { gameId: number; organizationId: number | null }>(fn)
+}
+
 // Every game we play is also a matchup in the league schedule. Database
 // triggers (010_league_tracking.sql) resolve games.opponent text to a
 // league_teams row and maintain the paired league_games row on every
@@ -139,50 +167,69 @@ export function useGetLineups() {
   return useApiCall<any[], { gameId: number }>(fn)
 }
 
-// Finds the season's game immediately before this one (by date, then time to
-// break same-day ties) and, if it has lineup groups set up, returns that
-// structure so a brand-new game's lineups can be auto-seeded from it (see
-// Schedule.tsx's ensureLineupSeeded). Returns null if there's no earlier
-// game in the season, or the earlier one was never lineup'd.
-export function useGetPreviousGameLineups() {
-  const fn = useCallback(async (params: { organizationId: number | null; seasonId: number; gameId: number }) => {
+export type RecentLineupGame = {
+  game_id: number
+  game_date: string | null
+  game_time: string | null
+  opponent: string | null
+  groups: { lineup_name: string; sort_order: number }[]
+  entries: { player_id: number; display_name: string | null; gender_match: string | null; lineup_name: string; sort_order: number }[]
+}
+
+// The season's most recent games before this one (by date, then time to
+// break same-day ties) that have a lineup set up, closest first, so the
+// "Copy a lineup" picker can show a preview of each one to copy from
+// instead of silently guessing "the last game". Capped at `limit` (default
+// 8) since a long season could otherwise return a very long list.
+export function useGetRecentLineupGames() {
+  const fn = useCallback(async (params: { organizationId: number | null; seasonId: number; gameId: number; limit?: number }): Promise<RecentLineupGame[]> => {
     const { data: seasonGames, error: gamesError } = await supabase
       .from('games')
-      .select('id, game_date, game_time')
+      .select('id, game_date, game_time, opponent')
       .eq('organization_id', params.organizationId)
       .eq('season_id', params.seasonId)
     if (gamesError) throw new Error(gamesError.message)
 
-    const sorted = ((seasonGames ?? []) as { id: number; game_date: string; game_time: string | null }[])
+    const sorted = ((seasonGames ?? []) as { id: number; game_date: string; game_time: string | null; opponent: string | null }[])
       .sort((a, b) => `${a.game_date}T${a.game_time ?? '00:00:00'}`.localeCompare(`${b.game_date}T${b.game_time ?? '00:00:00'}`))
     const idx = sorted.findIndex(g => g.id === params.gameId)
-    const previousGame = idx > 0 ? sorted[idx - 1] : null
-    if (!previousGame) return null
+    const earlierGames = idx > 0 ? sorted.slice(0, idx).reverse() : []
+    if (earlierGames.length === 0) return []
 
-    const { data: groups, error: groupsError } = await supabase
-      .from('game_lineup_groups')
-      .select('lineup_name, sort_order')
-      .eq('game_id', previousGame.id)
-      .order('sort_order')
-    if (groupsError) throw new Error(groupsError.message)
-    if (!groups || groups.length === 0) return null
+    const earlierIds = earlierGames.map(g => g.id)
+    const [groupsRes, entriesRes] = await Promise.all([
+      supabase.from('game_lineup_groups').select('game_id, lineup_name, sort_order').in('game_id', earlierIds).order('sort_order'),
+      supabase.from('game_lineups').select('game_id, player_id, lineup_name, sort_order, players(display_name, gender_match)').in('game_id', earlierIds).order('sort_order'),
+    ])
+    if (groupsRes.error) throw new Error(groupsRes.error.message)
+    if (entriesRes.error) throw new Error(entriesRes.error.message)
 
-    const { data: entries, error: entriesError } = await supabase
-      .from('game_lineups')
-      .select('player_id, lineup_name, sort_order')
-      .eq('game_id', previousGame.id)
-      .order('sort_order')
-    if (entriesError) throw new Error(entriesError.message)
+    const groupsByGame = new Map<number, { lineup_name: string; sort_order: number }[]>()
+    ;(groupsRes.data ?? []).forEach((g: any) => {
+      const arr = groupsByGame.get(g.game_id) ?? []
+      arr.push({ lineup_name: g.lineup_name, sort_order: g.sort_order })
+      groupsByGame.set(g.game_id, arr)
+    })
+    const entriesByGame = new Map<number, { player_id: number; display_name: string | null; gender_match: string | null; lineup_name: string; sort_order: number }[]>()
+    ;(entriesRes.data ?? []).forEach((e: any) => {
+      const arr = entriesByGame.get(e.game_id) ?? []
+      arr.push({ player_id: e.player_id, display_name: e.players?.display_name ?? null, gender_match: e.players?.gender_match ?? null, lineup_name: e.lineup_name, sort_order: e.sort_order })
+      entriesByGame.set(e.game_id, arr)
+    })
 
-    return {
-      groups: groups as { lineup_name: string; sort_order: number }[],
-      entries: (entries ?? []) as { player_id: number; lineup_name: string; sort_order: number }[],
-    }
+    return earlierGames
+      .filter(g => (groupsByGame.get(g.id) ?? []).length > 0)
+      .slice(0, params.limit ?? 8)
+      .map(g => ({
+        game_id: g.id,
+        game_date: g.game_date,
+        game_time: g.game_time,
+        opponent: g.opponent,
+        groups: groupsByGame.get(g.id) ?? [],
+        entries: entriesByGame.get(g.id) ?? [],
+      }))
   }, [])
-  return useApiCall<
-    { groups: { lineup_name: string; sort_order: number }[]; entries: { player_id: number; lineup_name: string; sort_order: number }[] } | null,
-    { organizationId: number | null; seasonId: number; gameId: number }
-  >(fn)
+  return useApiCall<RecentLineupGame[], { organizationId: number | null; seasonId: number; gameId: number; limit?: number }>(fn)
 }
 
 export function useAddToLineup() {
