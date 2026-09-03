@@ -1,6 +1,7 @@
-import "dotenv/config";
+import "./instrument.js";
 import express from "express";
 import type { Request as ExpressRequest, Response as ExpressResponse, NextFunction } from "express";
+import * as Sentry from "@sentry/node";
 import { createClient } from "@supabase/supabase-js";
 import multer from "multer";
 import path from "path";
@@ -438,6 +439,7 @@ app.post("/api/chat", async (req, res) => {
           const output = await callChatFunction(actionsConfig, organization_id, call.name!, call.args ?? {});
           return { functionResponse: { name: call.name!, response: { output } } };
         } catch (err) {
+          Sentry.captureException(err);
           return { functionResponse: { name: call.name!, response: { error: err instanceof Error ? err.message : String(err) } } };
         }
       }));
@@ -453,6 +455,7 @@ app.post("/api/chat", async (req, res) => {
 
     res.json({ reply });
   } catch (err: unknown) {
+    Sentry.captureException(err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
@@ -481,6 +484,7 @@ app.get("/api/chat/history", async (req, res) => {
     if (error) throw error;
     res.json(data ?? []);
   } catch (err: unknown) {
+    Sentry.captureException(err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
@@ -503,6 +507,7 @@ app.delete("/api/chat/history", async (req, res) => {
     if (error) throw error;
     res.json({ ok: true });
   } catch (err: unknown) {
+    Sentry.captureException(err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
@@ -531,6 +536,7 @@ app.post("/api/schedule/sync-jam", requireAuth, async (_req, res) => {
     const result = await runJamSync(jamSyncConfig());
     res.json(result);
   } catch (err: unknown) {
+    Sentry.captureException(err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
@@ -544,9 +550,12 @@ app.get("/api/cron/sync-jam", async (req, res) => {
     const result = await runJamSync(jamSyncConfig());
     res.json(result);
   } catch (err: unknown) {
+    Sentry.captureException(err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
+
+Sentry.setupExpressErrorHandler(app);
 
 // Only bind a port when running directly (not as a Vercel serverless function)
 if (!process.env.VERCEL) {
