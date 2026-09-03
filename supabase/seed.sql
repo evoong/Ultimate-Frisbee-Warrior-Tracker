@@ -37,5 +37,8 @@ values (1, 101, 102, 'Goal', 1),
 insert into public.strategy_plays (name, organization_id)
 values ('Vertical stack', 1), ('Horizontal stack', 2);
 
-select setval(pg_get_serial_sequence('public.players', 'id'), 200, true);
-select setval(pg_get_serial_sequence('public.games',   'id'), 200, true);
+select setval(pg_get_serial_sequence('public.organizations', 'id'), 200, true);
+select setval(pg_get_serial_sequence('public.teams',         'id'), 200, true);
+select setval(pg_get_serial_sequence('public.seasons',       'id'), 200, true);
+select setval(pg_get_serial_sequence('public.players',       'id'), 200, true);
+select setval(pg_get_serial_sequence('public.games',         'id'), 200, true);
