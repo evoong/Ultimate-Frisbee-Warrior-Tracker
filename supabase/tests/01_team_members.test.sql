@@ -1,5 +1,5 @@
 begin;
-select plan(5);
+select plan(6);
 
 select has_table('public', 'team_members', 'team_members exists');
 
@@ -40,6 +40,21 @@ select throws_ok(
   'P0001',
   'team 1 must have at least one captain',
   'moving the last captain to another team raises'
+);
+
+-- Deleting a team must cascade cleanly, even through the last-captain
+-- guard: the parent organization row being gone means there is no team
+-- left to orphan (FIX 1). Throwaway org so we don't disturb the seeded
+-- fixtures the assertions above rely on.
+insert into public.organizations (id, name, is_public) overriding system value
+values (901, 'Deletable Team', false);
+
+insert into public.team_members (team_id, user_id, role)
+values (901, (select id from auth.users where email = 'captain@local.test'), 'captain');
+
+select lives_ok(
+  $$ delete from public.organizations where id = 901 $$,
+  'a team with members can be deleted'
 );
 
 select * from finish();

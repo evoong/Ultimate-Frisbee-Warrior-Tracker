@@ -427,8 +427,10 @@ select is_empty(
   'every table in public has RLS enabled'
 );
 
--- standings is deprecated and intentionally has zero policies (016 dropped
--- them); nothing reads or writes it, so no access is the correct state.
+-- standings is deprecated but still has one policy (016 dropped only its
+-- write policies, leaving "authenticated read" using (true) behind). It is
+-- excluded here because it would pass this assertion either way; the
+-- exclusion is not needed for correctness, just kept as-is.
 select is_empty(
   $$ select c.relname::text
        from pg_class c
@@ -2925,8 +2927,9 @@ git commit -m "Freeze legacy migration directory, document local database flow"
 
 - `npm run db:reset && npm run db:test` passes every assertion, including
   the RLS canary and all nine escalation tests.
-- No table in `public` lacks RLS or policies (except `standings`, which is
-  deliberately inaccessible).
+- No table in `public` lacks RLS or policies (except `standings`, which
+  keeps the one read policy 016 left behind and is excluded from the
+  policy-count assertion only because it would pass either way).
 - No `security definer` function in `public` is executable by `anon`, and
   every one pins `search_path`.
 - `authenticated` holds no INSERT, UPDATE, or DELETE privilege on

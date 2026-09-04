@@ -2,6 +2,7 @@ create or replace function public.is_guest()
 returns boolean
 language sql
 stable
+set search_path = ''
 as $$
   select coalesce(((select auth.jwt()) ->> 'is_anonymous')::boolean, false);
 $$;

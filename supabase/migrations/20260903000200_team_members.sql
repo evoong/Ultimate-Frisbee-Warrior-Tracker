@@ -20,6 +20,16 @@ alter table public.team_members enable row level security;
 -- invites a recovery path an attacker can aim at. There is no such path;
 -- the last captain simply cannot be removed, demoted, or moved to another
 -- team, when doing so would leave their origin team with none.
+--
+-- Consequence: deleting the auth.users row of a sole captain cascades into
+-- this trigger via team_members.user_id and raises 'team % must have at
+-- least one captain'. This is intended -- it is the same invariant, just
+-- reached through a user delete instead of a membership delete -- but it
+-- means the Supabase dashboard's "delete user" action, the admin API, and
+-- any GDPR deletion path will fail with that bare error and no guidance.
+-- Before deleting a sole captain's account, promote another member to
+-- captain (set_member_role) and, if appropriate, remove_member the
+-- original captain first.
 create or replace function public.enforce_last_captain()
 returns trigger
 language plpgsql
@@ -30,6 +40,14 @@ declare
   v_team_id bigint := coalesce(old.team_id, new.team_id);
   v_remaining int;
 begin
+  -- In a cascading delete the parent organization row is already gone, so
+  -- there is no team left to orphan. A direct delete from team_members still
+  -- sees the parent, so the invariant below is unaffected.
+  if tg_op = 'DELETE'
+     and not exists (select 1 from public.organizations o where o.id = old.team_id) then
+    return old;
+  end if;
+
   if tg_op = 'UPDATE' and old.role = 'captain' and new.role = 'captain'
      and new.team_id = old.team_id then
     return new;

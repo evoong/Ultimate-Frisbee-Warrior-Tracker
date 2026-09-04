@@ -77,7 +77,7 @@ begin
   if exists (
     select 1 from public.team_members m
      where m.team_id = p_team_id
-       and m.user_id = (select u.id from auth.users u where lower(u.email) = v_email)
+       and m.user_id = (select u.id from auth.users u where lower(u.email) = v_email limit 1)
   ) then
     raise exception 'that person is already on this team';
   end if;

@@ -1,5 +1,5 @@
 begin;
-select plan(5);
+select plan(7);
 
 -- Canary: proves RLS is actually applied under tests.login_as. If the test
 -- session were running as a table owner or BYPASSRLS role, this returns
@@ -16,7 +16,7 @@ select is_empty(
        from pg_class c
        join pg_namespace n on n.oid = c.relnamespace
       where n.nspname = 'public'
-        and c.relkind = 'r'
+        and c.relkind in ('r', 'p')
         and not c.relrowsecurity $$,
   'every table in public has RLS enabled'
 );
@@ -30,7 +30,7 @@ select is_empty(
        from pg_class c
        join pg_namespace n on n.oid = c.relnamespace
       where n.nspname = 'public'
-        and c.relkind = 'r'
+        and c.relkind in ('r', 'p')
         and c.relname <> 'standings'
         and not exists (select 1 from pg_policy p where p.polrelid = c.oid) $$,
   'every table in public has at least one policy'
@@ -55,6 +55,39 @@ select is_empty(
         and p.prosecdef
         and has_function_privilege('anon', p.oid, 'EXECUTE') $$,
   'no security definer function in public is executable by anon'
+);
+
+-- FIX 2: event_types, standings and organization_members sat outside the
+-- strict_rls tier loop and its explicit revokes, so anon kept TRUNCATE (and
+-- every other grant) on them even after this migration claimed the rule
+-- applied everywhere. Assert directly against the ACL rather than one
+-- table at a time, so no future table can slip through the same way.
+select is_empty(
+  $$ select c.relname::text
+       from pg_class c
+       join pg_namespace n on n.oid = c.relnamespace
+       cross join lateral aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) a
+      where n.nspname = 'public'
+        and c.relkind in ('r', 'p')
+        and a.grantee = 'anon'::regrole $$,
+  'anon holds no privilege on any table in public'
+);
+
+-- M4: 20260903000300_invites_and_links.sql states in a comment that no
+-- policy anywhere reads player_links. Check both the USING and WITH CHECK
+-- expressions of every policy in public and storage, so the comment stays
+-- true rather than aspirational.
+select is_empty(
+  $$ select p.polname::text
+       from pg_policy p
+       join pg_class c on c.oid = p.polrelid
+       join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname in ('public', 'storage')
+        and (
+          coalesce(pg_get_expr(p.polqual, p.polrelid), '') like '%player_links%'
+          or coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '') like '%player_links%'
+        ) $$,
+  'no policy anywhere references player_links'
 );
 
 select * from finish();

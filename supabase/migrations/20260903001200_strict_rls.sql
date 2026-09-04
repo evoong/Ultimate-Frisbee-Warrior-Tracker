@@ -198,3 +198,14 @@ create policy "team member update" on public.event_types
   with check ((select array_length(public.my_member_team_ids(), 1)) > 0);
 
 revoke truncate, references, trigger on public.event_types from authenticated;
+
+-- event_types, standings and organization_members sit outside both the
+-- tier loop and the explicit organizations/player_private blocks above, so
+-- the anon revoke and the TRUNCATE revoke this migration states as a rule
+-- twice never reached them. Not reachable via PostgREST (it cannot emit
+-- TRUNCATE), but the rule is stated as an invariant, so honor it here.
+-- authenticated keeps SELECT/INSERT/UPDATE/DELETE on these three:
+-- event_types and standings are read via existing policies, and
+-- organization_members is still live until Plan 4 retires it.
+revoke all on public.event_types, public.standings, public.organization_members from anon;
+revoke truncate, references, trigger on public.standings, public.organization_members from authenticated;
