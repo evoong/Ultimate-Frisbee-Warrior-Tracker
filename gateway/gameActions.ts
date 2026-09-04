@@ -344,6 +344,19 @@ export async function queryStatBreakdown(
   }
 }
 
+// Functions whose handlers write data (call sbWrite/sbUpsertIgnore), as
+// opposed to query_stat_breakdown, the one read-only function. chat.ts uses
+// this to gate writes on the caller's team role before dispatching a
+// model-requested function call -- kept here, next to the switch it
+// classifies, so it stays correct when a handler is added or changed.
+export const WRITE_FUNCTIONS: ReadonlySet<string> = new Set([
+  'create_game_event',
+  'undo_last_event',
+  'add_to_lineup',
+  'remove_from_lineup',
+  'create_lineup_group',
+])
+
 export async function callChatFunction(config: ActionsConfig, orgId: number, name: string, args: Record<string, unknown>): Promise<unknown> {
   switch (name) {
     case 'create_game_event': return createGameEvent(config, orgId, args as any)

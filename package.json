@@ -14,7 +14,7 @@
     "deploy:dev": "wrangler deploy --config wrangler.jsonc --env development",
     "deploy:vercel": "npx vercel --prod --yes",
     "test": "node server.test.mjs",
-    "test:gateway": "node node_modules/tsx/dist/cli.mjs gateway/jwt.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/membership.test.mjs",
+    "test:gateway": "node node_modules/tsx/dist/cli.mjs gateway/jwt.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/membership.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/gameActions.test.mjs",
     "db:start": "supabase start",
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset && npm run db:seed:users",

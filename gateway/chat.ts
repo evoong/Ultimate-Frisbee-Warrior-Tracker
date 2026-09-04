@@ -3,7 +3,7 @@ import type { GatewayConfig } from './index.js'
 import { getVaultSecret } from './secrets.js'
 import { cookieNames, parseCookies } from './cookies.js'
 import { verifyAccessToken } from './jwt.js'
-import { CHAT_FUNCTION_DECLARATIONS, callChatFunction, type ActionsConfig } from './gameActions.js'
+import { CHAT_FUNCTION_DECLARATIONS, WRITE_FUNCTIONS, callChatFunction, type ActionsConfig } from './gameActions.js'
 import { createMembershipLookup, hasAtLeast, type TeamRole } from './membership.js'
 
 // Chat needs privileged (service-role) Supabase access to read all team data
@@ -327,7 +327,7 @@ function sleep(ms: number): Promise<void> {
 async function callGemini(
   apiKey: string, model: string, systemInstruction: string,
   history: { role: string; content: string }[], message: string,
-  actionsConfig: ActionsConfig, organizationId: number
+  actionsConfig: ActionsConfig, organizationId: number, callerRole: TeamRole
 ): Promise<string> {
   const genai = new GoogleGenAI({ apiKey })
 
@@ -371,7 +371,13 @@ async function callGemini(
     if (!calls || calls.length === 0) break
     const parts = await Promise.all(calls.map(async call => {
       try {
-        const output = await callChatFunction(actionsConfig, organizationId, call.name!, call.args ?? {})
+        // Writes require member-tier on this team. A guest never reaches
+        // here (requireTeamMember rejects anonymous/non-member callers
+        // before callGemini is even invoked), but a future read-only role
+        // would, and the model must not be the thing that decides.
+        const output = WRITE_FUNCTIONS.has(call.name!) && !hasAtLeast(callerRole, 'member')
+          ? { error: "you do not have permission to change this team's data" }
+          : await callChatFunction(actionsConfig, organizationId, call.name!, call.args ?? {})
         return { functionResponse: { name: call.name!, response: { output } } }
       } catch (err) {
         return { functionResponse: { name: call.name!, response: { error: err instanceof Error ? err.message : String(err) } } }
@@ -405,7 +411,7 @@ export async function handleChatRequest(config: ChatConfig, request: Request): P
     const geminiModel = await getVaultSecret(config, 'gemini_model', config.geminiModel) ?? DEFAULT_GEMINI_MODEL
     if (!geminiApiKey) return json({ error: 'Gemini API key not configured' }, 500)
     const actionsConfig: ActionsConfig = { supabaseUrl: config.supabaseUrl, supabaseSecretKey: config.supabaseSecretKey }
-    const reply = await callGemini(geminiApiKey, geminiModel, systemContext, history, message, actionsConfig, teamId)
+    const reply = await callGemini(geminiApiKey, geminiModel, systemContext, history, message, actionsConfig, teamId, user.role)
 
     await insertChatLogs(config, teamId, [
       { session_id, role: 'user', content: message },
