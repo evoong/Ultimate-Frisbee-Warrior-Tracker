@@ -400,8 +400,9 @@ app.post("/api/chat", async (req, res) => {
       headers: { cookie: req.headers.cookie ?? "" },
     });
     const user = await requireAllowedUser(webRequest);
-    if (!user || !(await isOrgMember(user.sub, Number(organization_id)))) {
-      return res.status(401).json({ error: "not authenticated" });
+    if (!user) return res.status(401).json({ error: "not authenticated" });
+    if (!(await isOrgMember(user.sub, Number(organization_id)))) {
+      return res.status(403).json({ error: "not a member of this team" });
     }
 
     const systemContext = await getTeamContext(organization_id);
@@ -481,8 +482,9 @@ app.get("/api/chat/history", async (req, res) => {
       headers: { cookie: req.headers.cookie ?? "" },
     });
     const user = await requireAllowedUser(webRequest);
-    if (!user || !(await isOrgMember(user.sub, Number(organization_id)))) {
-      return res.status(401).json({ error: "not authenticated" });
+    if (!user) return res.status(401).json({ error: "not authenticated" });
+    if (!(await isOrgMember(user.sub, Number(organization_id)))) {
+      return res.status(403).json({ error: "not a member of this team" });
     }
 
     const { data, error } = await supabase
@@ -509,8 +511,9 @@ app.delete("/api/chat/history", async (req, res) => {
       headers: { cookie: req.headers.cookie ?? "" },
     });
     const user = await requireAllowedUser(webRequest);
-    if (!user || !(await isOrgMember(user.sub, Number(organization_id)))) {
-      return res.status(401).json({ error: "not authenticated" });
+    if (!user) return res.status(401).json({ error: "not authenticated" });
+    if (!(await isOrgMember(user.sub, Number(organization_id)))) {
+      return res.status(403).json({ error: "not a member of this team" });
     }
 
     const { error } = await supabase.from("chat_logs").delete().eq("session_id", session_id).eq("organization_id", organization_id);
