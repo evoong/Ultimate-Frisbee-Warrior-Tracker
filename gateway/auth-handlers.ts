@@ -122,15 +122,15 @@ async function pkcePair(): Promise<{ verifier: string; challenge: string }> {
   return { verifier, challenge: base64url(new Uint8Array(digest)) }
 }
 
-export interface OrgMembership {
+export interface TeamMembership {
   organization_id: number
   name: string
-  role: string
+  role: 'captain' | 'editor' | 'member'
   is_public: boolean
 }
 
-async function getOrganizations(config: GatewayConfig, accessToken: string): Promise<OrgMembership[]> {
-  const res = await fetch(`${config.supabaseUrl}/rest/v1/rpc/my_organizations`, {
+async function getTeams(config: GatewayConfig, accessToken: string): Promise<TeamMembership[]> {
+  const res = await fetch(`${config.supabaseUrl}/rest/v1/rpc/my_teams`, {
     method: 'POST',
     headers: {
       apikey: config.publishableKey,
@@ -313,8 +313,36 @@ export async function handleAuthRequest(
       if (status !== 200 || !data?.id) {
         return json({ user: null }, 401, clearSessionCookies(url))
       }
-      const organizations = await getOrganizations(config, accessToken)
-      return json({ user: { id: data.id, email: data.email }, organizations }, 200, setCookies)
+      // Consume any invite addressed to this user's confirmed email. Cheap, and
+      // it means an invited teammate simply signs in and is on the team, with no
+      // accept-link to lose. accept_invite() itself enforces the confirmed-email
+      // requirement -- the gateway does not second-guess it.
+      await fetch(`${config.supabaseUrl}/rest/v1/rpc/accept_invite`, {
+        method: 'POST',
+        headers: {
+          apikey: config.publishableKey,
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
+      }).catch((err) => {
+        // Never fatal: a failed invite must not block sign-in. But it must not be
+        // invisible either.
+        console.error('accept_invite failed during session load', err)
+      })
+      const teams = await getTeams(config, accessToken)
+      return json(
+        {
+          user: { id: data.id, email: data.email ?? null },
+          is_anonymous: data.is_anonymous === true,
+          teams,
+          // Deprecated alias: the frontend still reads `organizations` and calls
+          // .some() on it. Removed once the frontend migrates to `teams`.
+          organizations: teams,
+        },
+        200,
+        setCookies
+      )
     }
 
     case 'POST /auth/guest': {
