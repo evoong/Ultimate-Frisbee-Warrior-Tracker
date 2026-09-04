@@ -376,6 +376,9 @@ function isTransientGeminiError(err: unknown): boolean {
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 app.post("/api/chat", async (req, res) => {
+  const startedAt = Date.now();
+  let usedToolCall = false;
+  let distinctId = "unknown";
   try {
     const { message, session_id, history = [], organization_id } = req.body as {
       message: string; session_id: string; history: { role: string; content: string }[]; organization_id: number
@@ -390,6 +393,7 @@ app.post("/api/chat", async (req, res) => {
     if (!user || !(await isOrgMember(user.email.toLowerCase(), organization_id))) {
       return res.status(401).json({ error: "not authenticated" });
     }
+    distinctId = user.email;
 
     const systemContext = await getTeamContext(organization_id);
 
@@ -434,6 +438,7 @@ app.post("/api/chat", async (req, res) => {
     for (let round = 0; round < MAX_FUNCTION_ROUNDS; round++) {
       const calls = response.functionCalls;
       if (!calls || calls.length === 0) break;
+      usedToolCall = true;
       const parts = await Promise.all(calls.map(async (call) => {
         try {
           const output = await callChatFunction(actionsConfig, organization_id, call.name!, call.args ?? {});
@@ -452,8 +457,16 @@ app.post("/api/chat", async (req, res) => {
       { session_id, role: "assistant", content: reply, organization_id },
     ]);
 
+    await track(distinctId, "chat_message_sent", {
+      organization_id,
+      session_id,
+      model: geminiModel,
+      duration_ms: Date.now() - startedAt,
+      used_tool_call: usedToolCall,
+    });
     res.json({ reply });
   } catch (err: unknown) {
+    await trackError(distinctId, err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
@@ -487,6 +500,7 @@ app.get("/api/chat/history", async (req, res) => {
 });
 
 app.delete("/api/chat/history", async (req, res) => {
+  let distinctId = "unknown";
   try {
     const { session_id, organization_id } = req.query as { session_id: string; organization_id: string };
     if (!session_id) return res.status(400).json({ error: "session_id required" });
@@ -499,11 +513,14 @@ app.delete("/api/chat/history", async (req, res) => {
     if (!user || !(await isOrgMember(user.email.toLowerCase(), Number(organization_id)))) {
       return res.status(401).json({ error: "not authenticated" });
     }
+    distinctId = user.email;
 
     const { error } = await supabase.from("chat_logs").delete().eq("session_id", session_id).eq("organization_id", organization_id);
     if (error) throw error;
+    await track(distinctId, "chat_history_cleared", { organization_id, session_id });
     res.json({ ok: true });
   } catch (err: unknown) {
+    await trackError(distinctId, err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
@@ -527,11 +544,18 @@ function jamSyncConfig() {
   };
 }
 
-app.post("/api/schedule/sync-jam", requireAuth, async (_req, res) => {
+app.post("/api/schedule/sync-jam", requireAuth, async (req, res) => {
+  const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
+    headers: { cookie: req.headers.cookie ?? "" },
+  });
+  const user = await requireAllowedUser(webRequest);
+  const distinctId = user?.email ?? "unknown";
   try {
     const result = await runJamSync(jamSyncConfig());
+    await track(distinctId, "jam_sync_triggered", {});
     res.json(result);
   } catch (err: unknown) {
+    await trackError(distinctId, err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
@@ -543,8 +567,10 @@ app.get("/api/cron/sync-jam", async (req, res) => {
   }
   try {
     const result = await runJamSync(jamSyncConfig());
+    await track("cron", "jam_sync_triggered", { via: "cron" });
     res.json(result);
   } catch (err: unknown) {
+    await trackError("cron", err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
