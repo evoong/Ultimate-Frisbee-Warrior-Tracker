@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlayer, useGetPlayerGameStats, useSetGameAttendance, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer, useGetSeasonRoster, useCopyPlayersToSeason, useRemovePlayersFromSeason, useGetPlayerAssistPairings, useGetPlayerTurnoverBreakdown, type AssistPairingRow, type TurnoverBreakdownRow } from '../hooks/backend/players'
+import { track } from '../lib/analytics'
 import { useGetAllSeasons, useGetSeasons, useCreateSeason } from '../hooks/backend/stats'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
 import { isPastGame } from '../lib/gameOrder'
@@ -354,6 +355,7 @@ export default function Roster() {
     }) as Player | undefined
     if (updated) {
       setSelectedPlayer(updated)
+      track('player_updated', { player_id: selectedPlayer.id })
       fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
     }
     setEditing(false)
@@ -370,6 +372,7 @@ export default function Roster() {
   const handleSaveSeasons = async () => {
     if (!selectedPlayer) return
     await updatePlayerSeasons({ playerId: selectedPlayer.id, seasonIds: selectedSeasonIds, subsBySeasonId: selectedSeasonSubs, organizationId: currentOrgId })
+    track('player_seasons_updated', { player_id: selectedPlayer.id, season_count: selectedSeasonIds.length })
     await fetchPlayerSeasons({ playerId: selectedPlayer.id })
     const refreshed = await fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
     const updated = (refreshed as Player[] | undefined)?.find(p => p.id === selectedPlayer.id)
@@ -380,6 +383,7 @@ export default function Roster() {
   const handleDeletePlayer = async () => {
     if (!selectedPlayer) return
     await deletePlayer({ playerId: selectedPlayer.id })
+    track('player_deleted', { player_id: selectedPlayer.id })
     setDeleteConfirm(false)
     handleBack()
     fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
@@ -389,6 +393,7 @@ export default function Roster() {
     const newPos = position === '__none__' ? null : position
     setSelectedPlayer({ ...player, position: newPos })
     await updatePosition({ playerId: player.id, position: newPos })
+    track('player_role_updated', { player_id: player.id, position: newPos })
     fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
   }
 
@@ -402,6 +407,7 @@ export default function Roster() {
     if (result?.photo_url) {
       const updated = { ...selectedPlayer, photo_url: result.photo_url }
       setSelectedPlayer(updated)
+      track('player_photo_uploaded', { player_id: selectedPlayer.id })
       fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
     } else setUploadError('Upload failed. Please try again.')
     e.target.value = ''
@@ -423,6 +429,7 @@ export default function Roster() {
       alert('Failed to create player. Please try again.')
       return
     }
+    track('player_created', { player_id: created.id, season_count: newPlayerData.season_ids.length })
     // The new player is already a member of manageSeasonId (it's in
     // season_ids above), so reflect that in the checklist immediately
     // instead of waiting for a refetch.
@@ -465,6 +472,7 @@ export default function Roster() {
       alert('Failed to create season. Please try again.')
       return
     }
+    track('season_created', { season_id: created.id })
     await fetchAllSeasons({ organizationId: currentOrgId })
     setRosterSeasonIds([created.id])
     setShowCreateSeason(false)
@@ -489,6 +497,7 @@ export default function Roster() {
       toAdd.length > 0 ? copyPlayersToSeason({ organizationId: currentOrgId, playerIds: toAdd, targetSeasonId: manageSeasonId, isSub: false }) : Promise.resolve(),
       toRemove.length > 0 ? removePlayersFromSeason({ seasonId: manageSeasonId, playerIds: toRemove }) : Promise.resolve(),
     ])
+    track('season_roster_updated', { season_id: manageSeasonId, added_count: toAdd.length, removed_count: toRemove.length })
     setManageSaving(false)
     setShowManageRoster(false)
     fetchAllOrgPlayers({ organizationId: currentOrgId })
