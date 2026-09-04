@@ -6,7 +6,7 @@ import {
   pkceCookie,
   sessionCookies,
 } from './cookies.js'
-import { isExpired } from './jwt.js'
+import { decodeJwtPayload, isExpired } from './jwt.js'
 
 // Server-side minimum password length. Mirrors the client's PASSWORD_MIN_LENGTH
 // so we enforce the same rule regardless of Supabase's dashboard setting
@@ -325,6 +325,13 @@ export async function handleAuthRequest(
       const { status, data } = await supabaseAuth(config, '/signup', { body: {} })
       if (status !== 200 || !data?.access_token) {
         return json({ error: authErrorMessage(data) }, 400)
+      }
+      const payload = decodeJwtPayload(data.access_token)
+      if (payload?.is_anonymous !== true) {
+        // Never hand back a non-anonymous session from the guest route. If GoTrue
+        // ever answers an empty-body signup with a real session, that session was
+        // not authenticated by this caller and must not be issued here.
+        return json({ error: 'anonymous sign-in is not available' }, 400)
       }
       return json(
         { user: { id: data.user?.id ?? null }, is_anonymous: true },
