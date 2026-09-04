@@ -336,7 +336,11 @@ export async function handleAuthRequest(
             // Never fatal: a failed invite must not block sign-in. But PostgREST
             // reports RPC errors as an HTTP error RESPONSE rather than a rejected
             // promise, so it has to be checked explicitly or it stays invisible.
-            console.error('accept_invite failed during session load', res.status, await res.text())
+            // Read defensively: if the body itself fails to read, that must not
+            // fall through to the network catch below and get logged as a
+            // request failure, which would misdescribe the incident.
+            const body = await res.text().catch(() => '<unreadable body>')
+            console.error('accept_invite failed during session load', res.status, body)
           }
         } catch (err) {
           // Network-level failure: also non-fatal, also must not be silent.
