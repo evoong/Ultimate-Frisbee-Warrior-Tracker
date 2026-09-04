@@ -25,6 +25,8 @@
     "@google/genai": "^2.10.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@posthog/mcp": "^0.13.0",
+    "@sentry/cloudflare": "^10.73.0",
+    "@sentry/node": "^10.73.0",
     "@supabase/server": "^1.2.0",
     "@supabase/ssr": "^0.12.0",
     "@supabase/supabase-js": "^2.108.2",

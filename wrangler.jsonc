@@ -37,6 +37,7 @@
     "SUPABASE_URL": "https://pyqngqyqwevfpaxcmfnd.supabase.co",
     "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_oUie8kxlAp6DD0UPMSG-ZQ_QBEWo3vT",
     "SUPABASE_JWKS_URL": "https://pyqngqyqwevfpaxcmfnd.supabase.co/auth/v1/.well-known/jwks.json",
-    "MCP_ORGANIZATION_ID": "1"
+    "MCP_ORGANIZATION_ID": "1",
+    "SENTRY_DSN_WORKER": "https://14eff8ecb4c205456e5faa058f4e76d9@o4512018450415616.ingest.us.sentry.io/4512023591124992"
   }
 }
