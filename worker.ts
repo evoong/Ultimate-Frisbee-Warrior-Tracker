@@ -1,5 +1,4 @@
 import { createGateway, createRequireAllowedUser } from './gateway/index.js'
-import { createMembershipLookup } from './gateway/membership.js'
 import { handleChatRequest, handleChatHistoryRequest, handleChatHistoryDeleteRequest, type ChatConfig } from './gateway/chat.js'
 import { runJamSync } from './gateway/jamSync.js'
 import { UfwtMcp } from './gateway/mcpAgent.js'
@@ -36,19 +35,6 @@ type DurableObjectNamespace = unknown;
 // as a dependency just for the scheduled() export's parameter types.
 type ScheduledEvent = { cron: string; scheduledTime: number };
 type ExecutionContext = { waitUntil: (promise: Promise<unknown>) => void };
-
-// Membership lookups for the routes that hold SUPABASE_SECRET_KEY and so
-// bypass RLS entirely. Until 2026-09 these returned `true` unconditionally
-// ("soft launch"), which let any signed-in caller read or write any team's
-// data by passing a different organization_id.
-function createIsOrgMember(env: Env) {
-  const lookup = createMembershipLookup({
-    supabaseUrl: env.SUPABASE_URL,
-    supabaseSecretKey: env.SUPABASE_SECRET_KEY,
-  })
-  return async (userId: string, organizationId: number): Promise<boolean> =>
-    (await lookup.roleFor(userId, organizationId)) !== null
-}
 
 function createIsEmailAllowed(env: Env) {
   return async (email: string): Promise<boolean> => {
@@ -100,7 +86,6 @@ async function handleAppRequest(request: Request, env: Env, ctx: ExecutionContex
           supabaseSecretKey: env.SUPABASE_SECRET_KEY,
           geminiApiKey: env.GEMINI_API_KEY,
           geminiModel: env.GEMINI_MODEL,
-          isOrgMember: createIsOrgMember(env),
         };
         if (url.pathname === "/api/chat" && request.method === "POST") {
           return handleChatRequest(chatConfig, request);
