@@ -779,8 +779,16 @@ export default function Strategy() {
       ...textIds.map(id => removeTextBox({ id })),
       ...arrowIds.map(id => removeArrow({ id })),
     ])
-    if (results.some(r => !r)) loadStepData(stepId)
-    else if (oppIds.length) await applyOpponentRenumber(remainingOpponents)
+    if (results.some(r => !r)) {
+      loadStepData(stepId)
+    } else {
+      if (oppIds.length) await applyOpponentRenumber(remainingOpponents)
+      track('play_selection_deleted', {
+        play_id: playIdParam, step_id: stepId,
+        player_count: playerIds.length, opponent_count: oppIds.length,
+        text_box_count: textIds.length, arrow_count: arrowIds.length,
+      })
+    }
   }
 
   // Live group move of a multi-selection. `start` captures the pre-move board
@@ -816,7 +824,17 @@ export default function Strategy() {
         ...oppMoves.map(mv => updateOpponent({ id: mv.id, x: mv.x, y: mv.y })),
         ...textMoves.map(mv => updateTextBox({ id: mv.id, x: mv.x, y: mv.y })),
         ...arrowMoves.map(mv => updateArrow({ id: mv.id, x1: mv.x1, y1: mv.y1, x2: mv.x2, y2: mv.y2, cx: mv.cx, cy: mv.cy, start_player_id: mv.start_player_id, start_opponent_id: mv.start_opponent_id })),
-      ]).then(results => { if (results.some(r => !r)) loadStepData(stepId) })
+      ]).then(results => {
+        if (results.some(r => !r)) {
+          loadStepData(stepId)
+        } else {
+          track('play_selection_moved', {
+            play_id: playIdParam, step_id: stepId,
+            player_count: playerMoves.length, opponent_count: oppMoves.length,
+            text_box_count: textMoves.length, arrow_count: arrowMoves.length,
+          })
+        }
+      })
     }
   }
 
@@ -825,6 +843,7 @@ export default function Strategy() {
     if (!name) return
     const play = await createPlay({ name, game_id: gameInput === NO_GAME ? null : parseInt(gameInput), organizationId: currentOrgId })
     if (play) {
+      track('play_created', { play_id: play.id, game_id: play.game_id })
       setShowCreate(false)
       setNameInput('')
       setGameInput(NO_GAME)
@@ -837,6 +856,7 @@ export default function Strategy() {
     const name = nameInput.trim()
     if (!name || selectedPlayId === null) return
     await updatePlay({ id: selectedPlayId, name })
+    track('play_renamed', { play_id: selectedPlayId })
     setShowRename(false)
     setNameInput('')
     fetchPlays({ organizationId: currentOrgId })
@@ -845,12 +865,14 @@ export default function Strategy() {
   const handleAssignGame = async (value: string) => {
     if (selectedPlayId === null) return
     await updatePlay({ id: selectedPlayId, game_id: value === NO_GAME ? null : parseInt(value) })
+    track('play_game_assigned', { play_id: selectedPlayId, game_id: value === NO_GAME ? null : parseInt(value) })
     fetchPlays({ organizationId: currentOrgId })
   }
 
   const handleDelete = async () => {
     if (selectedPlayId === null) return
     await deletePlay({ id: selectedPlayId })
+    track('play_deleted', { play_id: selectedPlayId })
     setDeleteConfirm(false)
     fetchPlays({ organizationId: currentOrgId })
   }
@@ -877,6 +899,7 @@ export default function Strategy() {
     } else {
       await createPlayer({ display_name: name, is_sub: true, organizationId: currentOrgId })
     }
+    track('player_created', { game_id: selectedPlay?.game_id ?? null, is_sub: true, source: 'strategy_add_sub' })
     await refreshPlayerLists()
   }
 
@@ -885,6 +908,7 @@ export default function Strategy() {
   const handleAddExistingPlayer = async (playerId: string) => {
     if (!selectedPlay?.game_id) return
     await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedPlay.game_id, seasonId: selectedGame?.season_id, organizationId: currentOrgId })
+    track('game_player_added', { player_id: parseInt(playerId), game_id: selectedPlay.game_id })
     await refreshPlayerLists()
   }
 
@@ -895,7 +919,11 @@ export default function Strategy() {
       // Seed the new step from the current one instead of starting empty: a
       // placed player or opponent keeps their position unless they have an
       // outgoing 'run' arrow anchored to them, in which case the arrow's
-      // head becomes their starting position here.
+      // head becomes their starting position here. These seed calls are an
+      // implementation detail of step creation, not user-initiated edits of
+      // those items, so they intentionally don't fire their own
+      // play_player_moved/opponent_marker_created/text_box_created events —
+      // only play_step_added below does.
       const seeds: Promise<unknown>[] = []
       for (const [playerId, pos] of positions.entries()) {
         const runArrow = arrows.find(a => a.arrow_type === 'run' && a.start_player_id === playerId)
@@ -913,6 +941,7 @@ export default function Strategy() {
         seeds.push(createTextBox({ stepId: step.id, text: box.text, x: box.x, y: box.y, organizationId: currentOrgId }))
       }
       await Promise.all(seeds)
+      track('play_step_added', { play_id: playIdParam, step_id: step.id })
       await fetchSteps({ playId: selectedPlayId })
       setSelectedStepId(step.id)
     }
@@ -921,7 +950,9 @@ export default function Strategy() {
   const handleDeleteStep = async () => {
     if (selectedStepId === null || stepList.length <= 1) return
     const deletedIndex = stepIndex
+    const deletedStepId = selectedStepId
     await removeStep({ stepId: selectedStepId })
+    track('play_step_deleted', { play_id: playIdParam, step_id: deletedStepId })
     const remaining = await fetchSteps({ playId: selectedPlayId! })
     if (remaining && remaining.length > 0) {
       setSelectedStepId(remaining[Math.max(0, deletedIndex - 1)]!.id)
