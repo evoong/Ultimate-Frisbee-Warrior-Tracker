@@ -14,6 +14,14 @@ select throws_ok(
 );
 
 -- 2. Self-insertion of a membership row.
+-- This is the RLS layer: for INSERT, a table with RLS enabled and no
+-- applicable policy raises an explicit violation on its own, so this
+-- assertion would stay green even if the INSERT grant revoke below were
+-- undone -- it does not detect that. The privilege-level guarantee (that
+-- authenticated has no INSERT grant on team_members at all) is asserted
+-- separately in 10_membership_lockdown.test.sql, which pins the exact
+-- "permission denied for table team_members" message and so is the one
+-- that actually fails if that revoke regresses.
 select throws_ok(
   $$ insert into public.team_members (team_id, user_id, role)
      values (2, (select auth.uid()), 'member') $$,
