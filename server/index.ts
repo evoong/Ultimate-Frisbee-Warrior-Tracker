@@ -11,6 +11,7 @@ import { nodeAdapter } from "../gateway/node-adapter.js";
 import { getVaultSecret } from "../gateway/secrets.js";
 import { runJamSync } from "../gateway/jamSync.js";
 import { CHAT_FUNCTION_DECLARATIONS, callChatFunction, type ActionsConfig } from "../gateway/gameActions.js";
+import { createMembershipLookup } from "../gateway/membership.js";
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
@@ -66,37 +67,50 @@ const supabase = createClient(
 // ── Auth guard for chat routes ───────────────────────────────────────────────
 // The chat endpoints below query Supabase with the SERVICE ROLE, which
 // bypasses RLS — so they must enforce auth themselves: JWKS-verified access
-// token from the httpOnly cookie + allowlist membership (cached 60s).
-
-const allowlistCache = new Map<string, { allowed: boolean; expires: number }>();
+// token from the httpOnly cookie + real membership lookups (cached 30s by
+// gateway/membership.ts, not by anything in this file).
+//
+// This is a module-scoped lookup, not a per-request one. Per Task 2's
+// gateway/membership.ts, the Worker builds a fresh lookup inside the
+// per-request handler because a Worker isolate is long-lived and a chat
+// turn is exactly one request there, so per-request scoping costs nothing
+// and avoids any cross-request staleness. This Express process has no such
+// per-request boundary — isOrgMember and isEmailAllowed are bare
+// module-level functions called directly by route handlers — so the cache
+// here is bounded by the number of distinct users rather than by request
+// volume, and staleness across requests is capped at the lookup's 30s TTL,
+// which the design's Global Constraint explicitly permits ("cached for at
+// most 30 seconds. A revoked role must take effect promptly").
+const membership = createMembershipLookup({
+  supabaseUrl: process.env.SUPABASE_URL || "",
+  supabaseSecretKey: process.env.SUPABASE_SECRET_KEY || "",
+});
 
 // "Allowed" means "belongs to at least one organization" (allowed_users
-// was fully replaced by organization_members in 016_organizations.sql).
-// Soft launch (app not released yet): always true, so any signed-in user
-// passes; requireAllowedUser still verifies the session cookie itself.
-// When isolation is wanted, restore the organization_members lookup:
-//   const cached = allowlistCache.get(email);
-//   if (cached && cached.expires > Date.now()) return cached.allowed;
-//   const { data, error } = await supabase.from("organization_members")
-//     .select("email").eq("email", email).limit(1).maybeSingle();
-//   const allowed = !error && data !== null;
-//   allowlistCache.set(email, { allowed, expires: Date.now() + 60_000 });
-//   return allowed;
-async function isEmailAllowed(_email: string): Promise<boolean> {
-  return true;
+// was fully replaced by organization_members, then team_members, per Plan
+// 1). PostgREST cannot express "team_members joined to auth.users by
+// email" as a single subquery, so resolve the user id first via the GoTrue
+// admin API, then check membership by id.
+async function isEmailAllowed(email: string): Promise<boolean> {
+  const userRes = await fetch(
+    `${process.env.SUPABASE_URL || ""}/auth/v1/admin/users?filter=${encodeURIComponent(email.toLowerCase())}`,
+    {
+      headers: {
+        apikey: process.env.SUPABASE_SECRET_KEY || "",
+        Authorization: `Bearer ${process.env.SUPABASE_SECRET_KEY || ""}`,
+      },
+    }
+  );
+  if (!userRes.ok) return false;
+  const found = (await userRes.json()) as { users?: { id: string; email?: string }[] };
+  const user = found.users?.find((u) => u.email?.toLowerCase() === email.toLowerCase());
+  if (!user) return false;
+  return (await membership.teamsFor(user.id)).length > 0;
 }
 
-// True only when the email is a member of this specific organization.
-// Soft launch (app not released yet): always true, so any signed-in user
-// may use chat against any organization, matching the any-authenticated
-// RLS in 017_open_access_for_now.sql. When isolation is wanted, restore
-// the organization_members lookup:
-//   const { data, error } = await supabase.from("organization_members")
-//     .select("email").eq("email", email)
-//     .eq("organization_id", organizationId).limit(1).maybeSingle();
-//   return !error && data !== null;
-async function isOrgMember(_email: string, _organizationId: number): Promise<boolean> {
-  return true;
+// True only when the user is a member of this specific organization/team.
+async function isOrgMember(userId: string, organizationId: number): Promise<boolean> {
+  return (await membership.roleFor(userId, organizationId)) !== null;
 }
 
 const requireAllowedUser = createRequireAllowedUser(gatewayConfig, isEmailAllowed);
@@ -386,7 +400,7 @@ app.post("/api/chat", async (req, res) => {
       headers: { cookie: req.headers.cookie ?? "" },
     });
     const user = await requireAllowedUser(webRequest);
-    if (!user || !(await isOrgMember(user.email.toLowerCase(), organization_id))) {
+    if (!user || !(await isOrgMember(user.sub, Number(organization_id)))) {
       return res.status(401).json({ error: "not authenticated" });
     }
 
@@ -467,7 +481,7 @@ app.get("/api/chat/history", async (req, res) => {
       headers: { cookie: req.headers.cookie ?? "" },
     });
     const user = await requireAllowedUser(webRequest);
-    if (!user || !(await isOrgMember(user.email.toLowerCase(), Number(organization_id)))) {
+    if (!user || !(await isOrgMember(user.sub, Number(organization_id)))) {
       return res.status(401).json({ error: "not authenticated" });
     }
 
@@ -495,7 +509,7 @@ app.delete("/api/chat/history", async (req, res) => {
       headers: { cookie: req.headers.cookie ?? "" },
     });
     const user = await requireAllowedUser(webRequest);
-    if (!user || !(await isOrgMember(user.email.toLowerCase(), Number(organization_id)))) {
+    if (!user || !(await isOrgMember(user.sub, Number(organization_id)))) {
       return res.status(401).json({ error: "not authenticated" });
     }
 

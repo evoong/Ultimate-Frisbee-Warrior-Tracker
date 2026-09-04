@@ -33,14 +33,23 @@ export interface MembershipLookup {
 // should not re-query per function call.
 const TTL_MS = 30_000
 
-// Call this once per request, never hoist it to module scope. The cache
-// below is intentionally scoped to the returned MembershipLookup instance,
-// not shared globally: worker.ts constructs one of these inside the
-// per-request handler that builds chatConfig, so a chat turn (one request)
-// gets its own cache -- no cross-request staleness beyond that single
-// turn, and no unbounded Map growth across the life of a long-lived
-// Worker isolate as distinct users pass through it. Do not "fix" this by
-// hoisting to a shared/module-level lookup.
+// In the Worker, call this once per request, never hoist it to module
+// scope. The cache below is intentionally scoped to the returned
+// MembershipLookup instance, not shared globally: worker.ts constructs one
+// of these inside the per-request handler that builds chatConfig, so a
+// chat turn (one request) gets its own cache -- no cross-request
+// staleness beyond that single turn, and no unbounded Map growth across
+// the life of a long-lived Worker isolate as distinct users pass through
+// it. Do not "fix" this by hoisting to a shared/module-level lookup there.
+//
+// server/index.ts is a deliberate exception to that rule, not a violation
+// of it: Express has no per-isolate/per-request boundary to exploit the
+// way the Worker does, isOrgMember/isEmailAllowed there are bare
+// module-level functions, and a module-scoped lookup bounds the cache by
+// distinct users rather than by request volume. The resulting
+// cross-request staleness is capped by the TTL below, which the plan's
+// Global Constraint explicitly permits ("cached for at most 30 seconds. A
+// revoked role must take effect promptly").
 export function createMembershipLookup(config: MembershipConfig): MembershipLookup {
   const cache = new Map<string, { at: number; rows: TeamRoleRow[] }>()
 

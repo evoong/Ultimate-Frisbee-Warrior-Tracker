@@ -1,4 +1,5 @@
 import { createGateway, createRequireAllowedUser } from './gateway/index.js'
+import { createMembershipLookup } from './gateway/membership.js'
 import { handleChatRequest, handleChatHistoryRequest, handleChatHistoryDeleteRequest, type ChatConfig } from './gateway/chat.js'
 import { runJamSync } from './gateway/jamSync.js'
 import { UfwtMcp } from './gateway/mcpAgent.js'
@@ -36,20 +37,39 @@ type DurableObjectNamespace = unknown;
 type ScheduledEvent = { cron: string; scheduledTime: number };
 type ExecutionContext = { waitUntil: (promise: Promise<unknown>) => void };
 
-// "Allowed" means "belongs to at least one organization" (allowed_users was
-// fully replaced by organization_members in 016_organizations.sql).
-// Soft launch (app not released yet): always true, so any signed-in user
-// passes; the session cookie itself is still verified by the callers. When
-// isolation is wanted, restore the organization_members lookups (see
-// server/index.ts's isEmailAllowed/isOrgMember for the same pattern):
-//   /rest/v1/organization_members?select=email&email=eq.<email>&limit=1
-//   /rest/v1/organization_members?...&organization_id=eq.<id>&limit=1
-function createIsEmailAllowed(_env: Env) {
-  return async (_email: string): Promise<boolean> => true
+// Membership lookups for the routes that hold SUPABASE_SECRET_KEY and so
+// bypass RLS entirely. Until 2026-09 these returned `true` unconditionally
+// ("soft launch"), which let any signed-in caller read or write any team's
+// data by passing a different organization_id.
+function createIsOrgMember(env: Env) {
+  const lookup = createMembershipLookup({
+    supabaseUrl: env.SUPABASE_URL,
+    supabaseSecretKey: env.SUPABASE_SECRET_KEY,
+  })
+  return async (userId: string, organizationId: number): Promise<boolean> =>
+    (await lookup.roleFor(userId, organizationId)) !== null
 }
 
-function createIsOrgMember(_env: Env) {
-  return async (_email: string, _organizationId: number): Promise<boolean> => true
+function createIsEmailAllowed(env: Env) {
+  return async (email: string): Promise<boolean> => {
+    // PostgREST cannot express "team_members joined to auth.users by email"
+    // as a single subquery, so resolve the user id first via the GoTrue
+    // admin API, then check membership by id.
+    const userRes = await fetch(
+      `${env.SUPABASE_URL}/auth/v1/admin/users?filter=${encodeURIComponent(email.toLowerCase())}`,
+      { headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: `Bearer ${env.SUPABASE_SECRET_KEY}` } }
+    )
+    if (!userRes.ok) return false
+    const found = (await userRes.json()) as { users?: { id: string; email?: string }[] }
+    const user = found.users?.find(u => u.email?.toLowerCase() === email.toLowerCase())
+    if (!user) return false
+    const res = await fetch(
+      `${env.SUPABASE_URL}/rest/v1/team_members?select=id&limit=1&user_id=eq.${user.id}`,
+      { headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: `Bearer ${env.SUPABASE_SECRET_KEY}` } }
+    )
+    if (!res.ok) return false
+    return ((await res.json()) as unknown[]).length > 0
+  }
 }
 
 // Everything the app serves besides /mcp, /authorize, /token, and /register
