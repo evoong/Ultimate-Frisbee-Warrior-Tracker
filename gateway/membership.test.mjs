@@ -112,6 +112,26 @@ const failClosedRole = await brokenLookup.roleFor(captainId, 1)
 check('fail-closed: bad secret key -> roleFor returns null rather than throwing or allowing',
   failClosedRole === null)
 
+// --- fail-closed: connection-level unavailability, not just HTTP-level ---
+//
+// A bad key still reaches Supabase and gets a real HTTP response (401).
+// This is the other failure mode: the request never connects at all
+// (refused connection here; the same code path also covers DNS failure and
+// timeouts). If load() only checked res.ok and did not also catch a
+// thrown fetch, this section fails: teamsFor/roleFor would reject instead
+// of resolving to [] / null, defeating the "must not throw" half of
+// fail-closed.
+const unreachableLookup = createMembershipLookup({
+  supabaseUrl: 'http://127.0.0.1:59999',
+  supabaseSecretKey,
+})
+const unreachableTeams = await unreachableLookup.teamsFor(captainId)
+check('fail-closed: unreachable host -> teamsFor resolves to [] rather than rejecting',
+  Array.isArray(unreachableTeams) && unreachableTeams.length === 0)
+const unreachableRole = await unreachableLookup.roleFor(captainId, 1)
+check('fail-closed: unreachable host -> roleFor resolves to null rather than rejecting',
+  unreachableRole === null)
+
 // --- no memberships at all ---
 
 const anonId = '99999999-9999-9999-9999-999999999999'

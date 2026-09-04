@@ -51,22 +51,29 @@ export function createMembershipLookup(config: MembershipConfig): MembershipLook
     const url =
       `${config.supabaseUrl}/rest/v1/team_members` +
       `?select=team_id,role&user_id=eq.${encodeURIComponent(userId)}`
-    const res = await fetch(url, {
-      headers: {
-        apikey: config.supabaseSecretKey,
-        Authorization: `Bearer ${config.supabaseSecretKey}`,
-      },
-    })
-    if (!res.ok) {
-      // Fail closed. An unavailable lookup must not read as "allowed".
-      // Deliberately NOT cached: a transient outage must not lock a user
-      // out for the remainder of the TTL once the backend recovers.
+    // Fail closed. An unavailable lookup must not read as "allowed",
+    // whether "unavailable" means the request reached Supabase and got
+    // rejected (res.ok false below) or never reached it at all (fetch
+    // itself throwing -- refused connection, DNS failure, timeout, or a
+    // non-JSON body that fails to parse). Both modes resolve to no
+    // memberships and therefore to a denial. Deliberately NOT cached
+    // either way: a transient outage must not lock a user out for the
+    // remainder of the TTL once the backend recovers.
+    try {
+      const res = await fetch(url, {
+        headers: {
+          apikey: config.supabaseSecretKey,
+          Authorization: `Bearer ${config.supabaseSecretKey}`,
+        },
+      })
+      if (!res.ok) return []
+      const rows = (await res.json()) as TeamRoleRow[]
+      const safe = Array.isArray(rows) ? rows : []
+      cache.set(userId, { at: Date.now(), rows: safe })
+      return safe
+    } catch {
       return []
     }
-    const rows = (await res.json()) as TeamRoleRow[]
-    const safe = Array.isArray(rows) ? rows : []
-    cache.set(userId, { at: Date.now(), rows: safe })
-    return safe
   }
 
   return {
