@@ -41,6 +41,10 @@ if (!ORG_ID_RAW) {
   process.exit(1)
 }
 const ORG_ID = Number(ORG_ID_RAW)
+if (!Number.isInteger(ORG_ID) || ORG_ID < 1) {
+  console.error(`MCP_ORGANIZATION_ID must be a positive integer, got ${JSON.stringify(ORG_ID_RAW)}`)
+  process.exit(1)
+}
 
 // Matches Schedule.tsx's IMMINENT_WINDOW_MS: a game starting within 30
 // minutes (either direction) is the one you're about to score or already are.

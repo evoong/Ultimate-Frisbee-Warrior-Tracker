@@ -45,7 +45,11 @@ export class UfwtMcp extends McpAgent<Env, {}, McpAuthProps> {
     const users = await fetch(
       `${this.env.SUPABASE_URL}/auth/v1/admin/users?filter=${encodeURIComponent(email)}`,
       { headers: { apikey: this.env.SUPABASE_SECRET_KEY, Authorization: `Bearer ${this.env.SUPABASE_SECRET_KEY}` } }
-    ).then(r => (r.ok ? r.json() : { users: [] })) as { users?: { id: string; email?: string }[] }
+    )
+      // Denials below all surface as `MCP: ...`; a transient Auth outage should
+      // read the same way rather than escaping as a raw network rejection.
+      .then(r => (r.ok ? r.json() : { users: [] }))
+      .catch(() => ({ users: [] })) as { users?: { id: string; email?: string }[] }
 
     const userId = users.users?.find(u => u.email?.toLowerCase() === email)?.id
     if (!userId) throw new Error(`MCP: no account for ${email}`)
