@@ -317,19 +317,32 @@ export async function handleAuthRequest(
       // it means an invited teammate simply signs in and is on the team, with no
       // accept-link to lose. accept_invite() itself enforces the confirmed-email
       // requirement -- the gateway does not second-guess it.
-      await fetch(`${config.supabaseUrl}/rest/v1/rpc/accept_invite`, {
-        method: 'POST',
-        headers: {
-          apikey: config.publishableKey,
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: '{}',
-      }).catch((err) => {
-        // Never fatal: a failed invite must not block sign-in. But it must not be
-        // invisible either.
-        console.error('accept_invite failed during session load', err)
-      })
+      //
+      // Guests can never hold an invite: accept_invite() rejects anonymous
+      // callers outright, so skip the round-trip rather than provoke a
+      // guaranteed exception on the highest-volume session path.
+      if (data.is_anonymous !== true) {
+        try {
+          const res = await fetch(`${config.supabaseUrl}/rest/v1/rpc/accept_invite`, {
+            method: 'POST',
+            headers: {
+              apikey: config.publishableKey,
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: '{}',
+          })
+          if (!res.ok) {
+            // Never fatal: a failed invite must not block sign-in. But PostgREST
+            // reports RPC errors as an HTTP error RESPONSE rather than a rejected
+            // promise, so it has to be checked explicitly or it stays invisible.
+            console.error('accept_invite failed during session load', res.status, await res.text())
+          }
+        } catch (err) {
+          // Network-level failure: also non-fatal, also must not be silent.
+          console.error('accept_invite request failed during session load', err)
+        }
+      }
       const teams = await getTeams(config, accessToken)
       return json(
         {
