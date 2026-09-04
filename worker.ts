@@ -1,4 +1,7 @@
-import { createGateway, createRequireAllowedUser } from './gateway/index.js'
+import { createGateway } from './gateway/index.js'
+import { parseCookies, cookieNames } from './gateway/cookies.js'
+import { verifyAccessToken } from './gateway/jwt.js'
+import { createMembershipLookup } from './gateway/membership.js'
 import { handleChatRequest, handleChatHistoryRequest, handleChatHistoryDeleteRequest, type ChatConfig } from './gateway/chat.js'
 import { runJamSync } from './gateway/jamSync.js'
 import { UfwtMcp } from './gateway/mcpAgent.js'
@@ -35,28 +38,6 @@ type DurableObjectNamespace = unknown;
 // as a dependency just for the scheduled() export's parameter types.
 type ScheduledEvent = { cron: string; scheduledTime: number };
 type ExecutionContext = { waitUntil: (promise: Promise<unknown>) => void };
-
-function createIsEmailAllowed(env: Env) {
-  return async (email: string): Promise<boolean> => {
-    // PostgREST cannot express "team_members joined to auth.users by email"
-    // as a single subquery, so resolve the user id first via the GoTrue
-    // admin API, then check membership by id.
-    const userRes = await fetch(
-      `${env.SUPABASE_URL}/auth/v1/admin/users?filter=${encodeURIComponent(email.toLowerCase())}`,
-      { headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: `Bearer ${env.SUPABASE_SECRET_KEY}` } }
-    )
-    if (!userRes.ok) return false
-    const found = (await userRes.json()) as { users?: { id: string; email?: string }[] }
-    const user = found.users?.find(u => u.email?.toLowerCase() === email.toLowerCase())
-    if (!user) return false
-    const res = await fetch(
-      `${env.SUPABASE_URL}/rest/v1/team_members?select=id&limit=1&user_id=eq.${user.id}`,
-      { headers: { apikey: env.SUPABASE_SECRET_KEY, Authorization: `Bearer ${env.SUPABASE_SECRET_KEY}` } }
-    )
-    if (!res.ok) return false
-    return ((await res.json()) as unknown[]).length > 0
-  }
-}
 
 // Everything the app serves besides /mcp, /authorize, /token, and /register
 // (all four owned by the OAuthProvider wrapping this — see the default
@@ -101,18 +82,32 @@ async function handleAppRequest(request: Request, env: Env, ctx: ExecutionContex
       // Manual "sync now" trigger for the JAM calendar importer (also runs
       // automatically once a day at 6am Eastern via the scheduled() export below).
       if (url.pathname === "/api/schedule/sync-jam" && request.method === "POST") {
-        const gatewayConfig = {
+        // The sync runs under the service-role key, so its authority comes
+        // from the caller's memberships and nothing else: it syncs the teams
+        // this user belongs to, never every team that has a calendar source.
+        const token = parseCookies(request)[cookieNames(url).accessToken];
+        const claims = token
+          ? await verifyAccessToken(token, env.SUPABASE_JWKS_URL, env.SUPABASE_URL)
+          : null;
+        if (!claims || claims.isAnonymous) {
+          return new Response(JSON.stringify({ error: "not authenticated" }), { status: 401, headers: { "Content-Type": "application/json" } });
+        }
+        const lookup = createMembershipLookup({
           supabaseUrl: env.SUPABASE_URL,
-          publishableKey: env.SUPABASE_PUBLISHABLE_KEY,
-          jwksUrl: env.SUPABASE_JWKS_URL,
-        };
-        const user = await createRequireAllowedUser(gatewayConfig, createIsEmailAllowed(env))(request);
-        if (!user) return new Response(JSON.stringify({ error: "not authenticated" }), { status: 401, headers: { "Content-Type": "application/json" } });
+          supabaseSecretKey: env.SUPABASE_SECRET_KEY,
+        });
+        const teams = await lookup.teamsFor(claims.sub);
+        if (teams.length === 0) {
+          return new Response(JSON.stringify({ error: "not a member of any team" }), { status: 403, headers: { "Content-Type": "application/json" } });
+        }
         try {
-          const result = await runJamSync({
-            supabaseUrl: env.SUPABASE_URL,
-            supabaseSecretKey: env.SUPABASE_SECRET_KEY,
-          });
+          const result = await runJamSync(
+            {
+              supabaseUrl: env.SUPABASE_URL,
+              supabaseSecretKey: env.SUPABASE_SECRET_KEY,
+            },
+            { teamIds: teams.map(t => t.team_id) }
+          );
           return new Response(JSON.stringify(result), { status: 200, headers: { "Content-Type": "application/json" } });
         } catch (err) {
           return new Response(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }), { status: 500, headers: { "Content-Type": "application/json" } });
@@ -181,6 +176,9 @@ export default {
 
   // Daily JAM Sports calendar sync at 6am Eastern (see wrangler.jsonc's triggers.crons).
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    // No teamIds: the nightly job legitimately syncs every team that has
+    // configured a calendar source. There is no caller here whose memberships
+    // could scope it, so leave this unfiltered.
     ctx.waitUntil(
       runJamSync({
         supabaseUrl: env.SUPABASE_URL,
