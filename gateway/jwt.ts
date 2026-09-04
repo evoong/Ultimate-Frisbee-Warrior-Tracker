@@ -25,6 +25,35 @@ export function isExpired(token: string, skewSeconds = 30): boolean {
 
 const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>()
 
+export interface SessionClaims {
+  sub: string
+  /** Null for anonymous (guest) sessions, which carry no usable email claim. */
+  email: string | null
+  isAnonymous: boolean
+}
+
+// Maps a verified JWT payload to SessionClaims. Pulled out of
+// verifyAccessToken so it can be unit tested against realistic payload
+// shapes without needing a signed token.
+//
+// A signed-in session and an anonymous (guest) session both carry
+// role: "authenticated" and aud: "authenticated" — is_anonymous is the only
+// discriminator between them, so there is no fallback to fall back on.
+//
+// Supabase anonymous sessions carry email as "" (empty string), not absent,
+// so `typeof payload.email === 'string'` alone is not enough to detect a
+// guest — it would report email: "" instead of null. Empty and
+// whitespace-only strings are normalized to null.
+export function mapVerifiedClaims(payload: Record<string, unknown>): SessionClaims | null {
+  if (typeof payload.sub !== 'string') return null
+  const isAnonymous = payload.is_anonymous === true
+  const raw = typeof payload.email === 'string' ? payload.email.trim() : ''
+  const email = raw === '' ? null : raw
+  // A non-anonymous session without an email is malformed, not a guest.
+  if (!isAnonymous && !email) return null
+  return { sub: payload.sub, email, isAnonymous }
+}
+
 // Cryptographic verification against the project's JWKS. Used where the
 // gateway itself is the authorization boundary (e.g. the Express chat routes,
 // which query Supabase with the service role and therefore bypass RLS).
@@ -32,7 +61,7 @@ export async function verifyAccessToken(
   token: string,
   jwksUrl: string,
   supabaseUrl: string
-): Promise<{ sub: string; email: string } | null> {
+): Promise<SessionClaims | null> {
   let jwks = jwksCache.get(jwksUrl)
   if (!jwks) {
     jwks = createRemoteJWKSet(new URL(jwksUrl))
@@ -42,8 +71,7 @@ export async function verifyAccessToken(
     const { payload } = await jwtVerify(token, jwks, {
       issuer: `${supabaseUrl}/auth/v1`,
     })
-    if (typeof payload.sub !== 'string' || typeof payload.email !== 'string') return null
-    return { sub: payload.sub, email: payload.email }
+    return mapVerifiedClaims(payload)
   } catch {
     return null
   }

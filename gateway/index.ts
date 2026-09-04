@@ -45,8 +45,10 @@ export function createRequireAllowedUser(
     const token = parseCookies(request)[cookieNames(url).accessToken]
     if (!token) return null
     const claims = await verifyAccessToken(token, config.jwksUrl, config.supabaseUrl)
-    if (!claims) return null
+    // Guests hold no email and are never "allowed users" — this helper
+    // exists only for routes that write with privileged credentials.
+    if (!claims || claims.isAnonymous || !claims.email) return null
     if (!(await isEmailAllowed(claims.email.toLowerCase()))) return null
-    return claims
+    return { sub: claims.sub, email: claims.email }
   }
 }
