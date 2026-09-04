@@ -6,12 +6,14 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
-import { createGateway, createRequireAllowedUser } from "../gateway/index.js";
+import { createGateway } from "../gateway/index.js";
 import { nodeAdapter } from "../gateway/node-adapter.js";
 import { getVaultSecret } from "../gateway/secrets.js";
 import { runJamSync } from "../gateway/jamSync.js";
 import { CHAT_FUNCTION_DECLARATIONS, callChatFunction, type ActionsConfig } from "../gateway/gameActions.js";
 import { createMembershipLookup } from "../gateway/membership.js";
+import { parseCookies, cookieNames } from "../gateway/cookies.js";
+import { verifyAccessToken } from "../gateway/jwt.js";
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
@@ -75,8 +77,8 @@ const supabase = createClient(
 // per-request handler because a Worker isolate is long-lived and a chat
 // turn is exactly one request there, so per-request scoping costs nothing
 // and avoids any cross-request staleness. This Express process has no such
-// per-request boundary — isOrgMember and isEmailAllowed are bare
-// module-level functions called directly by route handlers — so the cache
+// per-request boundary — isOrgMember is a bare module-level function
+// called directly by route handlers — so the cache
 // here is bounded by the number of distinct users rather than by request
 // volume, and staleness across requests is capped at the lookup's 30s TTL,
 // which the design's Global Constraint explicitly permits ("cached for at
@@ -91,44 +93,34 @@ const membership = createMembershipLookup({
 // 1). PostgREST cannot express "team_members joined to auth.users by
 // email" as a single subquery, so resolve the user id first via the GoTrue
 // admin API, then check membership by id.
-async function isEmailAllowed(email: string): Promise<boolean> {
-  const userRes = await fetch(
-    `${process.env.SUPABASE_URL || ""}/auth/v1/admin/users?filter=${encodeURIComponent(email.toLowerCase())}`,
-    {
-      headers: {
-        apikey: process.env.SUPABASE_SECRET_KEY || "",
-        Authorization: `Bearer ${process.env.SUPABASE_SECRET_KEY || ""}`,
-      },
-    }
-  );
-  if (!userRes.ok) return false;
-  const found = (await userRes.json()) as { users?: { id: string; email?: string }[] };
-  const user = found.users?.find((u) => u.email?.toLowerCase() === email.toLowerCase());
-  if (!user) return false;
-  return (await membership.teamsFor(user.id)).length > 0;
-}
 
 // True only when the user is a member of this specific organization/team.
 async function isOrgMember(userId: string, organizationId: number): Promise<boolean> {
   return (await membership.roleFor(userId, organizationId)) !== null;
 }
 
-const requireAllowedUser = createRequireAllowedUser(gatewayConfig, isEmailAllowed);
+// Mirrors the Worker's requireTeamMember (gateway/chat.ts): 401 means
+// "authenticate", 403 means "authenticated, but not on this team". A guest
+// holds a real, verified anonymous JWT, so it is the second case.
+// The gateway's createRequireAllowedUser cannot express that distinction: it
+// collapses no token, invalid token, anonymous, and not-allowed all into null.
+// So the chat routes classify the caller themselves.
+type ChatCaller = { ok: true; sub: string } | { ok: false; status: 401 | 403; error: string }
 
-async function requireAuth(req: ExpressRequest, res: ExpressResponse, next: NextFunction) {
-  try {
-    const proto = req.protocol;
-    const host = req.get("host") ?? "localhost";
-    const webRequest = new Request(`${proto}://${host}${req.originalUrl}`, {
-      headers: { cookie: req.headers.cookie ?? "" },
-    });
-    const user = await requireAllowedUser(webRequest);
-    if (!user) return res.status(401).json({ error: "not authenticated" });
-    next();
-  } catch (err) {
-    next(err);
+async function classifyChatCaller(webRequest: Request, organizationId: number): Promise<ChatCaller> {
+  const url = new URL(webRequest.url)
+  const token = parseCookies(webRequest)[cookieNames(url).accessToken]
+  if (!token) return { ok: false, status: 401, error: "not authenticated" }
+  const claims = await verifyAccessToken(token, gatewayConfig.jwksUrl, gatewayConfig.supabaseUrl)
+  if (!claims) return { ok: false, status: 401, error: "not authenticated" }
+  if (claims.isAnonymous) return { ok: false, status: 403, error: "not a member of this team" }
+  if (!(await isOrgMember(claims.sub, organizationId))) {
+    return { ok: false, status: 403, error: "not a member of this team" }
   }
+  return { ok: true, sub: claims.sub }
 }
+
+
 
 // ── AI Chat ───────────────────────────────────────────────────────────────────
 
@@ -399,11 +391,8 @@ app.post("/api/chat", async (req, res) => {
     const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
       headers: { cookie: req.headers.cookie ?? "" },
     });
-    const user = await requireAllowedUser(webRequest);
-    if (!user) return res.status(401).json({ error: "not authenticated" });
-    if (!(await isOrgMember(user.sub, Number(organization_id)))) {
-      return res.status(403).json({ error: "not a member of this team" });
-    }
+    const caller = await classifyChatCaller(webRequest, Number(organization_id));
+    if (!caller.ok) return res.status(caller.status).json({ error: caller.error });
 
     const systemContext = await getTeamContext(organization_id);
 
@@ -481,11 +470,8 @@ app.get("/api/chat/history", async (req, res) => {
     const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
       headers: { cookie: req.headers.cookie ?? "" },
     });
-    const user = await requireAllowedUser(webRequest);
-    if (!user) return res.status(401).json({ error: "not authenticated" });
-    if (!(await isOrgMember(user.sub, Number(organization_id)))) {
-      return res.status(403).json({ error: "not a member of this team" });
-    }
+    const caller = await classifyChatCaller(webRequest, Number(organization_id));
+    if (!caller.ok) return res.status(caller.status).json({ error: caller.error });
 
     const { data, error } = await supabase
       .from("chat_logs")
@@ -510,11 +496,8 @@ app.delete("/api/chat/history", async (req, res) => {
     const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
       headers: { cookie: req.headers.cookie ?? "" },
     });
-    const user = await requireAllowedUser(webRequest);
-    if (!user) return res.status(401).json({ error: "not authenticated" });
-    if (!(await isOrgMember(user.sub, Number(organization_id)))) {
-      return res.status(403).json({ error: "not a member of this team" });
-    }
+    const caller = await classifyChatCaller(webRequest, Number(organization_id));
+    if (!caller.ok) return res.status(caller.status).json({ error: caller.error });
 
     const { error } = await supabase.from("chat_logs").delete().eq("session_id", session_id).eq("organization_id", organization_id);
     if (error) throw error;
@@ -543,9 +526,32 @@ function jamSyncConfig() {
   };
 }
 
-app.post("/api/schedule/sync-jam", requireAuth, async (_req, res) => {
+// Scoped to the caller's own teams, matching worker.ts's copy of this route.
+// The sync runs under the service-role key, so its authority comes from the
+// caller's memberships and nothing else. This route previously asserted only
+// "is a member of some team", which let any member trigger a sync across every
+// team and read back per-source counts and errors naming other teams'
+// organizers.
+app.post("/api/schedule/sync-jam", async (req, res) => {
   try {
-    const result = await runJamSync(jamSyncConfig());
+    const proto = req.protocol;
+    const host = req.get("host") ?? "localhost";
+    const webRequest = new Request(`${proto}://${host}${req.originalUrl}`, {
+      headers: { cookie: req.headers.cookie ?? "" },
+    });
+    const url = new URL(webRequest.url);
+    const token = parseCookies(webRequest)[cookieNames(url).accessToken];
+    const claims = token
+      ? await verifyAccessToken(token, gatewayConfig.jwksUrl, gatewayConfig.supabaseUrl)
+      : null;
+    if (!claims || claims.isAnonymous) {
+      return res.status(401).json({ error: "not authenticated" });
+    }
+    const teams = await membership.teamsFor(claims.sub);
+    if (teams.length === 0) {
+      return res.status(403).json({ error: "not a member of any team" });
+    }
+    const result = await runJamSync(jamSyncConfig(), { teamIds: teams.map(t => t.team_id) });
     res.json(result);
   } catch (err: unknown) {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
