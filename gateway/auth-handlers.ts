@@ -317,6 +317,22 @@ export async function handleAuthRequest(
       return json({ user: { id: data.id, email: data.email }, organizations }, 200, setCookies)
     }
 
+    case 'POST /auth/guest': {
+      // Supabase anonymous sign-in. The resulting JWT carries
+      // is_anonymous: true, which is what every guest check keys on. Flows
+      // through the identical cookie plumbing as a real login, so nothing
+      // downstream needs a second session concept.
+      const { status, data } = await supabaseAuth(config, '/signup', { body: {} })
+      if (status !== 200 || !data?.access_token) {
+        return json({ error: authErrorMessage(data) }, 400)
+      }
+      return json(
+        { user: { id: data.user?.id ?? null }, is_anonymous: true },
+        200,
+        sessionCookies(url, data)
+      )
+    }
+
     case 'POST /auth/passkeys/registration/options': {
       return authenticatedPasskeyProxy(config, request, url, '/passkeys/registration/options', {
         body: {},
