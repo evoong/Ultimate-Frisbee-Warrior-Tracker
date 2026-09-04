@@ -19,7 +19,8 @@
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset && npm run db:seed:users",
     "db:seed:users": "node --env-file=.env.local scripts/seed-local-users.mjs && docker exec -i $(docker ps -qf name=supabase_db) psql -U postgres -d postgres < scripts/seed-local-memberships.sql",
-    "db:test": "supabase test db"
+    "db:test": "supabase test db",
+    "db:signing-key": "node scripts/gen-local-signing-key.mjs"
   },
   "retool": {
     "app": {

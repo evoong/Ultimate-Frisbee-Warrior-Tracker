@@ -11,6 +11,13 @@
    to load the baseline plus seed data and test identities. `npm run db:test`
    runs the pgTAP permission suite. Copy `.env.local.example` to `.env.local`
    and fill in the keys printed by `supabase status`.
+6. Local JWT signing key: `npm run db:signing-key`, then restart the stack
+   (`npm run db:stop && npm run db:start`). Without it the local stack signs
+   HS256 and serves an **empty** JWKS (`{"keys":[]}`), so `verifyAccessToken`
+   in `gateway/jwt.ts` cannot verify any locally minted token and every
+   gateway-authenticated request fails locally for a reason that looks like a
+   code bug. `supabase/config.toml` points at `./signing_keys.json`, which is
+   gitignored because it is a private key -- generate your own per clone.
 
 ## Gotchas
 - Windows: `node node_modules/.bin/tsx <file>` fails with a syntax error — `.bin/tsx` is a POSIX shell shim, not a Node script. Use `node node_modules/tsx/dist/cli.mjs <file>` (or `npx tsx <file>`) instead. `.claude/launch.json`'s "Express API Server" config already uses the fixed form, but `package.json`'s own `server`/`dev` npm scripts still use the broken one and will fail the same way if run directly.
