@@ -40,6 +40,23 @@ export interface JamSyncResult {
   errors: string[]
 }
 
+// Sentry Cron Monitor config for runJamSync's two automated call sites
+// (server/index.ts's GET /api/cron/sync-jam, worker.ts's scheduled()).
+// Kept here, once, as plain data — no Sentry import in this file, so this
+// module stays portable across both runtimes per the note above — so the
+// schedule can't drift out of sync between the two call sites or with the
+// matching crontab entries in vercel.json's "crons" and wrangler.jsonc's
+// "triggers.crons". Both call sites use the same monitor slug: a check-in
+// from either platform counts as "the job ran today," and Sentry only
+// flags it if neither one fires.
+export const JAM_SYNC_MONITOR_SLUG = "jam-sync"
+export const JAM_SYNC_MONITOR_CONFIG = {
+  schedule: { type: "crontab" as const, value: "0 10 * * *" },
+  checkinMargin: 10,
+  maxRuntime: 10,
+  timezone: "UTC",
+}
+
 interface CalendarSource {
   organizer: string
   calendar_url: string

@@ -1,6 +1,6 @@
 import { createGateway, createRequireAllowedUser } from './gateway/index.js'
 import { handleChatRequest, handleChatHistoryRequest, handleChatHistoryDeleteRequest, type ChatConfig } from './gateway/chat.js'
-import { runJamSync } from './gateway/jamSync.js'
+import { runJamSync, JAM_SYNC_MONITOR_SLUG, JAM_SYNC_MONITOR_CONFIG } from './gateway/jamSync.js'
 import { UfwtMcp } from './gateway/mcpAgent.js'
 import { createUfwtOAuthProvider } from './gateway/mcpOAuth.js'
 import type { OAuthHelpers } from '@cloudflare/workers-oauth-provider'
@@ -183,10 +183,14 @@ export default Sentry.withSentry(
     // Daily JAM Sports calendar sync at 6am Eastern (see wrangler.jsonc's triggers.crons).
     async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
       ctx.waitUntil(
-        runJamSync({
-          supabaseUrl: env.SUPABASE_URL,
-          supabaseSecretKey: env.SUPABASE_SECRET_KEY,
-        })
+        Sentry.withMonitor(
+          JAM_SYNC_MONITOR_SLUG,
+          () => runJamSync({
+            supabaseUrl: env.SUPABASE_URL,
+            supabaseSecretKey: env.SUPABASE_SECRET_KEY,
+          }),
+          JAM_SYNC_MONITOR_CONFIG
+        )
           .then(result => console.log("JAM sync:", JSON.stringify(result)))
           .catch(err => {
             Sentry.captureException(err);

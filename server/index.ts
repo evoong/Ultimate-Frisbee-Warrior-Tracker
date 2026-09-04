@@ -10,7 +10,7 @@ import { GoogleGenAI } from "@google/genai";
 import { createGateway, createRequireAllowedUser } from "../gateway/index.js";
 import { nodeAdapter } from "../gateway/node-adapter.js";
 import { getVaultSecret } from "../gateway/secrets.js";
-import { runJamSync } from "../gateway/jamSync.js";
+import { runJamSync, JAM_SYNC_MONITOR_SLUG, JAM_SYNC_MONITOR_CONFIG } from "../gateway/jamSync.js";
 import { CHAT_FUNCTION_DECLARATIONS, callChatFunction, type ActionsConfig } from "../gateway/gameActions.js";
 import { track, trackError, shutdown } from "./lib/posthog.js";
 
@@ -573,7 +573,11 @@ app.get("/api/cron/sync-jam", async (req, res) => {
     return res.status(401).json({ error: "not authenticated" });
   }
   try {
-    const result = await runJamSync(jamSyncConfig());
+    const result = await Sentry.withMonitor(
+      JAM_SYNC_MONITOR_SLUG,
+      () => runJamSync(jamSyncConfig()),
+      JAM_SYNC_MONITOR_CONFIG
+    );
     await track("cron", "jam_sync_triggered", { via: "cron" });
     res.json(result);
   } catch (err: unknown) {
