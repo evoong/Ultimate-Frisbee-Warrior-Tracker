@@ -8,6 +8,15 @@
 // CUTOVER_CONFIRM=1 opt-in before touching anything but localhost/127.0.0.1.
 // Local rehearsal (--env-file=.env.local, host 127.0.0.1) needs no
 // confirmation and stays frictionless.
+//
+// Warning: this makes persistent writes, not a rolled-back transaction. A
+// local rehearsal leaves a second captain (captain@local.test AND
+// eric@venn.ca) on team 1, a renamed team, and an eric@venn.ca account in
+// the local database -- which fails several files in the pgTAP suite
+// (13_escalation.test.sql among them, since it needs a sole captain to
+// removal-test against). This is expected, not a regression. Always run
+// `npm run db:reset` after rehearsing and confirm `npm run db:test` is
+// green again before doing anything else.
 import { createClient } from '@supabase/supabase-js'
 
 const CAPTAIN_EMAIL = 'eric@venn.ca'
@@ -109,4 +118,6 @@ const { data: members } = await db.from('team_members').select('role').eq('team_
 const { data: invites } = await db.from('team_invites')
   .select('email').eq('team_id', TEAM_ID).is('accepted_at', null)
 console.log(`\nfinal state: ${members.length} members, ${invites.length} pending invites`)
-console.log('expected:    10 members, 3 pending invites')
+if (!isLocal) {
+  console.log('expected (production): 10 members, 3 pending invites')
+}
