@@ -11,6 +11,7 @@ import {
 } from '../hooks/backend/league'
 import { getLatestJamSeasonWithPlayedGame, getDefaultJamSeasonId } from '../lib/seasonUtils'
 import { isPastGame } from '../lib/gameOrder'
+import { track } from '../lib/analytics'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
@@ -1572,6 +1573,7 @@ function Standings() {
   const handleAddTeam = async () => {
     if (!newTeamName.trim() || selectedSeasonId == null || currentOrgId == null) return
     await createTeam({ seasonId: selectedSeasonId, name: newTeamName, organizationId: currentOrgId })
+    track('league_team_created', { season_id: selectedSeasonId })
     setNewTeamName('')
     refresh()
   }
@@ -1579,12 +1581,14 @@ function Standings() {
   const handleRenameTeam = async () => {
     if (renamingTeamId == null || !renameValue.trim()) return
     await updateTeam({ id: renamingTeamId, name: renameValue.trim() })
+    track('league_team_renamed', { team_id: renamingTeamId })
     setRenamingTeamId(null)
     refresh()
   }
 
   const handleDeleteTeam = async (id: number) => {
     await deleteTeam({ id })
+    track('league_team_deleted', { team_id: id })
     refresh()
   }
 
@@ -1595,12 +1599,14 @@ function Standings() {
     const loss = parseInt(pointsDraft.loss, 10)
     if ([win, tie, loss].some(isNaN)) return
     await updateSeasonPoints({ seasonId: selectedSeasonId, win_points: win, tie_points: tie, loss_points: loss })
+    track('season_points_updated', { season_id: selectedSeasonId })
     refresh()
   }
 
   const handleSaveNotes = async () => {
     if (!detailTeam) return
     await updateTeam({ id: detailTeam.id, notes: notesValue.trim() || null })
+    track('league_team_notes_updated', { team_id: detailTeam.id })
     setDetailTeam({ ...detailTeam, notes: notesValue.trim() || null })
     setEditingNotes(false)
     refresh()
