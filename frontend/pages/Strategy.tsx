@@ -285,7 +285,7 @@ export default function Strategy() {
     setPositions(prev => new Map(prev).set(playerId, { x, y }))
     const ok = await upsertPosition({ stepId: selectedStepId, playerId, x, y, organizationId: currentOrgId })
     if (!ok) loadStepData(selectedStepId)
-    else track('play_player_moved', { play_id: playIdParam, step_id: selectedStepId, player_id: playerId })
+    else track('play_player_moved', { play_id: selectedPlayId, step_id: selectedStepId, player_id: playerId })
   }
 
   const handleRemove = async (playerId: number) => {
@@ -298,7 +298,7 @@ export default function Strategy() {
     })
     const ok = await deletePosition({ stepId: selectedStepId, playerId })
     if (!ok) loadStepData(selectedStepId)
-    else track('play_player_removed', { play_id: playIdParam, step_id: selectedStepId, player_id: playerId })
+    else track('play_player_removed', { play_id: selectedPlayId, step_id: selectedStepId, player_id: playerId })
   }
 
   // Renumbers whatever default-labeled markers need it in `list` (see
@@ -335,7 +335,7 @@ export default function Strategy() {
     if (created) {
       const settled = withNew.map(o => (o.id === tempId ? created : o))
       setOpponents(settled)
-      track('opponent_marker_created', { play_id: playIdParam, step_id: selectedStepId })
+      track('opponent_marker_created', { play_id: selectedPlayId, step_id: selectedStepId })
       await applyOpponentRenumber(settled)
     } else {
       loadStepData(selectedStepId)
@@ -347,7 +347,7 @@ export default function Strategy() {
     setOpponents(prev => prev.map(o => (o.id === id ? { ...o, x, y } : o)))
     const ok = await updateOpponent({ id, x, y })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
-    else track('opponent_marker_moved', { play_id: playIdParam, step_id: selectedStepId, opponent_marker_id: id })
+    else track('opponent_marker_moved', { play_id: selectedPlayId, step_id: selectedStepId, opponent_marker_id: id })
   }
 
   const handleRenameOpponent = async (id: number, label: string) => {
@@ -355,7 +355,7 @@ export default function Strategy() {
     setOpponents(prev => prev.map(o => (o.id === id ? { ...o, label } : o)))
     const ok = await updateOpponent({ id, label })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
-    else track('opponent_marker_renamed', { play_id: playIdParam, step_id: selectedStepId, opponent_marker_id: id })
+    else track('opponent_marker_renamed', { play_id: selectedPlayId, step_id: selectedStepId, opponent_marker_id: id })
   }
 
   const handleRemoveOpponent = async (id: number) => {
@@ -364,7 +364,7 @@ export default function Strategy() {
     setOpponents(remaining)
     const ok = await removeOpponent({ id })
     if (!ok && selectedStepId !== null) { loadStepData(selectedStepId); return }
-    track('opponent_marker_removed', { play_id: playIdParam, step_id: selectedStepId, opponent_marker_id: id })
+    track('opponent_marker_removed', { play_id: selectedPlayId, step_id: selectedStepId, opponent_marker_id: id })
     await applyOpponentRenumber(remaining)
   }
 
@@ -383,7 +383,7 @@ export default function Strategy() {
     const created = await trackCreate(createTextBox({ stepId: selectedStepId, text, x, y, organizationId: currentOrgId }))
     if (created) {
       setTextBoxes(withNew.map(t => (t.id === tempId ? created : t)))
-      track('text_box_created', { play_id: playIdParam, step_id: selectedStepId })
+      track('text_box_created', { play_id: selectedPlayId, step_id: selectedStepId })
     } else {
       loadStepData(selectedStepId)
     }
@@ -394,7 +394,7 @@ export default function Strategy() {
     setTextBoxes(prev => prev.map(t => (t.id === id ? { ...t, x, y } : t)))
     const ok = await updateTextBox({ id, x, y })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
-    else track('text_box_moved', { play_id: playIdParam, step_id: selectedStepId, text_box_id: id })
+    else track('text_box_moved', { play_id: selectedPlayId, step_id: selectedStepId, text_box_id: id })
   }
 
   const handleEditTextBox = async (id: number, text: string) => {
@@ -402,7 +402,7 @@ export default function Strategy() {
     setTextBoxes(prev => prev.map(t => (t.id === id ? { ...t, text } : t)))
     const ok = await updateTextBox({ id, text })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
-    else track('text_box_text_edited', { play_id: playIdParam, step_id: selectedStepId, text_box_id: id })
+    else track('text_box_text_edited', { play_id: selectedPlayId, step_id: selectedStepId, text_box_id: id })
   }
 
   const handleRemoveTextBox = async (id: number) => {
@@ -410,7 +410,7 @@ export default function Strategy() {
     setTextBoxes(prev => prev.filter(t => t.id !== id))
     const ok = await removeTextBox({ id })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
-    else track('text_box_removed', { play_id: playIdParam, step_id: selectedStepId, text_box_id: id })
+    else track('text_box_removed', { play_id: selectedPlayId, step_id: selectedStepId, text_box_id: id })
   }
 
   // Color, filled background, and width are cosmetic, not part of a
@@ -422,7 +422,7 @@ export default function Strategy() {
     setTextBoxes(prev => prev.map(t => (t.id === id ? { ...t, ...patch } : t)))
     const ok = await updateTextBox({ id, ...patch })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
-    else track('text_box_style_updated', { play_id: playIdParam, step_id: selectedStepId, text_box_id: id })
+    else track('text_box_style_updated', { play_id: selectedPlayId, step_id: selectedStepId, text_box_id: id })
   }
 
   // A 'run' arrow anchored to a player or opponent drives that entity's
@@ -456,7 +456,7 @@ export default function Strategy() {
     const created = await trackCreate(createArrow({ stepId: selectedStepId, ...arrow, organizationId: currentOrgId }))
     if (created) {
       setArrows(prev => prev.map(a => (a.id === tempId ? created : a)))
-      track('arrow_created', { play_id: playIdParam, step_id: selectedStepId, arrow_id: created.id, arrow_type: arrow.arrow_type })
+      track('arrow_created', { play_id: selectedPlayId, step_id: selectedStepId, arrow_id: created.id, arrow_type: arrow.arrow_type })
       await propagateRunArrowToNextStep(created)
     } else {
       loadStepData(selectedStepId)
@@ -471,7 +471,7 @@ export default function Strategy() {
       loadStepData(selectedStepId)
       return
     }
-    track('arrow_moved', { play_id: playIdParam, step_id: selectedStepId, arrow_id: arrow.id })
+    track('arrow_moved', { play_id: selectedPlayId, step_id: selectedStepId, arrow_id: arrow.id })
     const updated = arrows.find(a => a.id === arrow.id)
     if (updated) {
       const startPlayerId = arrow.start_player_id !== undefined ? arrow.start_player_id : updated.start_player_id
@@ -485,7 +485,7 @@ export default function Strategy() {
     setArrows(prev => prev.filter(a => a.id !== id))
     const ok = await removeArrow({ id })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
-    else track('arrow_deleted', { play_id: playIdParam, step_id: selectedStepId, arrow_id: id })
+    else track('arrow_deleted', { play_id: selectedPlayId, step_id: selectedStepId, arrow_id: id })
   }
 
   // Highlighted zones: draw/recolor/reshape/lock/delete are each their own
@@ -499,7 +499,7 @@ export default function Strategy() {
     const created = await trackCreate(createHighlight({ stepId: selectedStepId, points, color, organizationId: currentOrgId, isStraight }))
     if (created) {
       setHighlights(prev => prev.map(h => (h.id === tempId ? created : h)))
-      track('highlight_created', { play_id: playIdParam, step_id: selectedStepId, highlight_id: created.id })
+      track('highlight_created', { play_id: selectedPlayId, step_id: selectedStepId, highlight_id: created.id })
     } else loadStepData(selectedStepId)
   }
 
@@ -508,7 +508,7 @@ export default function Strategy() {
     setHighlights(prev => prev.map(h => (h.id === id ? { ...h, color } : h)))
     const ok = await updateHighlight({ id, color })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
-    else track('highlight_color_updated', { play_id: playIdParam, step_id: selectedStepId, highlight_id: id })
+    else track('highlight_color_updated', { play_id: selectedPlayId, step_id: selectedStepId, highlight_id: id })
   }
 
   const handleUpdateHighlightPoints = async (id: number, points: { x: number; y: number }[]) => {
@@ -516,7 +516,7 @@ export default function Strategy() {
     setHighlights(prev => prev.map(h => (h.id === id ? { ...h, points } : h)))
     const ok = await updateHighlight({ id, points })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
-    else track('highlight_reshaped', { play_id: playIdParam, step_id: selectedStepId, highlight_id: id })
+    else track('highlight_reshaped', { play_id: selectedPlayId, step_id: selectedStepId, highlight_id: id })
   }
 
   const handleUpdateHighlightLocked = async (id: number, locked: boolean) => {
@@ -524,7 +524,7 @@ export default function Strategy() {
     setHighlights(prev => prev.map(h => (h.id === id ? { ...h, locked } : h)))
     const ok = await updateHighlight({ id, locked })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
-    else track('highlight_lock_toggled', { play_id: playIdParam, step_id: selectedStepId, highlight_id: id, locked })
+    else track('highlight_lock_toggled', { play_id: selectedPlayId, step_id: selectedStepId, highlight_id: id, locked })
   }
 
   const handleDeleteHighlight = async (id: number) => {
@@ -532,7 +532,7 @@ export default function Strategy() {
     setHighlights(prev => prev.filter(h => h.id !== id))
     const ok = await removeHighlight({ id })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
-    else track('highlight_deleted', { play_id: playIdParam, step_id: selectedStepId, highlight_id: id })
+    else track('highlight_deleted', { play_id: selectedPlayId, step_id: selectedStepId, highlight_id: id })
   }
 
   // Plain unfilled lines: same undoable-optimistic-update/reconcile-on-failure
@@ -545,7 +545,7 @@ export default function Strategy() {
     const created = await trackCreate(createLine({ stepId: selectedStepId, points, color, organizationId: currentOrgId, isStraight }))
     if (created) {
       setLines(prev => prev.map(l => (l.id === tempId ? created : l)))
-      track('line_created', { play_id: playIdParam, step_id: selectedStepId, line_id: created.id })
+      track('line_created', { play_id: selectedPlayId, step_id: selectedStepId, line_id: created.id })
     } else loadStepData(selectedStepId)
   }
 
@@ -554,7 +554,7 @@ export default function Strategy() {
     setLines(prev => prev.map(l => (l.id === id ? { ...l, color } : l)))
     const ok = await updateLine({ id, color })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
-    else track('line_color_updated', { play_id: playIdParam, step_id: selectedStepId, line_id: id })
+    else track('line_color_updated', { play_id: selectedPlayId, step_id: selectedStepId, line_id: id })
   }
 
   const handleUpdateLinePoints = async (id: number, points: { x: number; y: number }[]) => {
@@ -562,7 +562,7 @@ export default function Strategy() {
     setLines(prev => prev.map(l => (l.id === id ? { ...l, points } : l)))
     const ok = await updateLine({ id, points })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
-    else track('line_reshaped', { play_id: playIdParam, step_id: selectedStepId, line_id: id })
+    else track('line_reshaped', { play_id: selectedPlayId, step_id: selectedStepId, line_id: id })
   }
 
   const handleUpdateLineLocked = async (id: number, locked: boolean) => {
@@ -570,7 +570,7 @@ export default function Strategy() {
     setLines(prev => prev.map(l => (l.id === id ? { ...l, locked } : l)))
     const ok = await updateLine({ id, locked })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
-    else track('line_lock_toggled', { play_id: playIdParam, step_id: selectedStepId, line_id: id, locked })
+    else track('line_lock_toggled', { play_id: selectedPlayId, step_id: selectedStepId, line_id: id, locked })
   }
 
   const handleDeleteLine = async (id: number) => {
@@ -578,7 +578,7 @@ export default function Strategy() {
     setLines(prev => prev.filter(l => l.id !== id))
     const ok = await removeLine({ id })
     if (!ok && selectedStepId !== null) loadStepData(selectedStepId)
-    else track('line_deleted', { play_id: playIdParam, step_id: selectedStepId, line_id: id })
+    else track('line_deleted', { play_id: selectedPlayId, step_id: selectedStepId, line_id: id })
   }
 
   // ── Undo / redo ─────────────────────────────────────────────────────────
@@ -784,7 +784,7 @@ export default function Strategy() {
     } else {
       if (oppIds.length) await applyOpponentRenumber(remainingOpponents)
       track('play_selection_deleted', {
-        play_id: playIdParam, step_id: stepId,
+        play_id: selectedPlayId, step_id: stepId,
         player_count: playerIds.length, opponent_count: oppIds.length,
         text_box_count: textIds.length, arrow_count: arrowIds.length,
       })
@@ -829,7 +829,7 @@ export default function Strategy() {
           loadStepData(stepId)
         } else {
           track('play_selection_moved', {
-            play_id: playIdParam, step_id: stepId,
+            play_id: selectedPlayId, step_id: stepId,
             player_count: playerMoves.length, opponent_count: oppMoves.length,
             text_box_count: textMoves.length, arrow_count: arrowMoves.length,
           })
@@ -941,7 +941,7 @@ export default function Strategy() {
         seeds.push(createTextBox({ stepId: step.id, text: box.text, x: box.x, y: box.y, organizationId: currentOrgId }))
       }
       await Promise.all(seeds)
-      track('play_step_added', { play_id: playIdParam, step_id: step.id })
+      track('play_step_added', { play_id: selectedPlayId, step_id: step.id })
       await fetchSteps({ playId: selectedPlayId })
       setSelectedStepId(step.id)
     }
@@ -952,7 +952,7 @@ export default function Strategy() {
     const deletedIndex = stepIndex
     const deletedStepId = selectedStepId
     await removeStep({ stepId: selectedStepId })
-    track('play_step_deleted', { play_id: playIdParam, step_id: deletedStepId })
+    track('play_step_deleted', { play_id: selectedPlayId, step_id: deletedStepId })
     const remaining = await fetchSteps({ playId: selectedPlayId! })
     if (remaining && remaining.length > 0) {
       setSelectedStepId(remaining[Math.max(0, deletedIndex - 1)]!.id)

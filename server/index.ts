@@ -393,7 +393,7 @@ app.post("/api/chat", async (req, res) => {
     if (!user || !(await isOrgMember(user.email.toLowerCase(), organization_id))) {
       return res.status(401).json({ error: "not authenticated" });
     }
-    distinctId = user.email;
+    distinctId = user.sub;
 
     const systemContext = await getTeamContext(organization_id);
 
@@ -513,7 +513,7 @@ app.delete("/api/chat/history", async (req, res) => {
     if (!user || !(await isOrgMember(user.email.toLowerCase(), Number(organization_id)))) {
       return res.status(401).json({ error: "not authenticated" });
     }
-    distinctId = user.email;
+    distinctId = user.sub;
 
     const { error } = await supabase.from("chat_logs").delete().eq("session_id", session_id).eq("organization_id", organization_id);
     if (error) throw error;
@@ -545,12 +545,13 @@ function jamSyncConfig() {
 }
 
 app.post("/api/schedule/sync-jam", requireAuth, async (req, res) => {
-  const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
-    headers: { cookie: req.headers.cookie ?? "" },
-  });
-  const user = await requireAllowedUser(webRequest);
-  const distinctId = user?.email ?? "unknown";
+  let distinctId = "unknown";
   try {
+    const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
+      headers: { cookie: req.headers.cookie ?? "" },
+    });
+    const user = await requireAllowedUser(webRequest);
+    distinctId = user?.sub ?? "unknown";
     const result = await runJamSync(jamSyncConfig());
     await track(distinctId, "jam_sync_triggered", {});
     res.json(result);

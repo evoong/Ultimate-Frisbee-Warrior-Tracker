@@ -1,7 +1,14 @@
 import { PostHog } from "posthog-node";
 
 const posthog = process.env.POSTHOG_PROJECT_TOKEN
-  ? new PostHog(process.env.POSTHOG_PROJECT_TOKEN, { host: process.env.POSTHOG_HOST })
+  ? new PostHog(process.env.POSTHOG_PROJECT_TOKEN, {
+      host: process.env.POSTHOG_HOST,
+      // Bound worst-case latency: a PostHog outage should add at most a few
+      // seconds to an awaited track()/trackError() call, not the ~50s the
+      // library's defaults (10s timeout x 3 retries with 3s delays) allow.
+      requestTimeout: 2000,
+      fetchRetryCount: 1,
+    })
   : null;
 
 // Local/dev runs never send real events, matching the free-tier safeguard
