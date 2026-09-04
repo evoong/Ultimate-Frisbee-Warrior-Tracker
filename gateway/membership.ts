@@ -69,6 +69,11 @@ export function createMembershipLookup(config: MembershipConfig): MembershipLook
       if (!res.ok) return []
       const rows = (await res.json()) as TeamRoleRow[]
       const safe = Array.isArray(rows) ? rows : []
+      // Unlike the !res.ok and catch paths above, a 2xx response with an
+      // unexpected (non-array) body IS cached as [] for the full TTL. That
+      // asymmetry is intentional -- caching a deny is safe -- not a bug to
+      // "fix" into an uncached path, which would reintroduce a lookup
+      // storm during an outage that keeps returning malformed 2xx bodies.
       cache.set(userId, { at: Date.now(), rows: safe })
       return safe
     } catch {

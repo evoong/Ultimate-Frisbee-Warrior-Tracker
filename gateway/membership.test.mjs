@@ -16,6 +16,11 @@ check('editor does not satisfy captain', hasAtLeast('editor', 'captain') === fal
 check('member does not satisfy editor',  hasAtLeast('member', 'editor') === false)
 check('no membership satisfies nothing', hasAtLeast(null, 'member') === false)
 
+// Same-rank boundary: a role satisfies its own requirement exactly.
+check('captain satisfies captain', hasAtLeast('captain', 'captain') === true)
+check('editor satisfies editor',   hasAtLeast('editor', 'editor') === true)
+check('member satisfies member',   hasAtLeast('member', 'member') === true)
+
 // --- createMembershipLookup: real queries against the local stack ---
 //
 // Skipping is not an option here: an unreachable stack must fail this file
@@ -131,6 +136,45 @@ check('fail-closed: unreachable host -> teamsFor resolves to [] rather than reje
 const unreachableRole = await unreachableLookup.roleFor(captainId, 1)
 check('fail-closed: unreachable host -> roleFor resolves to null rather than rejecting',
   unreachableRole === null)
+
+// --- fail-closed: a non-ok response with an array body must not slip
+// past the Array.isArray guard ---
+//
+// PostgREST's real error body is a JSON object (e.g. the bad-secret-key
+// case above gets {"code":"...","message":"..."}), which the
+// `Array.isArray(rows) ? rows : []` fallback further down also happens to
+// reduce to []. That means the bad-secret-key test above verifies the
+// fail-closed *outcome* but does not, on its own, prove the
+// `if (!res.ok) return []` check is doing anything: deleting that check
+// would still pass every test above it, because no real response seen so
+// far is both non-ok AND array-shaped. This test closes that gap by
+// stubbing fetch to return exactly that shape -- a 500 whose body is a
+// valid TeamRoleRow[] array, the one shape that slips past Array.isArray.
+// It must fail if `if (!res.ok) return []` is deleted (verified by hand:
+// see the fix report).
+{
+  const realFetch = globalThis.fetch
+  try {
+    globalThis.fetch = async () => ({
+      ok: false,
+      status: 500,
+      json: async () => [{ team_id: 1, role: 'captain' }],
+    })
+    // A fresh lookup, not the shared `lookup`: its cache is empty, so this
+    // call cannot be served from an earlier, unstubbed response.
+    const stubbedLookup = createMembershipLookup({ supabaseUrl, supabaseSecretKey })
+    const stubbedTeams = await stubbedLookup.teamsFor(captainId)
+    check('fail-closed: non-ok response with an array body -> teamsFor returns [] (pins the res.ok check)',
+      Array.isArray(stubbedTeams) && stubbedTeams.length === 0)
+    const stubbedRole = await stubbedLookup.roleFor(captainId, 1)
+    check('fail-closed: non-ok response with an array body -> roleFor returns null (pins the res.ok check)',
+      stubbedRole === null)
+  } finally {
+    // Restore before any later assertion runs, success or failure, so the
+    // rest of this file still talks to the real local stack.
+    globalThis.fetch = realFetch
+  }
+}
 
 // --- no memberships at all ---
 
