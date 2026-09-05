@@ -9,6 +9,7 @@ const Home = lazy(() => import('./pages/Home'))
 const Login = lazy(() => import('./pages/Login'))
 const ResetPassword = lazy(() => import('./pages/ResetPassword'))
 const CreateOrganization = lazy(() => import('./pages/CreateOrganization'))
+const PublicTeams = lazy(() => import('./pages/PublicTeams'))
 import { useAuth } from './contexts/AuthContext'
 import { Moon, Sun, Loader2, LogOut, KeyRound, Settings } from 'lucide-react'
 import { NAV_ITEMS, visibleNavItems, tabForPath, pathForTab, isKnownPath, type Tab } from './lib/nav'
@@ -131,6 +132,21 @@ export default function App() {
     )
   }
 
+  // A guest who hasn't picked a team yet has no organization_id to scope
+  // Schedule/Roster/Stats to, so the normal shell has nothing to render.
+  // Show the public-teams browser instead of the shell entirely; once
+  // switchTeam() sets currentTeamId (still granting no capability -- `can`
+  // stays NO_CAPABILITIES for a guest regardless of which team is current,
+  // since `role` is derived from `teams`, which is empty for a guest) the
+  // branches below take over and the normal shell renders.
+  if (isGuest && currentTeamId == null) {
+    return (
+      <Suspense fallback={<PageFallback />}>
+        <PublicTeams />
+      </Suspense>
+    )
+  }
+
   // Each tab additionally accepts one sub-path (a specific game, player,
   // play, or stats sub-tab), so the page component itself reads that piece
   // of state from useParams() rather than only ever owning it as in-memory
@@ -145,6 +161,10 @@ export default function App() {
         <Route path="/roster/:playerId" element={<Roster />} />
         <Route path="/stats" element={<Stats />} />
         <Route path="/stats/:subtab" element={<Stats />} />
+        {/* Not a nav tab (see lib/nav.ts's EXTRA_KNOWN_PATHS) -- this is how
+            a guest who already picked a team gets back to the browser to
+            pick a different one. */}
+        <Route path="/teams" element={<PublicTeams />} />
         {!isGuest && <Route path="/plays" element={<Strategy />} />}
         {!isGuest && <Route path="/plays/:playId" element={<Strategy />} />}
         {!isGuest && <Route path="/ai" element={<Chat />} />}

@@ -52,9 +52,17 @@ export function pathForTab(tab: Tab): string {
   return NAV_ITEMS.find(item => item.key === tab)!.path
 }
 
+// Real routes that exist in the app but aren't nav tabs, so they must not
+// appear in NAV_ITEMS (that would put them in the sidebar / bottom nav).
+// /teams is the guest public-teams browser (see PublicTeams.tsx / App.tsx).
+const EXTRA_KNOWN_PATHS = ["/teams"]
+
 // Whether pathname falls under one of the app's real tabs (its own path or
 // a sub-path), used to decide whether an unrecognized URL should redirect
 // to the default tab instead of being treated as a deep link.
 export function isKnownPath(pathname: string): boolean {
-  return NAV_ITEMS.some(item => pathMatches(item.path, pathname))
+  return (
+    NAV_ITEMS.some(item => pathMatches(item.path, pathname)) ||
+    EXTRA_KNOWN_PATHS.some(path => pathMatches(path, pathname))
+  )
 }
