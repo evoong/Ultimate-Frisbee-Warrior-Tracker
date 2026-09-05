@@ -98,11 +98,14 @@ export default function App() {
     )
   }
 
-  // Anyone signed in may enter (read-only, or read-write for a public org
-  // they don't belong to). `can.record` means "member of the current team
-  // — can write"; write controls are gated on it, and the DB's RLS is the
-  // real enforcement. Guests (`isGuest`) hold no role on any team, so they
-  // never see a write control regardless of `can`.
+  // Anyone signed in may enter. Write access requires actual membership in
+  // the current team -- under strict RLS a public team is readable by
+  // anyone signed in, but writable only by its own members, never by a
+  // guest or an outside signed-in user just because it's public.
+  // `can.record` means "member of the current team — can write"; write
+  // controls are gated on it, and the DB's RLS is the real enforcement.
+  // Guests (`isGuest`) hold no role on any team, so they never see a write
+  // control regardless of `can`.
   //
   // Signed out: '/login' is the sign-in/sign-up form; every other path
   // (including '/', the marketing homepage, and any unrecognized URL) shows
