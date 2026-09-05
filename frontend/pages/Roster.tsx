@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlayer, useGetPlayerGameStats, useSetGameAttendance, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer, useGetSeasonRoster, useCopyPlayersToSeason, useRemovePlayersFromSeason, useGetPlayerAssistPairings, useGetPlayerTurnoverBreakdown, type AssistPairingRow, type TurnoverBreakdownRow } from '../hooks/backend/players'
+import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlayer, useGetPlayerGameStats, useSetGameAttendance, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer, useGetSeasonRoster, useCopyPlayersToSeason, useRemovePlayersFromSeason, useGetPlayerAssistPairings, useGetPlayerTurnoverBreakdown, useGetPlayerPrivate, useUpsertPlayerPrivate, type AssistPairingRow, type TurnoverBreakdownRow, type PlayerPrivate } from '../hooks/backend/players'
 import { track } from '../lib/analytics'
 import { useGetAllSeasons, useGetSeasons, useCreateSeason } from '../hooks/backend/stats'
 import { getDefaultJamSeasonId } from '../lib/seasonUtils'
@@ -21,6 +21,9 @@ import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
 import { Phone, Search, ChevronLeft, ChevronRight, Users, TrendingUp, Trophy, Trash2, Camera, Edit2, Save, X, Plus, UserCog, LayoutGrid, List, Share2 } from 'lucide-react'
 
+// phone is not a `players` column anymore -- it's merged in client-side from
+// player_private (members-only; see useGetPlayerPrivate) after both fetches
+// land, so every Player value in this file already carries the merge.
 type Player = {
   id: number; display_name: string; first_name: string | null; last_name: string | null
   gender_match: string | null; phone: string | null; is_sub: boolean; position: string | null; photo_url: string | null; number: number | null
@@ -161,7 +164,7 @@ function PlayerEgoNetworkGraph({ centerName, received, given }: {
 }
 
 export default function Roster() {
-  const { allowed, currentOrgId } = useAuth()
+  const { can, currentTeamId } = useAuth()
   const navigate = useNavigate()
   // The selected player mirrors this URL segment (see the effect near
   // handleSelectPlayer below), so a reload, browser back/forward, or a
@@ -186,12 +189,36 @@ export default function Roster() {
   const { trigger: copyPlayersToSeason } = useCopyPlayersToSeason()
   const { trigger: removePlayersFromSeason } = useRemovePlayersFromSeason()
   const { trigger: createSeason } = useCreateSeason()
+  // phone lives in player_private (members-only) now. A guest or non-member
+  // gets an empty array back (RLS filters rows, not an error) -- that's
+  // normal and just means no phone numbers render, not a failure. A genuine
+  // error (network, or something actually going wrong server-side) surfaces
+  // via playerPrivateError below and is NOT swallowed as if it were absence.
+  const { data: playerPrivateRaw, error: playerPrivateError, trigger: fetchPlayerPrivate } = useGetPlayerPrivate()
+  const { trigger: upsertPlayerPrivate, error: phoneError } = useUpsertPlayerPrivate()
 
-  const players = rawPlayers as Player[] | undefined
-  const allOrgPlayers = allOrgPlayersRaw as Player[] | undefined
+  const phoneByPlayerId = useMemo(
+    () => new Map(((playerPrivateRaw as PlayerPrivate[] | undefined) ?? []).map(p => [p.player_id, p.phone])),
+    [playerPrivateRaw]
+  )
+  const players = useMemo(
+    () => (rawPlayers as Player[] | undefined)?.map(p => ({ ...p, phone: phoneByPlayerId.get(p.id) ?? null })),
+    [rawPlayers, phoneByPlayerId]
+  )
+  const allOrgPlayers = useMemo(
+    () => (allOrgPlayersRaw as Player[] | undefined)?.map(p => ({ ...p, phone: phoneByPlayerId.get(p.id) ?? null })),
+    [allOrgPlayersRaw, phoneByPlayerId]
+  )
 
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
+  // useUpsertPlayerPrivate's `error` has no reset of its own -- it only
+  // changes when trigger() runs again -- so without this, a failed save's
+  // error would still be sitting there the next time the edit form opens,
+  // looking like it belongs to a save attempt that hasn't happened yet.
+  // dismissed=true hides it; a fresh save attempt un-hides before it fires,
+  // so a real (even identically-worded) new failure still shows.
+  const [phoneErrorDismissed, setPhoneErrorDismissed] = useState(false)
   // Empty array means "All Seasons"
   const [seasonFilters, setSeasonFilters] = useState<string[]>([])
   const [assistView, setAssistView] = useState<'list' | 'network'>('list')
@@ -240,10 +267,10 @@ export default function Roster() {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    if (currentOrgId == null) return
-    fetchAllSeasons({ organizationId: currentOrgId })
-    fetchSeasonsWithGames({ organizationId: currentOrgId })
-  }, [currentOrgId])
+    if (currentTeamId == null) return
+    fetchAllSeasons({ organizationId: currentTeamId })
+    fetchSeasonsWithGames({ organizationId: currentTeamId })
+  }, [currentTeamId])
 
   useEffect(() => {
     const s = seasonsWithGames as { id: number }[] | undefined
@@ -254,18 +281,19 @@ export default function Roster() {
   }, [seasonsWithGames, allSeasons])
 
   useEffect(() => {
-    if (currentOrgId == null) return
-    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
-  }, [rosterSeasonIds, currentOrgId])
+    if (currentTeamId == null) return
+    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
+  }, [rosterSeasonIds, currentTeamId])
 
   useEffect(() => {
     // Org-wide roster (no season filter), independent of rosterSeasonIds:
     // the candidate pool for the Manage Roster checklist, which needs to
     // offer players regardless of which season(s) the page itself is
     // currently filtered to.
-    if (currentOrgId == null) return
-    fetchAllOrgPlayers({ organizationId: currentOrgId })
-  }, [currentOrgId])
+    if (currentTeamId == null) return
+    fetchAllOrgPlayers({ organizationId: currentTeamId })
+    fetchPlayerPrivate({ teamId: currentTeamId })
+  }, [currentTeamId])
 
   useEffect(() => { localStorage.setItem(ROSTER_VIEW_KEY, viewMode) }, [viewMode])
 
@@ -333,11 +361,16 @@ export default function Roster() {
 
   const handleStartEdit = () => {
     if (!selectedPlayer) return
+    setPhoneErrorDismissed(true)
     setEditFields({
       display_name: selectedPlayer.display_name,
       number: selectedPlayer.number != null ? String(selectedPlayer.number) : '',
       gender_match: selectedPlayer.gender_match ?? '',
-      phone: selectedPlayer.phone ?? '',
+      // Read from the map, not selectedPlayer.phone: selectedPlayer is a
+      // point-in-time copy (see the phoneByPlayerId comment on the detail
+      // view below) that can be stale if player_private resolved after
+      // selectedPlayer was captured.
+      phone: phoneByPlayerId.get(selectedPlayer.id) ?? '',
       position: selectedPlayer.position ?? '',
     })
     setEditing(true)
@@ -345,20 +378,47 @@ export default function Roster() {
 
   const handleSaveEdit = async () => {
     if (!selectedPlayer) return
+    // display_name/gender_match/number/position live on `players`; phone
+    // lives in player_private now (see useUpsertPlayerPrivate) -- two
+    // separate writes, since they're two separate tables with separate RLS.
     const updated = await updatePlayer({
       playerId: selectedPlayer.id,
       display_name: editFields.display_name || undefined,
       gender_match: editFields.gender_match || undefined,
-      phone: editFields.phone || undefined,
       number: editFields.number ? parseInt(editFields.number) : null,
       position: editFields.position || null,
-    }) as Player | undefined
+    }) as Omit<Player, 'phone'> | undefined
     if (updated) {
-      setSelectedPlayer(updated)
+      const phone = editFields.phone || null
+      // Un-hide before the attempt (not after): if this fails, the hook's
+      // `error` needs to already be visible-eligible by the time it's set,
+      // otherwise a same-text repeat of a previously-dismissed error
+      // wouldn't visibly change and could stay hidden.
+      setPhoneErrorDismissed(false)
+      // useUpsertPlayerPrivate's trigger never throws -- on failure it
+      // stashes the message in its own `error` state and resolves to
+      // undefined -- so the resolved value (not a try/catch, and not
+      // reading `.error` synchronously right after the await, which would
+      // observe the stale pre-update render closure) is what tells us
+      // whether the save actually succeeded.
+      const phoneSaved = currentTeamId == null
+        || await upsertPlayerPrivate({ teamId: currentTeamId, playerId: selectedPlayer.id, phone })
+      // Merge the players-table fields only. phone is intentionally NOT
+      // copied onto selectedPlayer -- the detail view below derives it live
+      // from phoneByPlayerId so it can never go stale, including right now:
+      // fetchPlayerPrivate's refetch will update that map on its own.
+      setSelectedPlayer({ ...selectedPlayer, ...updated })
       track('player_updated', { player_id: selectedPlayer.id })
-      fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
+      fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
+      if (currentTeamId != null) fetchPlayerPrivate({ teamId: currentTeamId })
+      // Keep the form open when the phone save failed, so the error banner
+      // rendered next to the Phone field (bound to upsertPlayerPrivate's
+      // `error` state) is actually visible instead of being unmounted in
+      // the same render pass that produced it.
+      if (phoneSaved) setEditing(false)
+    } else {
+      setEditing(false)
     }
-    setEditing(false)
   }
 
   const handleStartEditSeasons = () => {
@@ -371,12 +431,16 @@ export default function Roster() {
 
   const handleSaveSeasons = async () => {
     if (!selectedPlayer) return
-    await updatePlayerSeasons({ playerId: selectedPlayer.id, seasonIds: selectedSeasonIds, subsBySeasonId: selectedSeasonSubs, organizationId: currentOrgId })
+    await updatePlayerSeasons({ playerId: selectedPlayer.id, seasonIds: selectedSeasonIds, subsBySeasonId: selectedSeasonSubs, organizationId: currentTeamId })
     track('player_seasons_updated', { player_id: selectedPlayer.id, season_count: selectedSeasonIds.length })
     await fetchPlayerSeasons({ playerId: selectedPlayer.id })
-    const refreshed = await fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
-    const updated = (refreshed as Player[] | undefined)?.find(p => p.id === selectedPlayer.id)
-    if (updated) setSelectedPlayer(updated)
+    const refreshed = await fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
+    // fetchPlayers' own return value is the raw `players` row -- no phone
+    // field at all (that column no longer exists there). Not a problem:
+    // the detail view derives phone from phoneByPlayerId at render time
+    // (see the Player Detail View block below), never from this object.
+    const updatedRaw = (refreshed as Omit<Player, 'phone'>[] | undefined)?.find(p => p.id === selectedPlayer.id)
+    if (updatedRaw) setSelectedPlayer({ ...selectedPlayer, ...updatedRaw })
     setEditingSeasons(false)
   }
 
@@ -386,7 +450,7 @@ export default function Roster() {
     track('player_deleted', { player_id: selectedPlayer.id })
     setDeleteConfirm(false)
     handleBack()
-    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
+    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
   }
 
   const handlePositionChange = async (player: Player, position: string) => {
@@ -394,21 +458,21 @@ export default function Roster() {
     setSelectedPlayer({ ...player, position: newPos })
     await updatePosition({ playerId: player.id, position: newPos })
     track('player_role_updated', { player_id: player.id, position: newPos })
-    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
+    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
   }
 
   const handlePhotoClick = () => fileInputRef.current?.click()
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (!file || !selectedPlayer) return
+    if (!file || !selectedPlayer || currentTeamId == null) return
     setUploadError(null)
-    const result = await uploadPhoto({ playerId: selectedPlayer.id, file })
+    const result = await uploadPhoto({ teamId: currentTeamId, playerId: selectedPlayer.id, file })
     if (result?.photo_url) {
       const updated = { ...selectedPlayer, photo_url: result.photo_url }
       setSelectedPlayer(updated)
       track('player_photo_uploaded', { player_id: selectedPlayer.id })
-      fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
+      fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
     } else setUploadError('Upload failed. Please try again.')
     e.target.value = ''
   }
@@ -422,8 +486,8 @@ export default function Roster() {
       number: newPlayerData.number ? parseInt(newPlayerData.number) : undefined,
       position: newPlayerData.position || undefined,
       season_ids: newPlayerData.season_ids,
-      organizationId: currentOrgId,
-    }) as Player | undefined
+      organizationId: currentTeamId,
+    }) as Omit<Player, 'phone'> | undefined
     setCreatingPlayer(false)
     if (!created) {
       alert('Failed to create player. Please try again.')
@@ -440,7 +504,7 @@ export default function Roster() {
     setShowCreateForm(false)
     setNewPlayerData({ display_name: '', number: '', gender_match: '', position: '', season_ids: [] })
     setManageSearch('')
-    fetchAllOrgPlayers({ organizationId: currentOrgId })
+    fetchAllOrgPlayers({ organizationId: currentTeamId })
   }
 
   // Opens the inline create-player card inside Manage Roster, prefilled with
@@ -461,7 +525,7 @@ export default function Roster() {
     if (!newSeasonData.name || !newSeasonData.year) return
     setCreatingSeason(true)
     const created = await createSeason({
-      organizationId: currentOrgId,
+      organizationId: currentTeamId,
       name: newSeasonData.name,
       year: parseInt(newSeasonData.year),
       organizer: newSeasonData.organizer || undefined,
@@ -473,7 +537,7 @@ export default function Roster() {
       return
     }
     track('season_created', { season_id: created.id })
-    await fetchAllSeasons({ organizationId: currentOrgId })
+    await fetchAllSeasons({ organizationId: currentTeamId })
     setRosterSeasonIds([created.id])
     setShowCreateSeason(false)
     setNewSeasonData({ name: '', year: new Date().getFullYear().toString(), organizer: '', location: '' })
@@ -494,15 +558,15 @@ export default function Roster() {
     if (toAdd.length === 0 && toRemove.length === 0) { setShowManageRoster(false); return }
     setManageSaving(true)
     await Promise.all([
-      toAdd.length > 0 ? copyPlayersToSeason({ organizationId: currentOrgId, playerIds: toAdd, targetSeasonId: manageSeasonId, isSub: false }) : Promise.resolve(),
+      toAdd.length > 0 ? copyPlayersToSeason({ organizationId: currentTeamId, playerIds: toAdd, targetSeasonId: manageSeasonId, isSub: false }) : Promise.resolve(),
       toRemove.length > 0 ? removePlayersFromSeason({ seasonId: manageSeasonId, playerIds: toRemove }) : Promise.resolve(),
     ])
     track('season_roster_updated', { season_id: manageSeasonId, added_count: toAdd.length, removed_count: toRemove.length })
     setManageSaving(false)
     setShowManageRoster(false)
-    fetchAllOrgPlayers({ organizationId: currentOrgId })
+    fetchAllOrgPlayers({ organizationId: currentTeamId })
     if (rosterSeasonIds.length === 0 || rosterSeasonIds.includes(manageSeasonId)) {
-      fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentOrgId })
+      fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
     }
   }
 
@@ -601,6 +665,14 @@ export default function Roster() {
   // ── Player Detail View ────────────────────────────────────────────────────────
   if (selectedPlayer) {
     const pSeasons = (playerSeasons as PlayerSeason[] | undefined) ?? []
+    // Derived at render time, not read off selectedPlayer: selectedPlayer is
+    // a snapshot captured at selection time (see handleSelectPlayer and the
+    // deep-link effect above), and player_private can resolve AFTER that
+    // snapshot is taken -- e.g. opening /roster/:id directly races the two
+    // fetches in the effect above. Reading phoneByPlayerId here instead
+    // means whichever fetch lands last, the very next render picks up the
+    // real phone -- there's no copy of it to go stale.
+    const selectedPhone = phoneByPlayerId.get(selectedPlayer.id) ?? null
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-between">
@@ -608,7 +680,7 @@ export default function Roster() {
             <ChevronLeft className="w-5 h-5" />
             <span className="text-sm font-medium">Back to Roster</span>
           </button>
-          {allowed && (
+          {can.manageTeam && (
             <div className="flex items-center gap-2">
               {!editing && (
                 <button onClick={handleStartEdit} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
@@ -626,7 +698,7 @@ export default function Roster() {
         <div className="flex items-center gap-4">
           <div className="relative group">
             <PlayerAvatar photoUrl={selectedPlayer.photo_url} name={selectedPlayer.display_name} genderMatch={selectedPlayer.gender_match} size="lg" />
-            {allowed && (
+            {can.manageTeam && (
               <button onClick={handlePhotoClick} disabled={uploadingPhoto}
                 className="absolute inset-0 rounded-full flex items-center justify-center bg-black/0 group-hover:bg-black/40 transition-colors cursor-pointer"
               >
@@ -654,16 +726,16 @@ export default function Roster() {
                 </span>
               )}
               {selectedPlayer.position && <span className="text-sm text-muted-foreground">{selectedPlayer.position}</span>}
-              {selectedPlayer.phone && (
+              {selectedPhone && (
                 <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                  <Phone className="w-3 h-3" />{selectedPlayer.phone}
+                  <Phone className="w-3 h-3" />{selectedPhone}
                 </div>
               )}
             </div>
           </div>
         </div>
 
-        {allowed && <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />}
+        {can.manageTeam && <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />}
         {uploadError && <p className="text-sm text-destructive">{uploadError}</p>}
 
         {/* Edit fields */}
@@ -705,6 +777,7 @@ export default function Roster() {
               <div className="space-y-1">
                 <Label className="text-xs">Phone</Label>
                 <Input value={editFields.phone} onChange={e => setEditFields(f => ({ ...f, phone: e.target.value }))} placeholder="Optional" className="h-8 text-sm bg-background border-border" />
+                {!phoneErrorDismissed && phoneError && <p className="text-sm text-destructive">{phoneError}</p>}
               </div>
               <div className="flex gap-2">
                 <Button onClick={handleSaveEdit} size="sm" className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90 h-9">
@@ -736,10 +809,10 @@ export default function Roster() {
                     >
                       Unselect all
                     </button>
-                    {allowed && <div className="w-px h-3.5 bg-border" />}
+                    {can.manageTeam && <div className="w-px h-3.5 bg-border" />}
                   </>
                 )}
-                {allowed && (!editingSeasons ? (
+                {can.manageTeam && (!editingSeasons ? (
                   <button onClick={handleStartEditSeasons} className="text-xs text-primary hover:underline">Edit</button>
                 ) : (
                   <div className="flex items-center gap-2">
@@ -991,12 +1064,12 @@ export default function Roster() {
                       <input
                         type="checkbox"
                         checked={stat.in}
-                        disabled={!allowed}
+                        disabled={!can.record}
                         onChange={async e => {
-                          await setGameAttendance({ gameId: stat.game_id, playerId: selectedPlayer.id, seasonId: stat.season_id, attending: e.target.checked, organizationId: currentOrgId })
+                          await setGameAttendance({ gameId: stat.game_id, playerId: selectedPlayer.id, seasonId: stat.season_id, attending: e.target.checked, organizationId: currentTeamId })
                           fetchGameStats({ playerId: selectedPlayer.id })
                         }}
-                        className={`accent-primary w-4 h-4 ${allowed ? 'cursor-pointer' : 'cursor-default'}`}
+                        className={`accent-primary w-4 h-4 ${can.record ? 'cursor-pointer' : 'cursor-default'}`}
                       />
                     </div>
                     <div className="w-8 text-center font-bold text-green-600 dark:text-green-400">{stat.in ? stat.goals : '-'}</div>
@@ -1081,6 +1154,10 @@ export default function Roster() {
     )
   }
   if (error) return <div className="flex items-center justify-center h-64"><div className="text-destructive">Error: {error}</div></div>
+  // playerPrivateError is a real failure, not the normal "no rows" case a
+  // guest/non-member gets from RLS (that comes back as an empty array, not
+  // an error) -- so it must surface rather than be treated as absent data.
+  if (playerPrivateError) return <div className="flex items-center justify-center h-64"><div className="text-destructive">Error: {playerPrivateError}</div></div>
 
   return (
     <div className="space-y-4">
@@ -1106,7 +1183,7 @@ export default function Roster() {
               <List className="w-4 h-4" />
             </button>
           </div>
-          {allowed && (
+          {can.manageTeam && (
             <button
               onClick={handleOpenManageRoster}
               className="flex items-center gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-2 text-sm font-medium transition-colors"

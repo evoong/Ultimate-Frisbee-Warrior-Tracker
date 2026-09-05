@@ -1,6 +1,6 @@
 import { Disc, Moon, Sun, LogOut, KeyRound, Settings } from "lucide-react"
-import { NAV_ITEMS, type Tab } from "../lib/nav"
-import type { OrgMembership } from "../lib/authClient"
+import { visibleNavItems, type Tab } from "../lib/nav"
+import type { TeamMembership } from "../lib/authClient"
 import {
   Sidebar,
   SidebarHeader,
@@ -22,9 +22,10 @@ type AppSidebarProps = {
   toggleTheme: () => void
   userEmail: string
   logout: () => void
-  organizations: OrgMembership[]
-  currentOrgId: number | null
-  switchOrg: (organizationId: number) => void
+  teams: TeamMembership[]
+  currentTeamId: number | null
+  switchTeam: (teamId: number) => void
+  isGuest: boolean
   openSettings: () => void
   // Absent when passkeys are unavailable on this deployment (see passkeys.ts).
   openPasskeys?: () => void
@@ -37,9 +38,10 @@ export default function AppSidebar({
   toggleTheme,
   userEmail,
   logout,
-  organizations,
-  currentOrgId,
-  switchOrg,
+  teams,
+  currentTeamId,
+  switchTeam,
+  isGuest,
   openSettings,
   openPasskeys,
 }: AppSidebarProps) {
@@ -57,13 +59,13 @@ export default function AppSidebar({
               </div>
             </SidebarMenuButton>
           </SidebarMenuItem>
-          {organizations.length > 1 && (
+          {teams.length > 1 && (
             <SidebarMenuItem>
-              <Select value={currentOrgId != null ? String(currentOrgId) : undefined} onValueChange={v => switchOrg(Number(v))}>
+              <Select value={currentTeamId != null ? String(currentTeamId) : undefined} onValueChange={v => switchTeam(Number(v))}>
                 <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {organizations.map(o => (
-                    <SelectItem key={o.organization_id} value={String(o.organization_id)}>{o.name}</SelectItem>
+                  {teams.map(t => (
+                    <SelectItem key={t.organization_id} value={String(t.organization_id)}>{t.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -76,7 +78,7 @@ export default function AppSidebar({
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {NAV_ITEMS.map(({ key, label, icon: Icon }) => (
+              {visibleNavItems(isGuest).map(({ key, label, icon: Icon }) => (
                 <SidebarMenuItem key={key}>
                   <SidebarMenuButton
                     isActive={activeTab === key}

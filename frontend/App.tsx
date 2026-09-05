@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { useLocation, useNavigate, Routes, Route } from 'react-router-dom'
+import { useLocation, useNavigate, Routes, Route, Link } from 'react-router-dom'
 const Schedule = lazy(() => import('./pages/Schedule'))
 const Roster = lazy(() => import('./pages/Roster'))
 const Stats = lazy(() => import('./pages/Stats'))
@@ -9,9 +9,10 @@ const Home = lazy(() => import('./pages/Home'))
 const Login = lazy(() => import('./pages/Login'))
 const ResetPassword = lazy(() => import('./pages/ResetPassword'))
 const CreateOrganization = lazy(() => import('./pages/CreateOrganization'))
+const PublicTeams = lazy(() => import('./pages/PublicTeams'))
 import { useAuth } from './contexts/AuthContext'
 import { Moon, Sun, Loader2, LogOut, KeyRound, Settings } from 'lucide-react'
-import { NAV_ITEMS, tabForPath, pathForTab, isKnownPath, type Tab } from './lib/nav'
+import { NAV_ITEMS, visibleNavItems, tabForPath, pathForTab, isKnownPath, type Tab } from './lib/nav'
 import { useMediaQuery } from './lib/shadcn/use-media-query'
 import { SidebarProvider, SidebarInset, SidebarTrigger } from './lib/shadcn/sidebar'
 import AppSidebar from './components/AppSidebar'
@@ -46,7 +47,7 @@ export default function App() {
   const [passkeysOpen, setPasskeysOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const isDesktop = useMediaQuery('(min-width: 1024px)')
-  const { user, organizations, currentOrgId, switchOrg, allowed, loading, logout } = useAuth()
+  const { user, teams, currentTeamId, switchTeam, can, isGuest, loading, logout } = useAuth()
 
   useEffect(() => {
     const root = document.documentElement
@@ -60,11 +61,22 @@ export default function App() {
   // a URL that doesn't say so. Scoped to signed-in users only: while signed
   // out, '/' and '/login' are real public pages (Home/Login below), not
   // unrecognized paths to bounce from.
+  //
+  // A guest hitting a member-only route (/plays, /ai) by typing it directly
+  // gets the same bounce: those routes are omitted from pageContent below,
+  // so without this the Routes below would just render nothing.
   useEffect(() => {
     if (!user) return
     if (location.pathname === '/reset-password') return
-    if (!isKnownPath(location.pathname)) navigate(pathForTab('schedule'), { replace: true })
-  }, [location.pathname, user])
+    if (!isKnownPath(location.pathname)) {
+      navigate(pathForTab('schedule'), { replace: true })
+      return
+    }
+    const tab = tabForPath(location.pathname)
+    if (isGuest && !visibleNavItems(isGuest).some(item => item.key === tab)) {
+      navigate(pathForTab('schedule'), { replace: true })
+    }
+  }, [location.pathname, user, isGuest])
 
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
 
@@ -86,10 +98,14 @@ export default function App() {
     )
   }
 
-  // Anyone signed in may enter (read-only, or read-write for a public org
-  // they don't belong to). The `allowed` flag means "member of the current
-  // organization — can write"; write controls are gated on it, and the
-  // DB's RLS is the real enforcement (016_organizations.sql).
+  // Anyone signed in may enter. Write access requires actual membership in
+  // the current team -- under strict RLS a public team is readable by
+  // anyone signed in, but writable only by its own members, never by a
+  // guest or an outside signed-in user just because it's public.
+  // `can.record` means "member of the current team — can write"; write
+  // controls are gated on it, and the DB's RLS is the real enforcement.
+  // Guests (`isGuest`) hold no role on any team, so they never see a write
+  // control regardless of `can`.
   //
   // Signed out: '/login' is the sign-in/sign-up form; every other path
   // (including '/', the marketing homepage, and any unrecognized URL) shows
@@ -109,10 +125,27 @@ export default function App() {
 
   // Every domain table requires an organization_id, so a user with zero
   // memberships has nothing to see yet: send them to create one first.
-  if (organizations.length === 0) {
+  // Guests hold zero memberships by design (they browse the public team
+  // read-only), so this only fires for a real signed-in user.
+  if (!isGuest && teams.length === 0) {
     return (
       <Suspense fallback={<PageFallback />}>
         <CreateOrganization />
+      </Suspense>
+    )
+  }
+
+  // A guest who hasn't picked a team yet has no organization_id to scope
+  // Schedule/Roster/Stats to, so the normal shell has nothing to render.
+  // Show the public-teams browser instead of the shell entirely; once
+  // switchTeam() sets currentTeamId (still granting no capability -- `can`
+  // stays NO_CAPABILITIES for a guest regardless of which team is current,
+  // since `role` is derived from `teams`, which is empty for a guest) the
+  // branches below take over and the normal shell renders.
+  if (isGuest && currentTeamId == null) {
+    return (
+      <Suspense fallback={<PageFallback />}>
+        <PublicTeams />
       </Suspense>
     )
   }
@@ -131,18 +164,28 @@ export default function App() {
         <Route path="/roster/:playerId" element={<Roster />} />
         <Route path="/stats" element={<Stats />} />
         <Route path="/stats/:subtab" element={<Stats />} />
-        <Route path="/plays" element={<Strategy />} />
-        <Route path="/plays/:playId" element={<Strategy />} />
-        <Route path="/ai" element={<Chat />} />
+        {/* Not a nav tab (see lib/nav.ts's EXTRA_KNOWN_PATHS) -- this is how
+            a guest who already picked a team gets back to the browser to
+            pick a different one. */}
+        <Route path="/teams" element={<PublicTeams />} />
+        {!isGuest && <Route path="/plays" element={<Strategy />} />}
+        {!isGuest && <Route path="/plays/:playId" element={<Strategy />} />}
+        {!isGuest && <Route path="/ai" element={<Chat />} />}
       </Routes>
     </Suspense>
   )
 
-  const readOnlyNotice = !allowed && (
-    <div className="bg-accent border-b border-border">
-      <div className="max-w-2xl mx-auto px-4 py-2 text-xs text-muted-foreground text-center">
-        You have read-only access. Ask a team admin to add you for editing.
-      </div>
+  const guestNotice = isGuest && (
+    <div className="border-b bg-muted/60 px-4 py-2 text-center text-sm">
+      You're browsing as a guest.{' '}
+      <Link to="/login" className="font-medium underline">Sign up</Link>{' '}
+      to join a team and track your own stats.
+    </div>
+  )
+
+  const readOnlyNotice = !isGuest && !can.record && (
+    <div className="border-b bg-muted/60 px-4 py-2 text-center text-sm">
+      You don't have permission to change this team's data.
     </div>
   )
 
@@ -156,11 +199,12 @@ export default function App() {
           setActiveTab={setActiveTab}
           theme={theme}
           toggleTheme={toggleTheme}
-          userEmail={user.email}
+          userEmail={user.email ?? 'Guest'}
           logout={logout}
-          organizations={organizations}
-          currentOrgId={currentOrgId}
-          switchOrg={switchOrg}
+          teams={teams}
+          currentTeamId={currentTeamId}
+          switchTeam={switchTeam}
+          isGuest={isGuest}
           openSettings={() => setSettingsOpen(true)}
           openPasskeys={passkeysAvailable() ? () => setPasskeysOpen(true) : undefined}
         />
@@ -171,6 +215,7 @@ export default function App() {
             <SidebarTrigger />
             <h1 className="text-lg font-bold text-primary">{activeLabel}</h1>
           </header>
+          {guestNotice}
           {readOnlyNotice}
           <main className="mx-auto w-full max-w-5xl px-6 py-6">
             {pageContent}
@@ -214,7 +259,7 @@ export default function App() {
               onClick={() => logout()}
               className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
               aria-label="Sign out"
-              title={user.email}
+              title={user.email ?? 'Guest'}
             >
               <LogOut className="w-5 h-5" />
             </button>
@@ -222,20 +267,21 @@ export default function App() {
         </div>
       </header>
 
-      {organizations.length > 1 && (
+      {teams.length > 1 && (
         <div className="bg-card border-b border-border px-4 py-2">
           <select
-            value={currentOrgId ?? ''}
-            onChange={e => switchOrg(Number(e.target.value))}
+            value={currentTeamId ?? ''}
+            onChange={e => switchTeam(Number(e.target.value))}
             className="w-full text-sm bg-transparent border border-border rounded-md px-2 py-1"
           >
-            {organizations.map(o => (
-              <option key={o.organization_id} value={o.organization_id}>{o.name}</option>
+            {teams.map(t => (
+              <option key={t.organization_id} value={t.organization_id}>{t.name}</option>
             ))}
           </select>
         </div>
       )}
 
+      {guestNotice}
       {readOnlyNotice}
 
       <PasskeysDialog open={passkeysOpen} onOpenChange={setPasskeysOpen} />
@@ -246,8 +292,8 @@ export default function App() {
       </main>
 
       <nav className="fixed bottom-0 left-0 right-0 bg-card border-t border-border">
-        <div className="max-w-2xl mx-auto grid" style={{ gridTemplateColumns: `repeat(${NAV_ITEMS.length}, minmax(0, 1fr))` }}>
-          {NAV_ITEMS.map(({ key, icon: Icon, label }) => (
+        <div className="max-w-2xl mx-auto grid" style={{ gridTemplateColumns: `repeat(${visibleNavItems(isGuest).length}, minmax(0, 1fr))` }}>
+          {visibleNavItems(isGuest).map(({ key, icon: Icon, label }) => (
             <button
               key={key}
               onClick={() => setActiveTab(key)}
