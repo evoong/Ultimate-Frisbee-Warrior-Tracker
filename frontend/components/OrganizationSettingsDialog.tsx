@@ -49,7 +49,6 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
   const [isPublic, setIsPublic] = useState(current?.is_public ?? false)
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState<'member' | 'editor'>('member')
-  const [saveError, setSaveError] = useState<string | null>(null)
   const [photoError, setPhotoError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
@@ -59,7 +58,6 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
     if (open) {
       setName(current?.name ?? '')
       setIsPublic(current?.is_public ?? false)
-      setSaveError(null)
       setPhotoError(null)
       if (currentTeamId != null && can.manageTeam) {
         void members.trigger({ teamId: currentTeamId })
@@ -72,15 +70,13 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
   async function handleSaveDetails(e: FormEvent) {
     e.preventDefault()
     if (currentTeamId == null) return
-    setSaveError(null)
     setSaving(true)
-    try {
-      await updateTeam.trigger({ teamId: currentTeamId, name: name.trim(), isPublic })
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Could not save team settings')
-    } finally {
-      setSaving(false)
-    }
+    // useUpdateTeam's trigger never throws -- it swallows the RPC/PostgREST
+    // error into its own `error` state and resolves to undefined on failure.
+    // There is nothing useful to catch here; `updateTeam.error` is rendered
+    // in JSX below and will be current on the next render regardless.
+    await updateTeam.trigger({ teamId: currentTeamId, name: name.trim(), isPublic })
+    setSaving(false)
   }
 
   async function uploadTeamPhoto(file: File) {
@@ -94,6 +90,9 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
       .upload(path, file, { upsert: true })
     if (upErr) throw new Error(upErr.message)
     const { data } = supabase.storage.from('team-photos').getPublicUrl(path)
+    // As above: if persisting the URL fails, the file is still in storage but
+    // never linked to the team. That failure surfaces via `updateTeam.error`
+    // in JSX, not via a thrown exception here.
     await updateTeam.trigger({ teamId: currentTeamId, photoUrl: data.publicUrl })
   }
 
@@ -130,7 +129,7 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
           </div>
         ) : (
           <>
-            {saveError && <p className="text-sm text-destructive">{saveError}</p>}
+            {updateTeam.error && <p className="text-sm text-destructive">{updateTeam.error}</p>}
             <form onSubmit={handleSaveDetails} className="space-y-3">
               <div className="space-y-2">
                 <Label htmlFor="team-settings-name">Name</Label>
@@ -182,6 +181,9 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
 
             <div className="border-t border-border pt-3 space-y-2">
               <Label>Members</Label>
+              {(setRole.error || removeMember.error) && (
+                <p className="text-sm text-destructive">{setRole.error || removeMember.error}</p>
+              )}
               {members.data === undefined ? (
                 <>
                   <Skeleton className="h-9 w-full" />
@@ -263,7 +265,9 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
                 </Button>
               </form>
 
-              {invite.error && <p className="text-sm text-destructive">{invite.error}</p>}
+              {(invite.error || revoke.error) && (
+                <p className="text-sm text-destructive">{invite.error || revoke.error}</p>
+              )}
 
               {invites.data?.map(i => (
                 <div key={i.id} className="flex items-center justify-between py-1 text-sm">
