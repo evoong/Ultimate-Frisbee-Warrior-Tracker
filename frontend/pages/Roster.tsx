@@ -212,6 +212,13 @@ export default function Roster() {
 
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
+  // useUpsertPlayerPrivate's `error` has no reset of its own -- it only
+  // changes when trigger() runs again -- so without this, a failed save's
+  // error would still be sitting there the next time the edit form opens,
+  // looking like it belongs to a save attempt that hasn't happened yet.
+  // dismissed=true hides it; a fresh save attempt un-hides before it fires,
+  // so a real (even identically-worded) new failure still shows.
+  const [phoneErrorDismissed, setPhoneErrorDismissed] = useState(false)
   // Empty array means "All Seasons"
   const [seasonFilters, setSeasonFilters] = useState<string[]>([])
   const [assistView, setAssistView] = useState<'list' | 'network'>('list')
@@ -354,11 +361,16 @@ export default function Roster() {
 
   const handleStartEdit = () => {
     if (!selectedPlayer) return
+    setPhoneErrorDismissed(true)
     setEditFields({
       display_name: selectedPlayer.display_name,
       number: selectedPlayer.number != null ? String(selectedPlayer.number) : '',
       gender_match: selectedPlayer.gender_match ?? '',
-      phone: selectedPlayer.phone ?? '',
+      // Read from the map, not selectedPlayer.phone: selectedPlayer is a
+      // point-in-time copy (see the phoneByPlayerId comment on the detail
+      // view below) that can be stale if player_private resolved after
+      // selectedPlayer was captured.
+      phone: phoneByPlayerId.get(selectedPlayer.id) ?? '',
       position: selectedPlayer.position ?? '',
     })
     setEditing(true)
@@ -378,10 +390,17 @@ export default function Roster() {
     }) as Omit<Player, 'phone'> | undefined
     if (updated) {
       const phone = editFields.phone || null
-      const phoneSaved = currentTeamId != null
-        ? await upsertPlayerPrivate({ teamId: currentTeamId, playerId: selectedPlayer.id, phone })
-        : undefined
-      setSelectedPlayer({ ...updated, phone: phoneSaved ? phone : selectedPlayer.phone })
+      // Un-hide before the attempt (not after): if this fails, the hook's
+      // `error` needs to already be visible-eligible by the time it's set,
+      // otherwise a same-text repeat of a previously-dismissed error
+      // wouldn't visibly change and could stay hidden.
+      setPhoneErrorDismissed(false)
+      if (currentTeamId != null) await upsertPlayerPrivate({ teamId: currentTeamId, playerId: selectedPlayer.id, phone })
+      // Merge the players-table fields only. phone is intentionally NOT
+      // copied onto selectedPlayer -- the detail view below derives it live
+      // from phoneByPlayerId so it can never go stale, including right now:
+      // fetchPlayerPrivate's refetch will update that map on its own.
+      setSelectedPlayer({ ...selectedPlayer, ...updated })
       track('player_updated', { player_id: selectedPlayer.id })
       fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
       if (currentTeamId != null) fetchPlayerPrivate({ teamId: currentTeamId })
@@ -403,12 +422,12 @@ export default function Roster() {
     track('player_seasons_updated', { player_id: selectedPlayer.id, season_count: selectedSeasonIds.length })
     await fetchPlayerSeasons({ playerId: selectedPlayer.id })
     const refreshed = await fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
-    // fetchPlayers' own return value is the raw `players` row, without the
-    // player_private merge (that only happens in the `players` useMemo
-    // above) -- re-merge here too, or phone would appear to vanish from the
-    // detail view until the next unrelated re-render.
+    // fetchPlayers' own return value is the raw `players` row -- no phone
+    // field at all (that column no longer exists there). Not a problem:
+    // the detail view derives phone from phoneByPlayerId at render time
+    // (see the Player Detail View block below), never from this object.
     const updatedRaw = (refreshed as Omit<Player, 'phone'>[] | undefined)?.find(p => p.id === selectedPlayer.id)
-    if (updatedRaw) setSelectedPlayer({ ...updatedRaw, phone: phoneByPlayerId.get(updatedRaw.id) ?? null })
+    if (updatedRaw) setSelectedPlayer({ ...selectedPlayer, ...updatedRaw })
     setEditingSeasons(false)
   }
 
@@ -633,6 +652,14 @@ export default function Roster() {
   // ── Player Detail View ────────────────────────────────────────────────────────
   if (selectedPlayer) {
     const pSeasons = (playerSeasons as PlayerSeason[] | undefined) ?? []
+    // Derived at render time, not read off selectedPlayer: selectedPlayer is
+    // a snapshot captured at selection time (see handleSelectPlayer and the
+    // deep-link effect above), and player_private can resolve AFTER that
+    // snapshot is taken -- e.g. opening /roster/:id directly races the two
+    // fetches in the effect above. Reading phoneByPlayerId here instead
+    // means whichever fetch lands last, the very next render picks up the
+    // real phone -- there's no copy of it to go stale.
+    const selectedPhone = phoneByPlayerId.get(selectedPlayer.id) ?? null
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-between">
@@ -686,9 +713,9 @@ export default function Roster() {
                 </span>
               )}
               {selectedPlayer.position && <span className="text-sm text-muted-foreground">{selectedPlayer.position}</span>}
-              {selectedPlayer.phone && (
+              {selectedPhone && (
                 <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                  <Phone className="w-3 h-3" />{selectedPlayer.phone}
+                  <Phone className="w-3 h-3" />{selectedPhone}
                 </div>
               )}
             </div>
@@ -737,7 +764,7 @@ export default function Roster() {
               <div className="space-y-1">
                 <Label className="text-xs">Phone</Label>
                 <Input value={editFields.phone} onChange={e => setEditFields(f => ({ ...f, phone: e.target.value }))} placeholder="Optional" className="h-8 text-sm bg-background border-border" />
-                {phoneError && <p className="text-sm text-destructive">{phoneError}</p>}
+                {!phoneErrorDismissed && phoneError && <p className="text-sm text-destructive">{phoneError}</p>}
               </div>
               <div className="flex gap-2">
                 <Button onClick={handleSaveEdit} size="sm" className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90 h-9">
