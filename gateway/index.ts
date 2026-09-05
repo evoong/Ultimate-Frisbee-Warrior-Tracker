@@ -27,28 +27,8 @@ export function createGateway(config: GatewayConfig): Gateway {
   }
 }
 
-export interface AllowedUser {
-  sub: string
-  email: string
-}
 
 // For routes OUTSIDE the gateway that hold privileged credentials (the
 // Express chat endpoints use the service role, which bypasses RLS). Verifies
 // the access-token cookie against the project JWKS and checks the allowlist
 // via the caller-provided lookup (service-role query, cached by the caller).
-export function createRequireAllowedUser(
-  config: GatewayConfig,
-  isEmailAllowed: (email: string) => Promise<boolean>
-) {
-  return async (request: Request): Promise<AllowedUser | null> => {
-    const url = new URL(request.url)
-    const token = parseCookies(request)[cookieNames(url).accessToken]
-    if (!token) return null
-    const claims = await verifyAccessToken(token, config.jwksUrl, config.supabaseUrl)
-    // Guests hold no email and are never "allowed users" — this helper
-    // exists only for routes that write with privileged credentials.
-    if (!claims || claims.isAnonymous || !claims.email) return null
-    if (!(await isEmailAllowed(claims.email.toLowerCase()))) return null
-    return { sub: claims.sub, email: claims.email }
-  }
-}

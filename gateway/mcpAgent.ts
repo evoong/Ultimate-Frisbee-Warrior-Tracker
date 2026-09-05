@@ -34,7 +34,14 @@ export class UfwtMcp extends McpAgent<Env, {}, McpAuthProps> {
   server = new McpServer({ name: 'ultimate-frisbee-warrior-tracker', version: '1.0.0' })
 
   async init() {
-    const orgId = this.env.MCP_ORGANIZATION_ID ? parseInt(this.env.MCP_ORGANIZATION_ID) : 1
+    // parseInt would take "1.9" as 1 and "2abc" as 2. Membership is still
+    // checked against whatever id results, so a sloppy value cannot reach
+    // another team's data, but it should not silently pick a team either.
+    const raw = this.env.MCP_ORGANIZATION_ID
+    const orgId = raw === undefined ? 1 : Number(raw)
+    if (!Number.isInteger(orgId) || orgId < 1) {
+      throw new Error(`MCP: MCP_ORGANIZATION_ID must be a positive integer, got ${JSON.stringify(raw)}`)
+    }
 
     // The OAuth-authenticated identity must actually belong to the org these
     // tools operate on. Without this, any account that can complete the OAuth
@@ -67,5 +74,29 @@ export class UfwtMcp extends McpAgent<Env, {}, McpAuthProps> {
       { supabaseUrl: this.env.SUPABASE_URL, supabaseSecretKey: this.env.SUPABASE_SECRET_KEY },
       orgId
     )
+
+    // Re-check membership on every tool call, not just here. init() runs once
+    // when the Durable Object wakes (the agents SDK calls it from onStart), so
+    // a role revoked afterwards would otherwise keep full service-role tool
+    // access for the whole life of the warm instance -- well past the 30s the
+    // design allows for a revocation to take effect. executeToolHandler is the
+    // single point every tool call passes through, so wrapping it covers all
+    // 14 tools without touching mcpTools.ts. The lookup caches for 30s, so this
+    // costs at most one query per 30s per user.
+    const server = this.server as unknown as {
+      executeToolHandler?: (tool: unknown, args: unknown, extra: unknown) => Promise<unknown>
+    }
+    const inner = server.executeToolHandler
+    if (typeof inner !== 'function') {
+      // Fail closed and loudly rather than silently serving tools whose
+      // membership check is frozen at wake time.
+      throw new Error('MCP: cannot install the per-call membership check (SDK shape changed)')
+    }
+    server.executeToolHandler = async (tool, args, extra) => {
+      if ((await lookup.roleFor(userId, orgId)) === null) {
+        throw new Error(`MCP: ${email} is no longer a member of team ${orgId}`)
+      }
+      return inner.call(server, tool, args, extra)
+    }
   }
 }

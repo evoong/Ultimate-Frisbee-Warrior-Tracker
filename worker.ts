@@ -89,8 +89,13 @@ async function handleAppRequest(request: Request, env: Env, ctx: ExecutionContex
         const claims = token
           ? await verifyAccessToken(token, env.SUPABASE_JWKS_URL, env.SUPABASE_URL)
           : null;
-        if (!claims || claims.isAnonymous) {
+        if (!claims) {
           return new Response(JSON.stringify({ error: "not authenticated" }), { status: 401, headers: { "Content-Type": "application/json" } });
+        }
+        // A guest holds a real, verified anonymous JWT: authenticated, not
+        // permitted. Same split the chat routes use in both runtimes.
+        if (claims.isAnonymous) {
+          return new Response(JSON.stringify({ error: "not a member of any team" }), { status: 403, headers: { "Content-Type": "application/json" } });
         }
         const lookup = createMembershipLookup({
           supabaseUrl: env.SUPABASE_URL,

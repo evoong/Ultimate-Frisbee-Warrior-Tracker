@@ -10,8 +10,8 @@ import { createGateway } from "../gateway/index.js";
 import { nodeAdapter } from "../gateway/node-adapter.js";
 import { getVaultSecret } from "../gateway/secrets.js";
 import { runJamSync } from "../gateway/jamSync.js";
-import { CHAT_FUNCTION_DECLARATIONS, callChatFunction, type ActionsConfig } from "../gateway/gameActions.js";
-import { createMembershipLookup } from "../gateway/membership.js";
+import { CHAT_FUNCTION_DECLARATIONS, WRITE_FUNCTIONS, callChatFunction, type ActionsConfig } from "../gateway/gameActions.js";
+import { createMembershipLookup, hasAtLeast, type TeamRole } from "../gateway/membership.js";
 import { parseCookies, cookieNames } from "../gateway/cookies.js";
 import { verifyAccessToken } from "../gateway/jwt.js";
 
@@ -77,8 +77,8 @@ const supabase = createClient(
 // per-request handler because a Worker isolate is long-lived and a chat
 // turn is exactly one request there, so per-request scoping costs nothing
 // and avoids any cross-request staleness. This Express process has no such
-// per-request boundary — isOrgMember is a bare module-level function
-// called directly by route handlers — so the cache
+// per-request boundary — classifyChatCaller calls the lookup directly from
+// route handlers — so the cache
 // here is bounded by the number of distinct users rather than by request
 // volume, and staleness across requests is capped at the lookup's 30s TTL,
 // which the design's Global Constraint explicitly permits ("cached for at
@@ -95,17 +95,16 @@ const membership = createMembershipLookup({
 // admin API, then check membership by id.
 
 // True only when the user is a member of this specific organization/team.
-async function isOrgMember(userId: string, organizationId: number): Promise<boolean> {
-  return (await membership.roleFor(userId, organizationId)) !== null;
-}
 
 // Mirrors the Worker's requireTeamMember (gateway/chat.ts): 401 means
 // "authenticate", 403 means "authenticated, but not on this team". A guest
 // holds a real, verified anonymous JWT, so it is the second case.
-// The gateway's createRequireAllowedUser cannot express that distinction: it
-// collapses no token, invalid token, anonymous, and not-allowed all into null.
+// A guard that returns a bare null cannot express that distinction, which is
+// how an unauthenticated caller and a rejected member came to look identical.
 // So the chat routes classify the caller themselves.
-type ChatCaller = { ok: true; sub: string } | { ok: false; status: 401 | 403; error: string }
+type ChatCaller =
+  | { ok: true; sub: string; role: TeamRole }
+  | { ok: false; status: 401 | 403; error: string }
 
 async function classifyChatCaller(webRequest: Request, organizationId: number): Promise<ChatCaller> {
   const url = new URL(webRequest.url)
@@ -114,10 +113,11 @@ async function classifyChatCaller(webRequest: Request, organizationId: number): 
   const claims = await verifyAccessToken(token, gatewayConfig.jwksUrl, gatewayConfig.supabaseUrl)
   if (!claims) return { ok: false, status: 401, error: "not authenticated" }
   if (claims.isAnonymous) return { ok: false, status: 403, error: "not a member of this team" }
-  if (!(await isOrgMember(claims.sub, organizationId))) {
+  const role = await membership.roleFor(claims.sub, organizationId)
+  if (!hasAtLeast(role, "member")) {
     return { ok: false, status: 403, error: "not a member of this team" }
   }
-  return { ok: true, sub: claims.sub }
+  return { ok: true, sub: claims.sub, role: role as TeamRole }
 }
 
 
@@ -391,10 +391,13 @@ app.post("/api/chat", async (req, res) => {
     const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
       headers: { cookie: req.headers.cookie ?? "" },
     });
-    const caller = await classifyChatCaller(webRequest, Number(organization_id));
+    const teamId = Number(organization_id);
+    const caller = await classifyChatCaller(webRequest, teamId);
     if (!caller.ok) return res.status(caller.status).json({ error: caller.error });
 
-    const systemContext = await getTeamContext(organization_id);
+    // From here on only teamId is used. The raw body value never reaches a
+    // query again, matching the same invariant in gateway/chat.ts.
+    const systemContext = await getTeamContext(teamId);
 
     const geminiApiKey = await getVaultSecret(vaultConfig, "gemini_api_key", process.env.GEMINI_API_KEY);
     const geminiModel = (await getVaultSecret(vaultConfig, "gemini_model", process.env.GEMINI_MODEL)) ?? DEFAULT_GEMINI_MODEL;
@@ -439,7 +442,9 @@ app.post("/api/chat", async (req, res) => {
       if (!calls || calls.length === 0) break;
       const parts = await Promise.all(calls.map(async (call) => {
         try {
-          const output = await callChatFunction(actionsConfig, organization_id, call.name!, call.args ?? {});
+          const output = WRITE_FUNCTIONS.has(call.name!) && !hasAtLeast(caller.role, "member")
+            ? { error: "you do not have permission to change this team's data" }
+            : await callChatFunction(actionsConfig, teamId, call.name!, call.args ?? {});
           return { functionResponse: { name: call.name!, response: { output } } };
         } catch (err) {
           return { functionResponse: { name: call.name!, response: { error: err instanceof Error ? err.message : String(err) } } };
@@ -451,8 +456,8 @@ app.post("/api/chat", async (req, res) => {
 
     // Save both turns to chat_logs
     await supabase.from("chat_logs").insert([
-      { session_id, role: "user", content: message, organization_id },
-      { session_id, role: "assistant", content: reply, organization_id },
+      { session_id, role: "user", content: message, organization_id: teamId },
+      { session_id, role: "assistant", content: reply, organization_id: teamId },
     ]);
 
     res.json({ reply });
@@ -470,14 +475,15 @@ app.get("/api/chat/history", async (req, res) => {
     const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
       headers: { cookie: req.headers.cookie ?? "" },
     });
-    const caller = await classifyChatCaller(webRequest, Number(organization_id));
+    const teamId = Number(organization_id);
+    const caller = await classifyChatCaller(webRequest, teamId);
     if (!caller.ok) return res.status(caller.status).json({ error: caller.error });
 
     const { data, error } = await supabase
       .from("chat_logs")
       .select("role, content, created_at")
       .eq("session_id", session_id)
-      .eq("organization_id", organization_id)
+      .eq("organization_id", teamId)
       .order("created_at", { ascending: true });
 
     if (error) throw error;
@@ -496,10 +502,11 @@ app.delete("/api/chat/history", async (req, res) => {
     const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
       headers: { cookie: req.headers.cookie ?? "" },
     });
-    const caller = await classifyChatCaller(webRequest, Number(organization_id));
+    const teamId = Number(organization_id);
+    const caller = await classifyChatCaller(webRequest, teamId);
     if (!caller.ok) return res.status(caller.status).json({ error: caller.error });
 
-    const { error } = await supabase.from("chat_logs").delete().eq("session_id", session_id).eq("organization_id", organization_id);
+    const { error } = await supabase.from("chat_logs").delete().eq("session_id", session_id).eq("organization_id", teamId);
     if (error) throw error;
     res.json({ ok: true });
   } catch (err: unknown) {
@@ -544,8 +551,11 @@ app.post("/api/schedule/sync-jam", async (req, res) => {
     const claims = token
       ? await verifyAccessToken(token, gatewayConfig.jwksUrl, gatewayConfig.supabaseUrl)
       : null;
-    if (!claims || claims.isAnonymous) {
-      return res.status(401).json({ error: "not authenticated" });
+    if (!claims) return res.status(401).json({ error: "not authenticated" });
+    // A guest holds a real, verified anonymous JWT: authenticated, not
+    // permitted. Same split the chat routes use in both runtimes.
+    if (claims.isAnonymous) {
+      return res.status(403).json({ error: "not a member of any team" });
     }
     const teams = await membership.teamsFor(claims.sub);
     if (teams.length === 0) {

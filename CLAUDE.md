@@ -7,24 +7,19 @@
    `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `SUPABASE_JWKS_URL`, `GEMINI_API_KEY`.
    No `.env.example` exists — get real values from the Supabase dashboard (project `ultimate-frisbee-warrior-tracker`, ref `pyqngqyqwevfpaxcmfnd`, org `caypalgdyzpvqqecqhfd`, region `ca-central-1`) → Project Settings → API for the URL/keys, → Database for `DATABASE_URL`. `server/index.ts` throws at import time (crashes the whole process) if `SUPABASE_URL`/`SUPABASE_SECRET_KEY` are blank — there's no graceful fallback.
 4. Start both dev servers from `.claude/launch.json`: "Express API Server" (port 3001) and "Vite Frontend" (port 5199, cwd `frontend`). The frontend alone will run but backend-dependent features (chat, uploads) need the Express server too.
-5. Local database: `npm run db:start` (needs Docker), then `npm run db:reset`
+5. Local JWT signing key: `npm run db:signing-key`. Do this **before** first
+   starting the stack. Without it the local stack signs HS256 and serves an
+   **empty** JWKS (`{"keys":[]}`), so `verifyAccessToken` in `gateway/jwt.ts`
+   cannot verify any locally minted token and every gateway-authenticated
+   request fails locally for a reason that looks like a code bug.
+   `supabase/config.toml` points at `./signing_keys.json`, which is gitignored
+   because it is a private key -- generate your own per clone.
+6. Local database: `npm run db:start` (needs Docker), then `npm run db:reset`
    to load the baseline plus seed data and test identities. `npm run db:test`
    runs the pgTAP permission suite. Copy `.env.local.example` to `.env.local`
-   and fill in the keys printed by `supabase status`.
-6. Local JWT signing key: `npm run db:signing-key`, then restart the stack
-   (`npm run db:stop && npm run db:start`). Without it the local stack signs
-   HS256 and serves an **empty** JWKS (`{"keys":[]}`), so `verifyAccessToken`
-   in `gateway/jwt.ts` cannot verify any locally minted token and every
-   gateway-authenticated request fails locally for a reason that looks like a
-   code bug. `supabase/config.toml` points at `./signing_keys.json`, which is
-   gitignored because it is a private key -- generate your own per clone.
-
-## MCP server (AI tool access)
-- `MCP_ORGANIZATION_ID` is now required for the local stdio server
-  (`mcp-server/index.ts`). It refuses to start without one, deliberately,
-  because an accidental default of `1` is a cross-team leak.
-- For the hosted Worker agent (`gateway/mcpAgent.ts`), the OAuth-authenticated
-  identity must be a member of that team, or no tools are registered at all.
+   and fill in the keys printed by `supabase status`. If you started the stack
+   before step 5, restart it (`npm run db:stop && npm run db:start`) so GoTrue
+   picks up the key.
 
 ## Gotchas
 - Windows: `node node_modules/.bin/tsx <file>` fails with a syntax error — `.bin/tsx` is a POSIX shell shim, not a Node script. Use `node node_modules/tsx/dist/cli.mjs <file>` (or `npx tsx <file>`) instead. `.claude/launch.json`'s "Express API Server" config already uses the fixed form, but `package.json`'s own `server`/`dev` npm scripts still use the broken one and will fail the same way if run directly.

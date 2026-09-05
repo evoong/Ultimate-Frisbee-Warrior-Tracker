@@ -21,7 +21,8 @@
     "db:reset": "supabase db reset && npm run db:seed:users",
     "db:seed:users": "node --env-file=.env.local scripts/seed-local-users.mjs && docker exec -i $(docker ps -qf name=supabase_db) psql -U postgres -d postgres < scripts/seed-local-memberships.sql",
     "db:test": "supabase test db",
-    "db:signing-key": "node scripts/gen-local-signing-key.mjs"
+    "db:signing-key": "node scripts/gen-local-signing-key.mjs",
+    "test:gateway:offline": "node node_modules/tsx/dist/cli.mjs gateway/jwt.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/gameActions.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/jamSync.test.mjs"
   },
   "retool": {
     "app": {

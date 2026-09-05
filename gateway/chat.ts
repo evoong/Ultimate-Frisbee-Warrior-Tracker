@@ -57,28 +57,39 @@ async function insertChatLogs(config: ChatConfig, organizationId: number, rows: 
 // the only thing standing between a caller and another team's data, so it
 // checks the team the caller actually named -- and rejects guests, because
 // chat is members-only (Tier B in the permission spec).
+// 401 means "authenticate", 403 means "authenticated, but not on this team".
+// Returning null for both, as an earlier version did, made an unauthenticated
+// caller look identical to a rejected member and put this runtime out of step
+// with Express, which distinguishes them.
+type ChatCaller =
+  | { ok: true; sub: string; email: string | null; role: TeamRole }
+  | { ok: false; status: 401 | 403; error: string }
+
 async function requireTeamMember(
   config: ChatConfig,
   request: Request,
   organizationId: number,
   required: TeamRole = 'member'
-): Promise<{ sub: string; email: string | null; role: TeamRole } | null> {
+): Promise<ChatCaller> {
   const url = new URL(request.url)
   const token = parseCookies(request)[cookieNames(url).accessToken]
-  if (!token) return null
+  if (!token) return { ok: false, status: 401, error: 'not authenticated' }
 
   const claims = await verifyAccessToken(token, config.jwksUrl, config.supabaseUrl)
-  if (!claims) return null
-  if (claims.isAnonymous) return null
+  if (!claims) return { ok: false, status: 401, error: 'not authenticated' }
+  // A guest holds a real, verified anonymous JWT: authenticated, not permitted.
+  if (claims.isAnonymous) return { ok: false, status: 403, error: 'not a member of this team' }
 
   const lookup = createMembershipLookup({
     supabaseUrl: config.supabaseUrl,
     supabaseSecretKey: config.supabaseSecretKey,
   })
   const role = await lookup.roleFor(claims.sub, organizationId)
-  if (!hasAtLeast(role, required)) return null
+  if (!hasAtLeast(role, required)) {
+    return { ok: false, status: 403, error: 'not a member of this team' }
+  }
 
-  return { sub: claims.sub, email: claims.email, role: role as TeamRole }
+  return { ok: true, sub: claims.sub, email: claims.email, role: role as TeamRole }
 }
 
 type Stat = { goals: number; assists: number; turnovers: number }
@@ -399,7 +410,7 @@ export async function handleChatRequest(config: ChatConfig, request: Request): P
     if (!organization_id) return json({ error: 'organization_id required' }, 400)
 
     const user = await requireTeamMember(config, request, Number(organization_id))
-    if (!user) return json({ error: 'not a member of this team' }, 403)
+    if (!user.ok) return json({ error: user.error }, user.status)
 
     // From here on, only this value is used. It has been checked against the
     // caller's membership; the raw body value never reaches a query again, and
@@ -433,7 +444,7 @@ export async function handleChatHistoryRequest(config: ChatConfig, request: Requ
     if (!organizationId) return json({ error: 'organization_id required' }, 400)
 
     const user = await requireTeamMember(config, request, Number(organizationId))
-    if (!user) return json({ error: 'not a member of this team' }, 403)
+    if (!user.ok) return json({ error: user.error }, user.status)
 
     const rows = await supabaseServiceFetch(
       config,
@@ -454,7 +465,7 @@ export async function handleChatHistoryDeleteRequest(config: ChatConfig, request
     if (!organizationId) return json({ error: 'organization_id required' }, 400)
 
     const user = await requireTeamMember(config, request, Number(organizationId))
-    if (!user) return json({ error: 'not a member of this team' }, 403)
+    if (!user.ok) return json({ error: user.error }, user.status)
 
     const res = await fetch(`${config.supabaseUrl}/rest/v1/chat_logs?session_id=eq.${encodeURIComponent(sessionId)}&organization_id=eq.${organizationId}`, {
       method: 'DELETE',
