@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { Button } from '../lib/shadcn/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../lib/shadcn/card'
@@ -22,7 +22,8 @@ type Mode = 'login' | 'signup' | 'forgot'
 const PASSWORD_MIN_LENGTH = 8
 
 export default function Login() {
-  const { login, signup, loginWithGoogle, loginWithPasskey, forgotPassword } = useAuth()
+  const navigate = useNavigate()
+  const { login, signup, loginWithGoogle, loginWithPasskey, loginAsGuest, forgotPassword } = useAuth()
   // Home's "Get started free" CTA links here with ?mode=signup so the form
   // opens straight on the signup tab instead of requiring an extra click.
   const [mode, setMode] = useState<Mode>(
@@ -198,6 +199,37 @@ export default function Login() {
                         Sign in with a passkey
                       </Button>
                     )}
+
+                    <div className="relative my-4">
+                      <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
+                      <div className="relative flex justify-center text-xs uppercase">
+                        <span className="bg-background px-2 text-muted-foreground">or</span>
+                      </div>
+                    </div>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full"
+                      disabled={busy}
+                      onClick={async () => {
+                        setBusy(true)
+                        setError(null)
+                        try {
+                          await loginAsGuest()
+                          navigate('/')
+                        } catch (err) {
+                          setError(err instanceof Error ? err.message : 'Could not continue as a guest')
+                        } finally {
+                          setBusy(false)
+                        }
+                      }}
+                    >
+                      Continue as a guest
+                    </Button>
+                    <p className="mt-2 text-center text-xs text-muted-foreground">
+                      Browse public teams and league schedules. You won't be able to change anything.
+                    </p>
                   </>
                 )}
 
