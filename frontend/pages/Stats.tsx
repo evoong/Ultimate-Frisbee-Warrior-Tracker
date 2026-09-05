@@ -9,10 +9,11 @@ import {
   useCreateLeagueTeam, useUpdateLeagueTeam, useDeleteLeagueTeam, useUpdateSeasonPoints,
   type LeagueTeam,
 } from '../hooks/backend/league'
+import { useMyPlayerLink, useClaimPlayer, useGetTeamPlayerLinks } from '../hooks/backend/playerLink'
 import { getLatestJamSeasonWithPlayedGame, getDefaultJamSeasonId } from '../lib/seasonUtils'
 import { isPastGame } from '../lib/gameOrder'
 import { track } from '../lib/analytics'
-import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
 import { Label } from '../lib/shadcn/label'
@@ -21,6 +22,7 @@ import { Input } from '../lib/shadcn/input'
 import { Popover, PopoverContent, PopoverTrigger } from '../lib/shadcn/popover'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import PlayerMultiSelect from '../components/PlayerMultiSelect'
+import PlayerCombobox from '../components/PlayerCombobox'
 import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
 import {
@@ -135,7 +137,7 @@ function seasonLabel(s: { name: string; year: number; organizer: string | null }
   return [s.organizer, s.name, s.year].filter(Boolean).join(' ')
 }
 
-type PageTab = 'overview' | 'table' | 'standings'
+type PageTab = 'me' | 'overview' | 'table' | 'standings'
 
 type StandingsSortKey = 'rank' | 'team' | 'games_played' | 'wins' | 'points_for' | 'points_against' | 'point_diff' | 'points'
 
@@ -166,33 +168,39 @@ function StandingsSortHeader({ label, sortKey, activeKey, dir, onClick, align }:
 // ("table" predates the "Player Rankings" label — see the PageTab comment
 // above and doesn't belong in a URL a person actually reads).
 const PAGE_TABS: { key: PageTab; label: string; slug: string }[] = [
+  { key: 'me', label: 'Me', slug: 'me' },
   { key: 'overview', label: 'Overview', slug: 'overview' },
   { key: 'table', label: 'Player Rankings', slug: 'rankings' },
   { key: 'standings', label: 'League Standings', slug: 'standings' },
 ]
 
-function pageTabForSlug(slug: string | undefined): PageTab {
-  return PAGE_TABS.find(t => t.slug === slug)?.key ?? 'overview'
+function pageTabForSlug(slug: string | undefined, tabs: { key: PageTab; slug: string }[]): PageTab {
+  return tabs.find(t => t.slug === slug)?.key ?? 'overview'
 }
 
 export default function Stats() {
   const navigate = useNavigate()
+  const { isGuest } = useAuth()
   // The active sub-tab mirrors this URL segment, so a reload, browser
   // back/forward, or a bookmarked/shared link lands on the right sub-tab
   // instead of always resetting to Overview.
   const { subtab } = useParams<{ subtab: string }>()
-  const pageTab = pageTabForSlug(subtab)
+  // A guest holds no membership and can never claim a roster spot, so "Me"
+  // never appears for one -- there is nothing there but a claim picker that
+  // would 403 on every selection.
+  const visibleTabs = useMemo(() => PAGE_TABS.filter(t => t.key !== 'me' || !isGuest), [isGuest])
+  const pageTab = pageTabForSlug(subtab, visibleTabs)
 
   useEffect(() => {
-    if (subtab && !PAGE_TABS.some(t => t.slug === subtab)) navigate('/stats', { replace: true })
-  }, [subtab])
+    if (subtab && !visibleTabs.some(t => t.slug === subtab)) navigate('/stats', { replace: true })
+  }, [subtab, visibleTabs])
 
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-bold text-foreground">Stats</h1>
 
-      <div className="grid grid-cols-3 gap-1 p-1 rounded-lg bg-accent">
-        {PAGE_TABS.map(t => (
+      <div className={`grid gap-1 p-1 rounded-lg bg-accent ${visibleTabs.length === 4 ? 'grid-cols-4' : 'grid-cols-3'}`}>
+        {visibleTabs.map(t => (
           <button
             key={t.key}
             onClick={() => navigate(t.key === 'overview' ? '/stats' : `/stats/${t.slug}`)}
@@ -205,7 +213,7 @@ export default function Stats() {
         ))}
       </div>
 
-      {pageTab === 'standings' ? <Standings /> : <PlayerStatsView tab={pageTab} />}
+      {pageTab === 'standings' ? <Standings /> : <PlayerStatsView tab={pageTab as 'me' | 'overview' | 'table'} />}
     </div>
   )
 }
@@ -439,8 +447,11 @@ function DirectedNetworkGraph({ nodes, edges, positions, color, weightOf, select
 // fetch (previously split across the Stats and Ranking pages, which
 // duplicated the same filter UI and query); only the content below the
 // filters differs by tab.
-function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
-  const { currentOrgId } = useAuth()
+function PlayerStatsView({ tab }: { tab: 'me' | 'overview' | 'table' }) {
+  const { currentTeamId, user } = useAuth()
+  const link = useMyPlayerLink()
+  const claim = useClaimPlayer()
+  const teamLinks = useGetTeamPlayerLinks()
   const { data: games, trigger: fetchGames } = useGetGames()
   const { data: seasons, trigger: fetchSeasons } = useGetSeasons()
   const { data: allSeasons, trigger: fetchAllSeasons } = useGetAllSeasons()
@@ -564,12 +575,12 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<number[]>([])
 
   useEffect(() => {
-    if (currentOrgId == null) return
-    fetchGames({ organizationId: currentOrgId })
-    fetchSeasons({ organizationId: currentOrgId })
-    fetchAllSeasons({ organizationId: currentOrgId })
-    fetchOrgPlayers({ organizationId: currentOrgId })
-  }, [currentOrgId])
+    if (currentTeamId == null) return
+    fetchGames({ organizationId: currentTeamId })
+    fetchSeasons({ organizationId: currentTeamId })
+    fetchAllSeasons({ organizationId: currentTeamId })
+    fetchOrgPlayers({ organizationId: currentTeamId })
+  }, [currentTeamId])
 
   // Default both filters to the latest Jam season that's actually been played
   useEffect(() => {
@@ -588,39 +599,49 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
   }, [seasons, allSeasons, games])
 
   useEffect(() => {
-    if (currentOrgId == null) return
+    if (currentTeamId == null) return
     // limit: 200 is a practical "all pairs" ceiling — the Top Pairings card
     // and the Assist Network's two graphs (Assists and Goals, which now
     // read the same pairing data) each derive their own view from this one
     // fetch rather than hitting the network separately per view.
     if (filterType === 'all') {
-      fetchStats({ organizationId: currentOrgId })
-      fetchPairings({ organizationId: currentOrgId, limit: 200 })
+      fetchStats({ organizationId: currentTeamId })
+      fetchPairings({ organizationId: currentTeamId, limit: 200 })
     } else if (filterType === 'season') {
       if (selectedSeasonIds.length > 0) {
-        fetchStats({ seasonIds: selectedSeasonIds, organizationId: currentOrgId })
-        fetchPairings({ seasonIds: selectedSeasonIds, organizationId: currentOrgId, limit: 200 })
+        fetchStats({ seasonIds: selectedSeasonIds, organizationId: currentTeamId })
+        fetchPairings({ seasonIds: selectedSeasonIds, organizationId: currentTeamId, limit: 200 })
       } else {
-        fetchStats({ organizationId: currentOrgId })
-        fetchPairings({ organizationId: currentOrgId, limit: 200 })
+        fetchStats({ organizationId: currentTeamId })
+        fetchPairings({ organizationId: currentTeamId, limit: 200 })
       }
     } else if (filterType === 'games' && selectedGameIds.length > 0) {
-      fetchStats({ gameIds: selectedGameIds, organizationId: currentOrgId })
-      fetchPairings({ gameIds: selectedGameIds, organizationId: currentOrgId, limit: 200 })
+      fetchStats({ gameIds: selectedGameIds, organizationId: currentTeamId })
+      fetchPairings({ gameIds: selectedGameIds, organizationId: currentTeamId, limit: 200 })
     }
-  }, [filterType, selectedSeasonIds, selectedGameIds, currentOrgId])
+  }, [filterType, selectedSeasonIds, selectedGameIds, currentTeamId])
 
   useEffect(() => {
-    if (currentOrgId == null) return
+    if (currentTeamId == null) return
     if (cumulativeSeasonId && cumulativeSeasonId !== '__all__') {
-      fetchCumulative({ seasonId: parseInt(cumulativeSeasonId), organizationId: currentOrgId })
-      fetchProgressionRoster({ seasonIds: [parseInt(cumulativeSeasonId)], organizationId: currentOrgId })
+      fetchCumulative({ seasonId: parseInt(cumulativeSeasonId), organizationId: currentTeamId })
+      fetchProgressionRoster({ seasonIds: [parseInt(cumulativeSeasonId)], organizationId: currentTeamId })
     } else {
-      fetchCumulative({ organizationId: currentOrgId })
-      fetchProgressionRoster({ organizationId: currentOrgId })
+      fetchCumulative({ organizationId: currentTeamId })
+      fetchProgressionRoster({ organizationId: currentTeamId })
     }
     setSelectedPlayerIds([])
-  }, [cumulativeSeasonId, currentOrgId])
+  }, [cumulativeSeasonId, currentTeamId])
+
+  // "Me" tab only: who am I on this roster, and which players are already
+  // spoken for (pending or approved) so the claim picker doesn't offer a
+  // name someone else already claimed. Skipped for the other two tabs --
+  // there's no reason to run these queries while looking at Overview/Table.
+  useEffect(() => {
+    if (tab !== 'me' || currentTeamId == null || !user) return
+    link.trigger({ teamId: currentTeamId, userId: user.id })
+    teamLinks.trigger({ teamId: currentTeamId })
+  }, [tab, currentTeamId, user])
 
   const handleGameToggle = (gameId: number) => {
     setSelectedGameIds(prev => prev.includes(gameId) ? prev.filter(id => id !== gameId) : [...prev, gameId])
@@ -636,6 +657,21 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
   const statsArr = stats as PlayerStat[] | undefined
   const topScorer = statsArr ? [...statsArr].sort((a, b) => parseInt(b.goals) - parseInt(a.goals))[0] : null
   const topAssister = statsArr ? [...statsArr].sort((a, b) => parseInt(b.assists) - parseInt(a.assists))[0] : null
+
+  // "Me" tab: the claimed player's own row from the exact same `stats`
+  // query the Table tab renders (same Filters card, same fetch) -- so
+  // whatever a member sees here always matches their row over there. No
+  // separate aggregate query for "my stats".
+  const mine = link.data && link.data.status === 'approved'
+    ? statsArr?.find(s => s.player_id === link.data!.player_id)
+    : undefined
+  // Roster players nobody has claimed yet (pending or approved) -- offering
+  // an already-linked player would just 403 against player_links' unique
+  // (player_id) constraint.
+  const linkedPlayerIds = new Set((teamLinks.data ?? []).map(l => l.player_id))
+  const unclaimedPlayers = ((orgPlayers as { id: number; display_name: string } [] | undefined) ?? [])
+    .filter(p => !linkedPlayerIds.has(p.id))
+    .map(p => ({ id: String(p.id), label: p.display_name }))
 
   // ── Bar chart data ──────────────────────────────────────────────────────────
   const chartData = stats
@@ -909,6 +945,90 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
           )}
         </CardContent>
       </Card>
+
+      {tab === 'me' && (
+        <>
+          {link.data === undefined ? (
+            <Card className="bg-card border-border">
+              <CardContent className="p-4 space-y-3">
+                <Skeleton className="h-9 w-full" />
+              </CardContent>
+            </Card>
+          ) : !link.data ? (
+            // No link yet: offer to claim a roster spot. A link never grants
+            // any permission -- it only answers "whose stats are these" --
+            // so a pending claim is harmless while it waits for approval.
+            <Card className="bg-card text-card-foreground border-border">
+              <CardHeader>
+                <CardTitle>Which player are you?</CardTitle>
+                <CardDescription>
+                  Pick your name on the roster to see your own stats. A captain or
+                  editor confirms it.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <PlayerCombobox
+                  players={unclaimedPlayers}
+                  value="__none__"
+                  onValueChange={async id => {
+                    if (id === '__none__') return
+                    const ok = await claim.trigger({ playerId: Number(id) })
+                    if (ok && currentTeamId != null && user) {
+                      await link.trigger({ teamId: currentTeamId, userId: user.id })
+                    }
+                  }}
+                  placeholder="Select your name"
+                />
+                {claim.error && <p className="mt-2 text-sm text-destructive">{claim.error}</p>}
+              </CardContent>
+            </Card>
+          ) : link.data.status === 'pending' ? (
+            <Card className="bg-card text-card-foreground border-border">
+              <CardHeader><CardTitle>Waiting for confirmation</CardTitle></CardHeader>
+              <CardContent className="text-sm text-muted-foreground">
+                You've claimed a roster spot. A captain or editor needs to confirm it
+                before your stats show up here.
+              </CardContent>
+            </Card>
+          ) : mine ? (
+            <>
+              <h2 className="text-lg font-bold text-foreground">{mine.player_name}</h2>
+              <FadeIn className="grid grid-cols-2 gap-3">
+                <Card className="bg-card border-border">
+                  <CardContent className="pt-4">
+                    <p className="text-2xl font-bold text-green-600 dark:text-green-400">{mine.goals}</p>
+                    <p className="text-xs text-muted-foreground">Goals</p>
+                  </CardContent>
+                </Card>
+                <Card className="bg-card border-border">
+                  <CardContent className="pt-4">
+                    <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{mine.assists}</p>
+                    <p className="text-xs text-muted-foreground">Assists</p>
+                  </CardContent>
+                </Card>
+                <Card className="bg-card border-border">
+                  <CardContent className="pt-4">
+                    <p className="text-2xl font-bold text-orange-600 dark:text-orange-400">{mine.turnovers}</p>
+                    <p className="text-xs text-muted-foreground">Turnovers</p>
+                  </CardContent>
+                </Card>
+                <Card className="bg-card border-border">
+                  <CardContent className="pt-4">
+                    <p className="text-2xl font-bold text-foreground">{mine.games_played}</p>
+                    <p className="text-xs text-muted-foreground">Games played</p>
+                  </CardContent>
+                </Card>
+              </FadeIn>
+            </>
+          ) : (
+            <Card className="bg-card text-card-foreground border-border">
+              <CardContent className="p-6 text-center text-sm text-muted-foreground">
+                No stats yet for the current filter.
+              </CardContent>
+            </Card>
+          )}
+        </>
+      )}
 
       {tab === 'overview' && (
         <>
@@ -1457,7 +1577,7 @@ function PlayerStatsView({ tab }: { tab: 'overview' | 'table' }) {
 }
 
 function Standings() {
-  const { allowed, currentOrgId } = useAuth()
+  const { can, currentTeamId } = useAuth()
   const { data: allSeasons, trigger: fetchAllSeasons } = useGetAllSeasons()
   const { data: league, loading: leagueLoading, error, trigger: fetchLeague } = useGetLeague()
 
@@ -1477,8 +1597,8 @@ function Standings() {
   const { data: oppHistory, loading: oppHistoryLoading, trigger: fetchOppHistory } = useGetOpponentHistory()
 
   useEffect(() => {
-    if (detailTeam && currentOrgId != null) fetchOppHistory({ organizationId: currentOrgId, name: detailTeam.name })
-  }, [detailTeam, currentOrgId])
+    if (detailTeam && currentTeamId != null) fetchOppHistory({ organizationId: currentTeamId, name: detailTeam.name })
+  }, [detailTeam, currentTeamId])
 
   // Manage league dialog (teams + points config)
   const [manageOpen, setManageOpen] = useState(false)
@@ -1488,9 +1608,9 @@ function Standings() {
   const [pointsDraft, setPointsDraft] = useState({ win: '2', tie: '1', loss: '0' })
 
   useEffect(() => {
-    if (currentOrgId == null) return
-    fetchAllSeasons({ organizationId: currentOrgId })
-  }, [currentOrgId])
+    if (currentTeamId == null) return
+    fetchAllSeasons({ organizationId: currentTeamId })
+  }, [currentTeamId])
 
   useEffect(() => {
     const seasons = allSeasons as Season[] | undefined
@@ -1571,8 +1691,8 @@ function Standings() {
   }, [league])
 
   const handleAddTeam = async () => {
-    if (!newTeamName.trim() || selectedSeasonId == null || currentOrgId == null) return
-    await createTeam({ seasonId: selectedSeasonId, name: newTeamName, organizationId: currentOrgId })
+    if (!newTeamName.trim() || selectedSeasonId == null || currentTeamId == null) return
+    await createTeam({ seasonId: selectedSeasonId, name: newTeamName, organizationId: currentTeamId })
     track('league_team_created', { season_id: selectedSeasonId })
     setNewTeamName('')
     refresh()
@@ -1748,7 +1868,7 @@ function Standings() {
                     Notes
                     {detailSeason && <span className="text-xs font-normal text-muted-foreground ml-2">({seasonLabel({ name: detailSeason.season_name, year: detailSeason.season_year, organizer: detailSeason.season_organizer })})</span>}
                   </CardTitle>
-                  {allowed && !editingNotes && (
+                  {can.record && !editingNotes && (
                     <button onClick={() => setEditingNotes(true)} className="text-xs text-primary hover:underline">Edit</button>
                   )}
                 </CardHeader>
@@ -1797,7 +1917,7 @@ function Standings() {
             ))}
           </SelectContent>
         </Select>
-        {allowed && (
+        {can.manageTeam && (
           <button
             onClick={() => setManageOpen(true)}
             className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground shrink-0"

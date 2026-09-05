@@ -24,6 +24,7 @@ import {
   useRemoveMember,
   useUpdateTeam,
 } from '../hooks/backend/teams'
+import { useGetTeamPlayerLinks, useApprovePlayerClaim } from '../hooks/backend/playerLink'
 
 type OrganizationSettingsDialogProps = {
   open: boolean
@@ -44,6 +45,8 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
   const setRole = useSetMemberRole()
   const removeMember = useRemoveMember()
   const updateTeam = useUpdateTeam()
+  const playerLinks = useGetTeamPlayerLinks()
+  const approveClaim = useApprovePlayerClaim()
 
   const [name, setName] = useState(current?.name ?? '')
   const [isPublic, setIsPublic] = useState(current?.is_public ?? false)
@@ -62,6 +65,7 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
       if (currentTeamId != null && can.manageTeam) {
         void members.trigger({ teamId: currentTeamId })
         void invites.trigger({ teamId: currentTeamId })
+        void playerLinks.trigger({ teamId: currentTeamId })
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -289,6 +293,41 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
                   </Button>
                 </div>
               ))}
+            </div>
+
+            {/* Player claims: a member picked which roster player is them
+                (player_links, status = 'pending'). Approving just confirms
+                whose stats are whose -- it never changes what that person
+                can do, so this list is purely informational plus one RPC
+                call, no role picker involved. */}
+            <div className="border-t border-border pt-3 space-y-2">
+              <Label>Player claims</Label>
+              {approveClaim.error && <p className="text-sm text-destructive">{approveClaim.error}</p>}
+              {playerLinks.data === undefined ? (
+                <Skeleton className="h-9 w-full" />
+              ) : playerLinks.data.filter(l => l.status === 'pending').length === 0 ? (
+                <p className="text-xs text-muted-foreground">No pending claims.</p>
+              ) : (
+                playerLinks.data.filter(l => l.status === 'pending').map(l => {
+                  const claimant = members.data?.find(m => m.user_id === l.user_id)
+                  return (
+                    <div key={l.id} className="flex items-center justify-between gap-2 py-1 text-sm">
+                      <span className="truncate">
+                        {claimant?.email ?? 'Unknown member'} claims <span className="font-medium">{l.player_name}</span>
+                      </span>
+                      <Button
+                        size="sm"
+                        onClick={async () => {
+                          await approveClaim.trigger({ linkId: l.id })
+                          if (currentTeamId != null) await playerLinks.trigger({ teamId: currentTeamId })
+                        }}
+                      >
+                        Approve
+                      </Button>
+                    </div>
+                  )
+                })
+              )}
             </div>
           </>
         )}
