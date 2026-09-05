@@ -26,6 +26,14 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+      # The gateway authorization suites that need no live stack: they stub
+      # fetch or test pure functions, so they run on every PR with no secrets.
+      # These cover the membership guards protecting every service-key route.
+      # membership.test.mjs and authz.test.mjs are excluded on purpose -- the
+      # first queries a live database, the second needs a running server.
+      - name: Run gateway authorization tests
+        run: npm run test:gateway:offline
+
       # server.test.mjs hits the live Supabase database directly, so it only
       # runs when SUPABASE_URL/SUPABASE_SECRET_KEY are configured as repo
       # secrets. Add them under Settings > Secrets to enable this step.

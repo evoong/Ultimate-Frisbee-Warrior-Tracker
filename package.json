@@ -14,11 +14,15 @@
     "deploy:dev": "wrangler deploy --config wrangler.jsonc --env development",
     "deploy:vercel": "npx vercel --prod --yes",
     "test": "node server.test.mjs",
+    "test:gateway": "node node_modules/tsx/dist/cli.mjs gateway/jwt.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/membership.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/gameActions.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/jamSync.test.mjs",
+    "test:authz": "node gateway/authz.test.mjs",
     "db:start": "supabase start",
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset && npm run db:seed:users",
     "db:seed:users": "node --env-file=.env.local scripts/seed-local-users.mjs && docker exec -i $(docker ps -qf name=supabase_db) psql -U postgres -d postgres < scripts/seed-local-memberships.sql",
-    "db:test": "supabase test db"
+    "db:test": "supabase test db",
+    "db:signing-key": "node scripts/gen-local-signing-key.mjs",
+    "test:gateway:offline": "node node_modules/tsx/dist/cli.mjs gateway/jwt.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/gameActions.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/jamSync.test.mjs"
   },
   "retool": {
     "app": {

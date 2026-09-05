@@ -8,10 +8,32 @@
    No `.env.example` exists — get real Supabase values from the Supabase dashboard (project `ultimate-frisbee-warrior-tracker`, ref `pyqngqyqwevfpaxcmfnd`, org `caypalgdyzpvqqecqhfd`, region `ca-central-1`) → Project Settings → API for the URL/keys, → Database for `DATABASE_URL`. `server/index.ts` throws at import time (crashes the whole process) if `SUPABASE_URL`/`SUPABASE_SECRET_KEY` are blank — there's no graceful fallback. `SENTRY_DSN` is different: it's optional and safe to leave blank (`server/instrument.ts` only calls `Sentry.init` when it's set) — get the real value from the Sentry org `eric-4a`'s `ufwt-backend` project (Settings → Client Keys (DSN)) if you want backend error reporting locally.
    Also create `frontend/.env` (separate file, same gitignore treatment) with `VITE_SENTRY_DSN` — same optional/blank-is-fine rule, value comes from the `ufwt-frontend` Sentry project instead. The Cloudflare Worker's DSN (`SENTRY_DSN_WORKER`) needs no local setup — it's already committed as a plain `vars` entry in `wrangler.jsonc` since Sentry DSNs are public client keys, not secrets.
 4. Start both dev servers from `.claude/launch.json`: "Express API Server" (port 3001) and "Vite Frontend" (port 5199, cwd `frontend`). The frontend alone will run but backend-dependent features (chat, uploads) need the Express server too.
-5. Local database: `npm run db:start` (needs Docker), then `npm run db:reset`
+5. Local JWT signing key: `npm run db:signing-key`. Do this **before** first
+   starting the stack. Without it the local stack signs HS256 and serves an
+   **empty** JWKS (`{"keys":[]}`), so `verifyAccessToken` in `gateway/jwt.ts`
+   cannot verify any locally minted token and every gateway-authenticated
+   request fails locally for a reason that looks like a code bug.
+   `supabase/config.toml` points at `./signing_keys.json`, which is gitignored
+   because it is a private key -- generate your own per clone.
+6. Local database: `npm run db:start` (needs Docker), then `npm run db:reset`
    to load the baseline plus seed data and test identities. `npm run db:test`
    runs the pgTAP permission suite. Copy `.env.local.example` to `.env.local`
-   and fill in the keys printed by `supabase status`.
+   and fill in the keys printed by `supabase status`. If you started the stack
+   before step 5, restart it (`npm run db:stop && npm run db:start`) so GoTrue
+   picks up the key.
+
+## MCP server (AI tool access)
+- `MCP_ORGANIZATION_ID` is required for the local stdio server
+  (`mcp-server/index.ts`). It refuses to start without one, deliberately,
+  because an accidental default of `1` is a cross-team leak. It must be a
+  positive integer; the Worker agent enforces the same rule.
+- For the hosted Worker agent (`gateway/mcpAgent.ts`), the OAuth-authenticated
+  identity must be a member of that team, or no tools are registered at all.
+- That membership is re-checked on **every tool call**, not only when the
+  Durable Object wakes, so revoking a role takes effect within the lookup's
+  30s cache rather than lasting for the life of the warm instance. The check is
+  installed by wrapping the MCP SDK's `executeToolHandler`; if that seam ever
+  disappears, `init()` throws rather than serving tools unguarded.
 
 ## References
 - Bugs and feature requests are tracked as GitHub issues in this repo (`gh issue list`), not in a separate tracker.
