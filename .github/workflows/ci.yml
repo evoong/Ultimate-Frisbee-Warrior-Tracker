@@ -9,9 +9,6 @@ on:
 jobs:
   test-and-build:
     runs-on: ubuntu-latest
-    env:
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -34,9 +31,6 @@ jobs:
       - name: Run gateway authorization tests
         run: npm run test:gateway:offline
 
-      # server.test.mjs hits the live Supabase database directly, so it only
-      # runs when SUPABASE_URL/SUPABASE_SECRET_KEY are configured as repo
-      # secrets. Add them under Settings > Secrets to enable this step.
-      - name: Run integration tests
-        if: ${{ env.SUPABASE_URL != '' }}
-        run: npm test
+      # Integration tests are not run in CI. Use npm run db:test for local pgTAP
+      # suite testing. A future CI job to stand up the local Supabase stack for
+      # testing is out of scope for this fix.
