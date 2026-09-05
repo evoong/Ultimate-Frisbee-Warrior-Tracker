@@ -235,7 +235,7 @@ export function registerUfwtMcpTools(server: McpServer, config: ActionsConfig, o
       const body: Record<string, unknown> = {}
       if (player !== undefined) body.player_id = player?.id ?? null
       if (assister !== undefined) body.related_player_id = assister?.id ?? null
-      const updated = await sbWrite(config, 'PATCH', `/game_events?id=eq.${eventId}`, body)
+      const updated = await sbWrite(config, 'PATCH', `/game_events?id=eq.${eventId}&organization_id=eq.${orgId}`, body)
       if (!updated[0]) throw new Error(`No event found with id ${eventId}.`)
       return ok(updated[0])
     } catch (err) {
@@ -249,7 +249,7 @@ export function registerUfwtMcpTools(server: McpServer, config: ActionsConfig, o
     inputSchema: { eventId: z.number().int() },
   }, async ({ eventId }) => {
     try {
-      const deleted = await sbWrite(config, 'DELETE', `/game_events?id=eq.${eventId}`)
+      const deleted = await sbWrite(config, 'DELETE', `/game_events?id=eq.${eventId}&organization_id=eq.${orgId}`)
       if (!deleted[0]) throw new Error(`No event found with id ${eventId}.`)
       return ok({ deleted: deleted[0] })
     } catch (err) {

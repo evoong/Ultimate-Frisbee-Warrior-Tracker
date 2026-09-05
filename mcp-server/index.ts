@@ -312,7 +312,7 @@ server.registerTool('update_game_event', {
     const body: Record<string, unknown> = {}
     if (player !== undefined) body.player_id = player?.id ?? null
     if (assister !== undefined) body.related_player_id = assister?.id ?? null
-    const { data, error } = await supabase.from('game_events').update(body).eq('id', eventId).select().single()
+    const { data, error } = await supabase.from('game_events').update(body).eq('id', eventId).eq('organization_id', ORG_ID).select().single()
     if (error) throw new Error(error.message)
     return ok(data)
   } catch (err) {
@@ -326,7 +326,7 @@ server.registerTool('delete_game_event', {
   inputSchema: { eventId: z.number().int() },
 }, async ({ eventId }) => {
   try {
-    const { data, error } = await supabase.from('game_events').delete().eq('id', eventId).select().single()
+    const { data, error } = await supabase.from('game_events').delete().eq('id', eventId).eq('organization_id', ORG_ID).select().single()
     if (error) throw new Error(error.message)
     return ok({ deleted: data })
   } catch (err) {
