@@ -31,7 +31,8 @@
 -- internet can read any team's photos" exposure now is worth breaking
 -- photo rendering until Plan 3 lands -- fixing the upload path to write
 -- team-prefixed object names and updating the frontend to build
--- authenticated URLs instead of public ones.
+-- authenticated URLs instead of public ones. Tracked:
+-- https://github.com/evoong/Ultimate-Frisbee-Warrior-Tracker/issues/120
 update storage.buckets set public = false where id in ('player-photos', 'team-photos');
 
 -- Same predicate shape as the existing member-tier INSERT/UPDATE/DELETE
