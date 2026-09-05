@@ -1,0 +1,17 @@
+-- public.standings has RLS enabled but its only policy is
+-- `"authenticated read" ... USING (true)`, so any authenticated user on
+-- any team can read every row, including every other team's standings.
+-- The table has no organization_id (only season_id, with no tenant-scoping
+-- join available in a simple predicate) and a repo-wide grep across
+-- server/, gateway/, mcp-server/ and frontend/ confirms it is referenced
+-- by zero application code -- 010_league_tracking.sql already documented
+-- it as deprecated, standings being computed client-side from
+-- league_games instead. It appears to be dead.
+--
+-- This migration drops the permissive policy and adds no replacement,
+-- leaving RLS enabled with default-deny: no role except service_role or
+-- the table owner can read it. The table itself is left in place -- it
+-- may still hold historical data worth keeping, and dropping a table is a
+-- separate, harder-to-reverse decision than removing an overly broad
+-- policy.
+drop policy if exists "authenticated read" on public.standings;
