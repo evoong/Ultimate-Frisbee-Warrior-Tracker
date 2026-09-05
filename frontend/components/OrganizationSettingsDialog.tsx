@@ -89,11 +89,16 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
       .from('team-photos')
       .upload(path, file, { upsert: true })
     if (upErr) throw new Error(upErr.message)
-    const { data } = supabase.storage.from('team-photos').getPublicUrl(path)
+    // Domain-relative, not absolute: the app is served from multiple origins
+    // (Vercel + Cloudflare), and the storage client's public-URL helper would
+    // bake in whichever origin the uploader was on. See players.ts's
+    // useUploadPlayerPhoto for the full explanation of why an absolute URL
+    // breaks on other origins.
+    const photo_url = `/db/storage/v1/object/public/team-photos/${path}`
     // As above: if persisting the URL fails, the file is still in storage but
     // never linked to the team. That failure surfaces via `updateTeam.error`
     // in JSX, not via a thrown exception here.
-    await updateTeam.trigger({ teamId: currentTeamId, photoUrl: data.publicUrl })
+    await updateTeam.trigger({ teamId: currentTeamId, photoUrl: photo_url })
   }
 
   async function handlePhotoChange(e: ChangeEvent<HTMLInputElement>) {
