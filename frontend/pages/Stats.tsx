@@ -948,7 +948,19 @@ function PlayerStatsView({ tab }: { tab: 'me' | 'overview' | 'table' }) {
 
       {tab === 'me' && (
         <>
-          {link.data === undefined ? (
+          {link.data === undefined || teamLinks.data === undefined || orgPlayers === undefined ? (
+            // `link` (is it me?), `teamLinks` (who else has already claimed
+            // a spot?), and `orgPlayers` (the roster to pick from) must all
+            // be in before the "no link yet" card can render at all --
+            // unclaimedPlayers is derived from teamLinks and orgPlayers
+            // together, and link/teamLinks are independent parallel calls
+            // from the same effect with no ordering guarantee (orgPlayers
+            // comes from a separate mount-time effect). If `link` resolved
+            // first and this only checked `link.data`, the card would
+            // render while teamLinks.data was still undefined, `?? []`
+            // would yield an empty exclusion set, and every roster player
+            // -- including ones someone else already claimed -- would
+            // appear selectable.
             <Card className="bg-card border-border">
               <CardContent className="p-4 space-y-3">
                 <Skeleton className="h-9 w-full" />
@@ -988,6 +1000,17 @@ function PlayerStatsView({ tab }: { tab: 'me' | 'overview' | 'table' }) {
               <CardContent className="text-sm text-muted-foreground">
                 You've claimed a roster spot. A captain or editor needs to confirm it
                 before your stats show up here.
+              </CardContent>
+            </Card>
+          ) : statsArr === undefined ? (
+            // Same shape as the gate above: `mine` is derived from `link`
+            // (resolved by this point) AND `statsArr`, fetched by a separate
+            // effect. Without this check, `mine` would read as undefined
+            // while stats are still loading and fall through to the "no
+            // stats yet" case below -- a wrong, if momentary, message.
+            <Card className="bg-card border-border">
+              <CardContent className="p-4 space-y-3">
+                <Skeleton className="h-9 w-full" />
               </CardContent>
             </Card>
           ) : mine ? (

@@ -303,7 +303,12 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
             <div className="border-t border-border pt-3 space-y-2">
               <Label>Player claims</Label>
               {approveClaim.error && <p className="text-sm text-destructive">{approveClaim.error}</p>}
-              {playerLinks.data === undefined ? (
+              {playerLinks.data === undefined || members.data === undefined ? (
+                // Gated on both: `claimant` below is derived from
+                // members.data, fetched by an independent parallel trigger
+                // alongside playerLinks -- without this, a claim could
+                // render as "Unknown member" until members.data happened
+                // to arrive on a later render.
                 <Skeleton className="h-9 w-full" />
               ) : playerLinks.data.filter(l => l.status === 'pending').length === 0 ? (
                 <p className="text-xs text-muted-foreground">No pending claims.</p>
@@ -318,8 +323,8 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
                       <Button
                         size="sm"
                         onClick={async () => {
-                          await approveClaim.trigger({ linkId: l.id })
-                          if (currentTeamId != null) await playerLinks.trigger({ teamId: currentTeamId })
+                          const ok = await approveClaim.trigger({ linkId: l.id })
+                          if (ok && currentTeamId != null) await playerLinks.trigger({ teamId: currentTeamId })
                         }}
                       >
                         Approve
