@@ -35,7 +35,7 @@ type OrganizationSettingsDialogProps = {
 // re-checks every one of these actions via RPC or a storage policy, so the
 // gating here is only about not showing controls that would 403 anyway.
 export default function OrganizationSettingsDialog({ open, onOpenChange }: OrganizationSettingsDialogProps) {
-  const { can, user, currentTeamId, teams } = useAuth()
+  const { can, user, currentTeamId, teams, refreshSession } = useAuth()
   const current = teams.find(t => t.organization_id === currentTeamId)
 
   const members = useGetTeamMembers()
@@ -79,7 +79,13 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
     // error into its own `error` state and resolves to undefined on failure.
     // There is nothing useful to catch here; `updateTeam.error` is rendered
     // in JSX below and will be current on the next render regardless.
-    await updateTeam.trigger({ teamId: currentTeamId, name: name.trim(), isPublic })
+    const ok = await updateTeam.trigger({ teamId: currentTeamId, name: name.trim(), isPublic })
+    // Nothing else refreshes AuthContext's `teams` after this UPDATE, so
+    // without this the dialog and team switcher keep showing the old name
+    // until a full page reload -- refresh only on success so a failed save
+    // still leaves `updateTeam.error` visible instead of being masked by a
+    // refresh that just re-fetches the unchanged team.
+    if (ok) await refreshSession()
     setSaving(false)
   }
 
@@ -102,7 +108,8 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
     // As above: if persisting the URL fails, the file is still in storage but
     // never linked to the team. That failure surfaces via `updateTeam.error`
     // in JSX, not via a thrown exception here.
-    await updateTeam.trigger({ teamId: currentTeamId, photoUrl: photo_url })
+    const ok = await updateTeam.trigger({ teamId: currentTeamId, photoUrl: photo_url })
+    if (ok) await refreshSession()
   }
 
   async function handlePhotoChange(e: ChangeEvent<HTMLInputElement>) {
@@ -194,10 +201,14 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
                 <p className="text-sm text-destructive">{setRole.error || removeMember.error}</p>
               )}
               {members.data === undefined ? (
-                <>
-                  <Skeleton className="h-9 w-full" />
-                  <Skeleton className="h-9 w-full" />
-                </>
+                members.error ? (
+                  <p className="text-sm text-destructive">{members.error}</p>
+                ) : (
+                  <>
+                    <Skeleton className="h-9 w-full" />
+                    <Skeleton className="h-9 w-full" />
+                  </>
+                )
               ) : (
                 members.data.map(m => (
                   <div key={m.id} className="flex items-center justify-between gap-2 py-1">
@@ -309,7 +320,11 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
                 // alongside playerLinks -- without this, a claim could
                 // render as "Unknown member" until members.data happened
                 // to arrive on a later render.
-                <Skeleton className="h-9 w-full" />
+                playerLinks.error || members.error ? (
+                  <p className="text-sm text-destructive">{playerLinks.error || members.error}</p>
+                ) : (
+                  <Skeleton className="h-9 w-full" />
+                )
               ) : playerLinks.data.filter(l => l.status === 'pending').length === 0 ? (
                 <p className="text-xs text-muted-foreground">No pending claims.</p>
               ) : (

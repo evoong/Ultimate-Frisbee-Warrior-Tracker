@@ -8,9 +8,27 @@ import { track } from '../lib/analytics'
 const CURRENT_TEAM_STORAGE_KEY = 'ufwt_current_team_id'
 
 export interface Capabilities {
-  /** Enter game data: events, scores, lineups, strategy. Member and up. */
+  /**
+   * Enter game data: events, scores, lineups, strategy. Member and up.
+   * This also covers creating a player or a season in the flow of
+   * recording a game or building a lineup (Schedule.tsx, Strategy.tsx),
+   * which matches the database: `players` and `seasons` are member-tier
+   * for insert/update/delete, not manage-tier.
+   */
   record: boolean
-  /** Team name, photo, public/private, and the roster. Editor and up. */
+  /**
+   * Team-level settings (name, photo, public/private) plus roster
+   * ADMINISTRATION on the Roster page -- editing a player's details or
+   * photo, and season membership. Editor and up.
+   *
+   * The database is more permissive than this gate: `players` and
+   * `seasons` are member-tier there too, so a plain member could do this
+   * over the RPC/REST layer directly. Roster.tsx gating on manageTeam is
+   * deliberately stricter than the database requires -- this is UX
+   * policy (keep casual roster edits to editor/captain), not the
+   * security boundary. Do not read this gate as a statement of what the
+   * database enforces.
+   */
   manageTeam: boolean
   /** Grant roles, remove editors and captains, delete the team. Captain. */
   manageRoles: boolean
@@ -33,6 +51,14 @@ interface AuthContextValue {
   forgotPassword: (email: string) => Promise<void>
   switchTeam: (teamId: number) => void
   createTeam: (name: string) => Promise<void>
+  /**
+   * Re-fetch session state (user, teams, current team) without a full
+   * login. Nothing else refreshes `teams` after a team UPDATE -- call
+   * this after a successful team rename/photo/visibility save so the
+   * settings dialog and team switcher reflect the change immediately
+   * instead of only after a page reload.
+   */
+  refreshSession: () => Promise<void>
 }
 
 const NO_CAPABILITIES: Capabilities = { record: false, manageTeam: false, manageRoles: false }
@@ -175,6 +201,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         forgotPassword,
         switchTeam,
         createTeam,
+        refreshSession: refreshSessionState,
       }}
     >
       {children}

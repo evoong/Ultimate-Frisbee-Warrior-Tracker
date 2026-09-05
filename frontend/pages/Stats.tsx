@@ -461,7 +461,7 @@ function PlayerStatsView({ tab }: { tab: 'me' | 'overview' | 'table' }) {
   const { data: pairings, loading: pairingsLoading, error: pairingsError, trigger: fetchPairings } = useGetAssistPairings()
   // Org-wide, unscoped by season (unlike progressionRoster above) — just a
   // gender_match lookup for the Assist Network's node outlines.
-  const { data: orgPlayers, trigger: fetchOrgPlayers } = useGetPlayers()
+  const { data: orgPlayers, error: orgPlayersError, trigger: fetchOrgPlayers } = useGetPlayers()
 
   const [filterType, setFilterType] = useState<'all' | 'season' | 'games'>('all')
   const [selectedSeasonIds, setSelectedSeasonIds] = useState<number[]>([])
@@ -963,7 +963,13 @@ function PlayerStatsView({ tab }: { tab: 'me' | 'overview' | 'table' }) {
             // appear selectable.
             <Card className="bg-card border-border">
               <CardContent className="p-4 space-y-3">
-                <Skeleton className="h-9 w-full" />
+                {link.error || teamLinks.error || orgPlayersError ? (
+                  <p className="text-sm text-destructive">
+                    {link.error || teamLinks.error || orgPlayersError}
+                  </p>
+                ) : (
+                  <Skeleton className="h-9 w-full" />
+                )}
               </CardContent>
             </Card>
           ) : !link.data ? (

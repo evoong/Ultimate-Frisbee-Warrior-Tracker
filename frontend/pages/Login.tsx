@@ -183,6 +183,7 @@ export default function Login() {
                       type="button"
                       variant="outline"
                       className="w-full"
+                      disabled={busy}
                       onClick={loginWithGoogle}
                     >
                       Continue with Google
