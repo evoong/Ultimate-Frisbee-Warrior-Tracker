@@ -24,6 +24,7 @@
     "@cloudflare/workers-oauth-provider": "^0.8.2",
     "@google/genai": "^2.10.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@posthog/ai": "^8.10.1",
     "@posthog/mcp": "^0.13.0",
     "@sentry/cloudflare": "^10.73.0",
     "@sentry/node": "^10.73.0",

@@ -13,6 +13,7 @@ Ultimate Frisbee Warrior Tracker is a full-stack web application designed to hel
 - **Backend:** Node.js, Express
 - **Database:** PostgreSQL (Supabase) via Supabase REST API and RPC functions
 - **Deployment:** Vercel (Frontend & Serverless API functions)
+- **Analytics:** PostHog (frontend product analytics and MCP server tool-call analytics)
 
 ## Running Locally
 
@@ -30,6 +31,15 @@ To run the project locally for development:
    SUPABASE_PUBLISHABLE_KEY=your_publishable_key
    SUPABASE_SECRET_KEY=your_secret_key
    ```
+
+   To enable PostHog analytics, also add:
+   ```env
+   VITE_PUBLIC_POSTHOG_KEY=your_posthog_project_api_key
+   VITE_PUBLIC_POSTHOG_HOST=your_posthog_host
+   POSTHOG_PROJECT_TOKEN=your_posthog_project_api_key
+   POSTHOG_HOST=your_posthog_host
+   ```
+   These are optional — the frontend and MCP server both skip PostHog initialization if their keys are unset.
 
 3. Start the development server (runs both the Vite frontend and Express API):
    ```bash

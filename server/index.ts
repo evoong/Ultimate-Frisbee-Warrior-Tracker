@@ -6,7 +6,8 @@ import { createClient } from "@supabase/supabase-js";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI } from "@posthog/ai/gemini";
+import { PostHog } from "posthog-node";
 import { createGateway, createRequireAllowedUser } from "../gateway/index.js";
 import { nodeAdapter } from "../gateway/node-adapter.js";
 import { getVaultSecret } from "../gateway/secrets.js";
@@ -64,6 +65,16 @@ const supabase = createClient(
   process.env.SUPABASE_URL || "",
   process.env.SUPABASE_SECRET_KEY || ""
 );
+
+// Dedicated client for AI Observability — @posthog/ai's Gemini wrapper needs
+// a raw PostHog instance to attach $ai_generation/$ai_span events to.
+// flushAt/flushInterval kept low since /api/chat can run as a short-lived
+// Vercel function.
+const posthogAi = new PostHog(process.env.POSTHOG_PROJECT_TOKEN!, {
+  host: process.env.POSTHOG_HOST,
+  flushAt: 1,
+  flushInterval: 0,
+});
 
 // ── Auth guard for chat routes ───────────────────────────────────────────────
 // The chat endpoints below query Supabase with the SERVICE ROLE, which
@@ -401,19 +412,22 @@ app.post("/api/chat", async (req, res) => {
     const geminiApiKey = await getVaultSecret(vaultConfig, "gemini_api_key", process.env.GEMINI_API_KEY);
     const geminiModel = (await getVaultSecret(vaultConfig, "gemini_model", process.env.GEMINI_MODEL)) ?? DEFAULT_GEMINI_MODEL;
     if (!geminiApiKey) return res.status(500).json({ error: "Gemini API key not configured" });
-    const genai = new GoogleGenAI({ apiKey: geminiApiKey });
+    const genai = new GoogleGenAI({ apiKey: geminiApiKey, posthog: posthogAi });
 
-    const chatHistory = history.map((h: any) => ({
+    const actionsConfig: ActionsConfig = { supabaseUrl: process.env.SUPABASE_URL || "", supabaseSecretKey: process.env.SUPABASE_SECRET_KEY || "" };
+
+    // PostHog's Gemini wrapper only instruments models.generateContent (not
+    // the chats.create()/sendMessage() session helper), so the conversation
+    // history is threaded through generateContent calls by hand below —
+    // mirroring what Chat.sendMessage does internally in @google/genai.
+    const aiTraceId = crypto.randomUUID();
+    const aiProperties = { $ai_session_id: session_id };
+    const genaiConfig = { systemInstruction: systemContext, tools: [{ functionDeclarations: CHAT_FUNCTION_DECLARATIONS }] };
+    const contents: { role: string; parts: unknown[] }[] = history.map((h: any) => ({
       role: h.role === "assistant" ? "model" : "user",
       parts: [{ text: h.content }],
     }));
-
-    const actionsConfig: ActionsConfig = { supabaseUrl: process.env.SUPABASE_URL || "", supabaseSecretKey: process.env.SUPABASE_SECRET_KEY || "" };
-    const chat = genai.chats.create({
-      model: geminiModel,
-      history: chatHistory,
-      config: { systemInstruction: systemContext, tools: [{ functionDeclarations: CHAT_FUNCTION_DECLARATIONS }] },
-    });
+    contents.push({ role: "user", parts: [{ text: message }] });
 
     // Retry transient Gemini errors, but only for this first turn: once a
     // function-call round below has actually executed a real DB write,
@@ -423,7 +437,12 @@ app.post("/api/chat", async (req, res) => {
     let response;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        response = await chat.sendMessage({ message });
+        response = await genai.models.generateContent({
+          model: geminiModel, contents, config: genaiConfig,
+          posthogDistinctId: distinctId,
+          posthogTraceId: aiTraceId,
+          posthogProperties: aiProperties,
+        });
         break;
       } catch (err) {
         if (attempt === MAX_ATTEMPTS || !isTransientGeminiError(err)) throw err;
@@ -440,18 +459,48 @@ app.post("/api/chat", async (req, res) => {
       const calls = response.functionCalls;
       if (!calls || calls.length === 0) break;
       usedToolCall = true;
+
+      const modelContent = response.candidates?.[0]?.content;
+      if (modelContent) contents.push(modelContent);
+
       const parts = await Promise.all(calls.map(async (call) => {
+        const spanStart = Date.now();
+        let output: unknown;
+        let error: string | undefined;
         try {
-          const output = await callChatFunction(actionsConfig, organization_id, call.name!, call.args ?? {});
-          return { functionResponse: { name: call.name!, response: { output } } };
+          output = await callChatFunction(actionsConfig, organization_id, call.name!, call.args ?? {});
         } catch (err) {
           Sentry.captureException(err);
-          return { functionResponse: { name: call.name!, response: { error: err instanceof Error ? err.message : String(err) } } };
+          error = err instanceof Error ? err.message : String(err);
         }
+        posthogAi.capture({
+          distinctId,
+          event: "$ai_span",
+          properties: {
+            $ai_trace_id: aiTraceId,
+            $ai_session_id: session_id,
+            $ai_span_id: crypto.randomUUID(),
+            $ai_span_name: call.name,
+            $ai_input_state: call.args,
+            $ai_output_state: error ? { error } : output,
+            $ai_latency: (Date.now() - spanStart) / 1000,
+          },
+        });
+        return error
+          ? { functionResponse: { name: call.name!, response: { error } } }
+          : { functionResponse: { name: call.name!, response: { output } } };
       }));
-      response = await chat.sendMessage({ message: parts });
+      contents.push({ role: "user", parts });
+
+      response = await genai.models.generateContent({
+        model: geminiModel, contents, config: genaiConfig,
+        posthogDistinctId: distinctId,
+        posthogTraceId: aiTraceId,
+        posthogProperties: aiProperties,
+      });
     }
     const reply = response.text ?? "";
+    await posthogAi.flush();
 
     // Save both turns to chat_logs
     await supabase.from("chat_logs").insert([
@@ -468,6 +517,7 @@ app.post("/api/chat", async (req, res) => {
     });
     res.json({ reply });
   } catch (err: unknown) {
+    await posthogAi.flush();
     await trackError(distinctId, err);
     Sentry.captureException(err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
@@ -596,6 +646,7 @@ if (!process.env.VERCEL) {
   });
   process.on("SIGTERM", async () => {
     await shutdown();
+    await posthogAi.shutdown();
     process.exit(0);
   });
 }
