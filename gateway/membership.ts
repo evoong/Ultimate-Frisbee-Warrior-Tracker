@@ -44,8 +44,8 @@ const TTL_MS = 30_000
 //
 // server/index.ts is a deliberate exception to that rule, not a violation
 // of it: Express has no per-isolate/per-request boundary to exploit the
-// way the Worker does, isOrgMember/isEmailAllowed there are bare
-// module-level functions, and a module-scoped lookup bounds the cache by
+// way the Worker does, its route handlers call this lookup directly from
+// module scope, and a module-scoped lookup bounds the cache by
 // distinct users rather than by request volume. The resulting
 // cross-request staleness is capped by the TTL below, which the plan's
 // Global Constraint explicitly permits ("cached for at most 30 seconds. A

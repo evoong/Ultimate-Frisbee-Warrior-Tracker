@@ -21,6 +21,19 @@
    before step 5, restart it (`npm run db:stop && npm run db:start`) so GoTrue
    picks up the key.
 
+## MCP server (AI tool access)
+- `MCP_ORGANIZATION_ID` is required for the local stdio server
+  (`mcp-server/index.ts`). It refuses to start without one, deliberately,
+  because an accidental default of `1` is a cross-team leak. It must be a
+  positive integer; the Worker agent enforces the same rule.
+- For the hosted Worker agent (`gateway/mcpAgent.ts`), the OAuth-authenticated
+  identity must be a member of that team, or no tools are registered at all.
+- That membership is re-checked on **every tool call**, not only when the
+  Durable Object wakes, so revoking a role takes effect within the lookup's
+  30s cache rather than lasting for the life of the warm instance. The check is
+  installed by wrapping the MCP SDK's `executeToolHandler`; if that seam ever
+  disappears, `init()` throws rather than serving tools unguarded.
+
 ## Gotchas
 - Windows: `node node_modules/.bin/tsx <file>` fails with a syntax error — `.bin/tsx` is a POSIX shell shim, not a Node script. Use `node node_modules/tsx/dist/cli.mjs <file>` (or `npx tsx <file>`) instead. `.claude/launch.json`'s "Express API Server" config already uses the fixed form, but `package.json`'s own `server`/`dev` npm scripts still use the broken one and will fail the same way if run directly.
 - Vercel CLI (`vercel env pull`) cannot reveal env vars marked "Sensitive" in any environment — it always returns `[SENSITIVE]` placeholders. Don't rely on it to recover secrets; get them from the Supabase dashboard instead.
