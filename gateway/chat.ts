@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@posthog/ai/gemini'
+import type { Content } from '@google/genai'
 import { PostHog } from 'posthog-node'
 import type { GatewayConfig } from './index.js'
 import { getVaultSecret } from './secrets.js'
@@ -353,7 +354,7 @@ async function callGemini(
   const posthogProperties = { $ai_session_id: sessionId }
   const config = { systemInstruction, tools: [{ functionDeclarations: CHAT_FUNCTION_DECLARATIONS }] }
 
-  const contents = history.map(h => ({
+  const contents: Content[] = history.map(h => ({
     role: h.role === 'assistant' ? 'model' : 'user',
     parts: [{ text: h.content }],
   }))

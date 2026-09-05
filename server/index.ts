@@ -7,6 +7,7 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { GoogleGenAI } from "@posthog/ai/gemini";
+import type { Content } from "@google/genai";
 import { PostHog } from "posthog-node";
 import { createGateway } from "../gateway/index.js";
 import { nodeAdapter } from "../gateway/node-adapter.js";
@@ -430,7 +431,7 @@ app.post("/api/chat", async (req, res) => {
     const aiTraceId = crypto.randomUUID();
     const aiProperties = { $ai_session_id: session_id };
     const genaiConfig = { systemInstruction: systemContext, tools: [{ functionDeclarations: CHAT_FUNCTION_DECLARATIONS }] };
-    const contents: { role: string; parts: unknown[] }[] = history.map((h: any) => ({
+    const contents: Content[] = history.map((h: any) => ({
       role: h.role === "assistant" ? "model" : "user",
       parts: [{ text: h.content }],
     }));

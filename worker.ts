@@ -31,6 +31,11 @@ interface Env {
   MCP_ORGANIZATION_ID?: string;
   OAUTH_PROVIDER: OAuthHelpers;
   SENTRY_DSN_WORKER: string;
+  // Public write-only project key, same as SENTRY_DSN_WORKER -- committed as
+  // a plain wrangler.jsonc var, not a secret. The frontend already ships this
+  // exact token in the browser bundle as VITE_PUBLIC_POSTHOG_KEY.
+  POSTHOG_PROJECT_TOKEN?: string;
+  POSTHOG_HOST?: string;
 }
 
 // Minimal local alias so this file doesn't need @cloudflare/workers-types.
@@ -69,6 +74,8 @@ async function handleAppRequest(request: Request, env: Env, ctx: ExecutionContex
           supabaseSecretKey: env.SUPABASE_SECRET_KEY,
           geminiApiKey: env.GEMINI_API_KEY,
           geminiModel: env.GEMINI_MODEL,
+          posthogProjectToken: env.POSTHOG_PROJECT_TOKEN,
+          posthogHost: env.POSTHOG_HOST,
         };
         if (url.pathname === "/api/chat" && request.method === "POST") {
           return handleChatRequest(chatConfig, request);
