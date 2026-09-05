@@ -9,6 +9,9 @@ on:
 jobs:
   test-and-build:
     runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -35,8 +38,5 @@ jobs:
       # runs when SUPABASE_URL/SUPABASE_SECRET_KEY are configured as repo
       # secrets. Add them under Settings > Secrets to enable this step.
       - name: Run integration tests
-        if: ${{ secrets.SUPABASE_URL != '' }}
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        if: ${{ env.SUPABASE_URL != '' }}
         run: npm test

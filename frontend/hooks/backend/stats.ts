@@ -262,7 +262,7 @@ export type PairingRow = {
 }
 
 export function useGetAssistPairings() {
-  const fn = useCallback(async (params: { organizationId: number | null; seasonIds?: number[]; gameIds?: number[] }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; seasonIds?: number[]; gameIds?: number[]; limit?: number }) => {
     // Resolve the games in scope first, same three-way logic as useGetPlayerStats:
     // explicit gameIds wins, else games in seasonIds, else null (all-time).
     let gamesQuery = supabase.from('games').select('id, season_id').eq('organization_id', params.organizationId)
@@ -314,9 +314,9 @@ export function useGetAssistPairings() {
 
     rows.sort((a, b) => b.count - a.count || a.scorerName.localeCompare(b.scorerName) || a.assisterName.localeCompare(b.assisterName))
 
-    return rows.slice(0, 10)
+    return rows.slice(0, params.limit ?? 10)
   }, [])
-  return useApiCall<PairingRow[], { organizationId: number | null; seasonIds?: number[]; gameIds?: number[] }>(fn)
+  return useApiCall<PairingRow[], { organizationId: number | null; seasonIds?: number[]; gameIds?: number[]; limit?: number }>(fn)
 }
 
 export function useGetCumulativeStats() {

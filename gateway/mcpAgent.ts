@@ -16,11 +16,13 @@ import { McpAgent } from 'agents/mcp'
 import { registerUfwtMcpTools } from './mcpTools.js'
 import type { McpAuthProps } from './mcpOAuth.js'
 import { createMembershipLookup } from './membership.js'
+import * as Sentry from '@sentry/cloudflare'
 
 interface Env {
   SUPABASE_URL: string
   SUPABASE_SECRET_KEY: string
   MCP_ORGANIZATION_ID?: string
+  SENTRY_DSN_WORKER: string
 }
 
 // `McpAuthProps` (just `{ email }`) is the identity OAuthProvider verified
@@ -30,7 +32,7 @@ interface Env {
 // registering any tools: it is resolved to a Supabase user id and must hold
 // a `team_members` role on `MCP_ORGANIZATION_ID`, or `init()` throws and no
 // tools are registered at all.
-export class UfwtMcp extends McpAgent<Env, {}, McpAuthProps> {
+class UfwtMcpBase extends McpAgent<Env, {}, McpAuthProps> {
   server = new McpServer({ name: 'ultimate-frisbee-warrior-tracker', version: '1.0.0' })
 
   async init() {
@@ -100,3 +102,8 @@ export class UfwtMcp extends McpAgent<Env, {}, McpAuthProps> {
     }
   }
 }
+
+export const UfwtMcp = Sentry.instrumentDurableObjectWithSentry(
+  (env: Env) => ({ dsn: env.SENTRY_DSN_WORKER }),
+  UfwtMcpBase,
+)

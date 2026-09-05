@@ -15,6 +15,8 @@ import { createClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { PostHog } from 'posthog-node'
+import { instrument } from '@posthog/mcp'
 
 import { todayLocalStr } from '../frontend/lib/seasonUtils.ts'
 import { isPastGame, sortGamesUpcomingFirst } from '../frontend/lib/gameOrder.ts'
@@ -27,6 +29,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 dotenv.config({ path: path.resolve(__dirname, '../.env') })
 
 const supabase = createClient(process.env.SUPABASE_URL || '', process.env.SUPABASE_SECRET_KEY || '')
+
+const posthog = new PostHog(process.env.POSTHOG_PROJECT_TOKEN!, {
+  host: process.env.POSTHOG_HOST,
+})
 
 // This server operates on a single organization per the multi-tenant model
 // in CLAUDE.md, since there's no signed-in "current user" in this headless
@@ -178,6 +184,7 @@ function fail(err: unknown) {
 }
 
 const server = new McpServer({ name: 'ultimate-frisbee-warrior-tracker', version: '1.0.0' })
+instrument(server, posthog)
 
 server.registerTool('list_games', {
   title: 'List games',
@@ -577,6 +584,11 @@ server.registerTool('remove_from_lineup', {
   } catch (err) {
     return fail(err)
   }
+})
+
+process.on('SIGTERM', async () => {
+  await posthog.shutdown()
+  process.exit(0)
 })
 
 const transport = new StdioServerTransport()

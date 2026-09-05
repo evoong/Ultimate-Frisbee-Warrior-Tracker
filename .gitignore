@@ -56,3 +56,6 @@ worker-configuration.d.ts
 
 # Local JWT signing key for the Supabase dev stack - never commit
 supabase/signing_keys.json
+
+# Isolated plan-execution workspaces
+.worktrees
