@@ -35,6 +35,15 @@ function pathMatches(itemPath: string, pathname: string): boolean {
   return pathname === itemPath || pathname.startsWith(itemPath + "/")
 }
 
+// Plays and AI read strategy_* and chat_logs, which are members-only with no
+// public branch at all. Hiding them for guests matches what the database
+// will do anyway.
+const MEMBER_ONLY_TABS: Tab[] = ['strategy', 'chat']
+
+export function visibleNavItems(isGuest: boolean) {
+  return isGuest ? NAV_ITEMS.filter(i => !MEMBER_ONLY_TABS.includes(i.key)) : NAV_ITEMS
+}
+
 export function tabForPath(pathname: string): Tab {
   return NAV_ITEMS.find(item => pathMatches(item.path, pathname))?.key ?? "schedule"
 }
