@@ -36,9 +36,21 @@ const posthog = new PostHog(process.env.POSTHOG_PROJECT_TOKEN!, {
 
 // This server operates on a single organization per the multi-tenant model
 // in CLAUDE.md, since there's no signed-in "current user" in this headless
-// context to derive one from. Defaults to org 1 ("My Team", the pre-016
-// backfill org) — override via MCP_ORGANIZATION_ID for any other org.
-const ORG_ID = process.env.MCP_ORGANIZATION_ID ? parseInt(process.env.MCP_ORGANIZATION_ID) : 1
+// context to derive one from.
+//
+// This process holds the service-role key and has no caller identity to
+// check, so the operator must state which team it may touch. Refusing to
+// default is the point: an accidental `1` is a cross-team leak.
+const ORG_ID_RAW = process.env.MCP_ORGANIZATION_ID
+if (!ORG_ID_RAW) {
+  console.error('MCP_ORGANIZATION_ID is required — refusing to start without an explicit team')
+  process.exit(1)
+}
+const ORG_ID = Number(ORG_ID_RAW)
+if (!Number.isInteger(ORG_ID) || ORG_ID < 1) {
+  console.error(`MCP_ORGANIZATION_ID must be a positive integer, got ${JSON.stringify(ORG_ID_RAW)}`)
+  process.exit(1)
+}
 
 // Matches Schedule.tsx's IMMINENT_WINDOW_MS: a game starting within 30
 // minutes (either direction) is the one you're about to score or already are.

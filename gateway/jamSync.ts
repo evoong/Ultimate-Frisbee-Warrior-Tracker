@@ -301,14 +301,45 @@ async function syncSource(
   }
 }
 
-export async function runJamSync(config: JamSyncConfig): Promise<JamSyncResult> {
+export interface JamSyncOptions {
+  /** When present, only these teams are synced. Omitted on the cron path,
+   *  which legitimately covers every team that has a calendar source. */
+  teamIds?: number[]
+}
+
+export async function runJamSync(
+  config: JamSyncConfig,
+  options: JamSyncOptions = {}
+): Promise<JamSyncResult> {
   const result: JamSyncResult = { sources: 0, fetched: 0, created: 0, updated: 0, alreadySynced: 0, conflicts: 0, errors: [] }
 
+  // PRESENCE of teamIds decides filtered vs unfiltered; its CONTENTS only
+  // decide which teams. Absent is the cron path, which legitimately syncs every
+  // team that has a calendar source. Present means the caller resolved to a
+  // specific set, so anything that does not survive validation must sync
+  // NOTHING -- never everything. Collapsing "provided but empty after
+  // coercion" back to unfiltered would turn an empty allow-list into a
+  // full-access grant, which is the whole hazard this filter exists to remove.
+  let scope = ''
+  if (options.teamIds) {
+    // Coerced because these ids are interpolated into a PostgREST query
+    // string. They come from our own database, but they arrive via JSON, where
+    // the number type is a compile-time claim rather than a runtime guarantee.
+    const teamIds = options.teamIds.map(Number).filter(Number.isInteger)
+    if (teamIds.length === 0) return result
+    scope = `&organization_id=in.(${teamIds.join(',')})`
+  }
+
+  // Every one of these is scoped, not just calendar_sources. syncSource matches
+  // games by jam_uid across whatever it is handed, so an unscoped games fetch
+  // would let a uid shared between two teams (a common league feed) update the
+  // other team's row -- a cross-team write that filtering only the sources
+  // would leave wide open.
   const [sources, allGames, allSeasons, existingConflicts] = await Promise.all([
-    supabaseFetch(config, '/calendar_sources?select=organizer,calendar_url,organization_id&enabled=eq.true'),
-    supabaseFetch(config, '/games?select=id,season_id,opponent,game_date,game_time,jam_uid'),
-    supabaseFetch(config, '/seasons?select=id,organizer,start_date,end_date'),
-    supabaseFetch(config, '/jam_sync_conflicts?select=jam_uid'),
+    supabaseFetch(config, `/calendar_sources?select=organizer,calendar_url,organization_id&enabled=eq.true${scope}`),
+    supabaseFetch(config, `/games?select=id,season_id,opponent,game_date,game_time,jam_uid${scope}`),
+    supabaseFetch(config, `/seasons?select=id,organizer,start_date,end_date${scope}`),
+    supabaseFetch(config, `/jam_sync_conflicts?select=jam_uid${scope}`),
   ])
 
   const knownConflictUids = new Set<string>((existingConflicts ?? []).map((c: any) => c.jam_uid))

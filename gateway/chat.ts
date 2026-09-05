@@ -4,7 +4,8 @@ import type { GatewayConfig } from './index.js'
 import { getVaultSecret } from './secrets.js'
 import { cookieNames, parseCookies } from './cookies.js'
 import { verifyAccessToken } from './jwt.js'
-import { CHAT_FUNCTION_DECLARATIONS, callChatFunction, type ActionsConfig } from './gameActions.js'
+import { CHAT_FUNCTION_DECLARATIONS, WRITE_FUNCTIONS, callChatFunction, type ActionsConfig } from './gameActions.js'
+import { createMembershipLookup, hasAtLeast, type TeamRole } from './membership.js'
 
 // Chat needs privileged (service-role) Supabase access to read all team data
 // regardless of caller identity, plus a Gemini key. Team-context/log queries
@@ -21,10 +22,6 @@ export interface ChatConfig extends GatewayConfig {
   geminiModel?: string
   posthogProjectToken?: string
   posthogHost?: string
-  // True only when the email belongs to this specific organization — chat
-  // context/logs are scoped per organization, unlike the coarser
-  // "belongs to any organization" check used elsewhere.
-  isOrgMember: (email: string, organizationId: number) => Promise<boolean>
 }
 
 // Switched from gemma-4-31b-it: side-by-side timing showed gemini-flash-lite
@@ -59,22 +56,43 @@ async function insertChatLogs(config: ChatConfig, organizationId: number, rows: 
   }).catch(() => void 0)
 }
 
-// Verifies the caller's session cookie. Soft launch (app not released
-// yet): any signed-in user may use chat against any organization, matching
-// the any-authenticated RLS in 017_open_access_for_now.sql. When isolation
-// is wanted, restore the membership check:
-//   if (!(await config.isOrgMember(email, organizationId))) return null
-async function requireOrgMember(
+// Chat runs on the service-role key, which ignores RLS. This function is
+// the only thing standing between a caller and another team's data, so it
+// checks the team the caller actually named -- and rejects guests, because
+// chat is members-only (Tier B in the permission spec).
+// 401 means "authenticate", 403 means "authenticated, but not on this team".
+// Returning null for both, as an earlier version did, made an unauthenticated
+// caller look identical to a rejected member and put this runtime out of step
+// with Express, which distinguishes them.
+type ChatCaller =
+  | { ok: true; sub: string; email: string | null; role: TeamRole }
+  | { ok: false; status: 401 | 403; error: string }
+
+async function requireTeamMember(
   config: ChatConfig,
   request: Request,
-  _organizationId: number
-): Promise<{ sub: string; email: string } | null> {
+  organizationId: number,
+  required: TeamRole = 'member'
+): Promise<ChatCaller> {
   const url = new URL(request.url)
   const token = parseCookies(request)[cookieNames(url).accessToken]
-  if (!token) return null
+  if (!token) return { ok: false, status: 401, error: 'not authenticated' }
+
   const claims = await verifyAccessToken(token, config.jwksUrl, config.supabaseUrl)
-  if (!claims) return null
-  return { sub: claims.sub, email: claims.email.toLowerCase() }
+  if (!claims) return { ok: false, status: 401, error: 'not authenticated' }
+  // A guest holds a real, verified anonymous JWT: authenticated, not permitted.
+  if (claims.isAnonymous) return { ok: false, status: 403, error: 'not a member of this team' }
+
+  const lookup = createMembershipLookup({
+    supabaseUrl: config.supabaseUrl,
+    supabaseSecretKey: config.supabaseSecretKey,
+  })
+  const role = await lookup.roleFor(claims.sub, organizationId)
+  if (!hasAtLeast(role, required)) {
+    return { ok: false, status: 403, error: 'not a member of this team' }
+  }
+
+  return { ok: true, sub: claims.sub, email: claims.email, role: role as TeamRole }
 }
 
 type Stat = { goals: number; assists: number; turnovers: number }
@@ -323,7 +341,7 @@ function sleep(ms: number): Promise<void> {
 async function callGemini(
   posthog: PostHog, apiKey: string, model: string, systemInstruction: string,
   history: { role: string; content: string }[], message: string,
-  actionsConfig: ActionsConfig, organizationId: number,
+  actionsConfig: ActionsConfig, organizationId: number, callerRole: TeamRole,
   sessionId: string, distinctId: string
 ): Promise<string> {
   // PostHog's Gemini wrapper only instruments models.generateContent (not
@@ -382,7 +400,13 @@ async function callGemini(
       let output: unknown
       let error: string | undefined
       try {
-        output = await callChatFunction(actionsConfig, organizationId, call.name!, call.args ?? {})
+        // Writes require member-tier on this team. A guest never reaches
+        // here (requireTeamMember rejects anonymous/non-member callers
+        // before callGemini is even invoked), but a future read-only role
+        // would, and the model must not be the thing that decides.
+        output = WRITE_FUNCTIONS.has(call.name!) && !hasAtLeast(callerRole, 'member')
+          ? { error: "you do not have permission to change this team's data" }
+          : await callChatFunction(actionsConfig, organizationId, call.name!, call.args ?? {})
       } catch (err) {
         error = err instanceof Error ? err.message : String(err)
       }
@@ -425,10 +449,15 @@ export async function handleChatRequest(config: ChatConfig, request: Request): P
     if (!message || !session_id) return json({ error: 'message and session_id required' }, 400)
     if (!organization_id) return json({ error: 'organization_id required' }, 400)
 
-    const user = await requireOrgMember(config, request, organization_id)
-    if (!user) return json({ error: 'not authenticated' }, 401)
+    const user = await requireTeamMember(config, request, Number(organization_id))
+    if (!user.ok) return json({ error: user.error }, user.status)
 
-    const systemContext = await getTeamContext(config, organization_id)
+    // From here on, only this value is used. It has been checked against the
+    // caller's membership; the raw body value never reaches a query again, and
+    // nothing the model emits can change it.
+    const teamId = Number(organization_id)
+
+    const systemContext = await getTeamContext(config, teamId)
     const geminiApiKey = await getVaultSecret(config, 'gemini_api_key', config.geminiApiKey)
     const geminiModel = await getVaultSecret(config, 'gemini_model', config.geminiModel) ?? DEFAULT_GEMINI_MODEL
     if (!geminiApiKey) return json({ error: 'Gemini API key not configured' }, 500)
@@ -439,12 +468,12 @@ export async function handleChatRequest(config: ChatConfig, request: Request): P
     const posthog = new PostHog(config.posthogProjectToken!, { host: config.posthogHost, flushAt: 1, flushInterval: 0 })
     let reply: string
     try {
-      reply = await callGemini(posthog, geminiApiKey, geminiModel, systemContext, history, message, actionsConfig, organization_id, session_id, user.sub)
+      reply = await callGemini(posthog, geminiApiKey, geminiModel, systemContext, history, message, actionsConfig, teamId, user.role, session_id, user.sub)
     } finally {
       await posthog.shutdown()
     }
 
-    await insertChatLogs(config, organization_id, [
+    await insertChatLogs(config, teamId, [
       { session_id, role: 'user', content: message },
       { session_id, role: 'assistant', content: reply },
     ])
@@ -463,8 +492,8 @@ export async function handleChatHistoryRequest(config: ChatConfig, request: Requ
     if (!sessionId) return json({ error: 'session_id required' }, 400)
     if (!organizationId) return json({ error: 'organization_id required' }, 400)
 
-    const user = await requireOrgMember(config, request, organizationId)
-    if (!user) return json({ error: 'not authenticated' }, 401)
+    const user = await requireTeamMember(config, request, Number(organizationId))
+    if (!user.ok) return json({ error: user.error }, user.status)
 
     const rows = await supabaseServiceFetch(
       config,
@@ -484,8 +513,8 @@ export async function handleChatHistoryDeleteRequest(config: ChatConfig, request
     if (!sessionId) return json({ error: 'session_id required' }, 400)
     if (!organizationId) return json({ error: 'organization_id required' }, 400)
 
-    const user = await requireOrgMember(config, request, organizationId)
-    if (!user) return json({ error: 'not authenticated' }, 401)
+    const user = await requireTeamMember(config, request, Number(organizationId))
+    if (!user.ok) return json({ error: user.error }, user.status)
 
     const res = await fetch(`${config.supabaseUrl}/rest/v1/chat_logs?session_id=eq.${encodeURIComponent(sessionId)}&organization_id=eq.${organizationId}`, {
       method: 'DELETE',

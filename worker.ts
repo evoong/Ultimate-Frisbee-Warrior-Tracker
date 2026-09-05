@@ -1,4 +1,7 @@
-import { createGateway, createRequireAllowedUser } from './gateway/index.js'
+import { createGateway } from './gateway/index.js'
+import { parseCookies, cookieNames } from './gateway/cookies.js'
+import { verifyAccessToken } from './gateway/jwt.js'
+import { createMembershipLookup } from './gateway/membership.js'
 import { handleChatRequest, handleChatHistoryRequest, handleChatHistoryDeleteRequest, type ChatConfig } from './gateway/chat.js'
 import { runJamSync, JAM_SYNC_MONITOR_SLUG, JAM_SYNC_MONITOR_CONFIG } from './gateway/jamSync.js'
 import { UfwtMcp } from './gateway/mcpAgent.js'
@@ -38,22 +41,6 @@ type DurableObjectNamespace = unknown;
 type ScheduledEvent = { cron: string; scheduledTime: number };
 type ExecutionContext = { waitUntil: (promise: Promise<unknown>) => void };
 
-// "Allowed" means "belongs to at least one organization" (allowed_users was
-// fully replaced by organization_members in 016_organizations.sql).
-// Soft launch (app not released yet): always true, so any signed-in user
-// passes; the session cookie itself is still verified by the callers. When
-// isolation is wanted, restore the organization_members lookups (see
-// server/index.ts's isEmailAllowed/isOrgMember for the same pattern):
-//   /rest/v1/organization_members?select=email&email=eq.<email>&limit=1
-//   /rest/v1/organization_members?...&organization_id=eq.<id>&limit=1
-function createIsEmailAllowed(_env: Env) {
-  return async (_email: string): Promise<boolean> => true
-}
-
-function createIsOrgMember(_env: Env) {
-  return async (_email: string, _organizationId: number): Promise<boolean> => true
-}
-
 // Everything the app serves besides /mcp, /authorize, /token, and /register
 // (all four owned by the OAuthProvider wrapping this — see the default
 // export below and gateway/mcpOAuth.ts). Split out so mcpOAuth.ts's
@@ -82,7 +69,6 @@ async function handleAppRequest(request: Request, env: Env, ctx: ExecutionContex
           supabaseSecretKey: env.SUPABASE_SECRET_KEY,
           geminiApiKey: env.GEMINI_API_KEY,
           geminiModel: env.GEMINI_MODEL,
-          isOrgMember: createIsOrgMember(env),
         };
         if (url.pathname === "/api/chat" && request.method === "POST") {
           return handleChatRequest(chatConfig, request);
@@ -98,18 +84,37 @@ async function handleAppRequest(request: Request, env: Env, ctx: ExecutionContex
       // Manual "sync now" trigger for the JAM calendar importer (also runs
       // automatically once a day at 6am Eastern via the scheduled() export below).
       if (url.pathname === "/api/schedule/sync-jam" && request.method === "POST") {
-        const gatewayConfig = {
+        // The sync runs under the service-role key, so its authority comes
+        // from the caller's memberships and nothing else: it syncs the teams
+        // this user belongs to, never every team that has a calendar source.
+        const token = parseCookies(request)[cookieNames(url).accessToken];
+        const claims = token
+          ? await verifyAccessToken(token, env.SUPABASE_JWKS_URL, env.SUPABASE_URL)
+          : null;
+        if (!claims) {
+          return new Response(JSON.stringify({ error: "not authenticated" }), { status: 401, headers: { "Content-Type": "application/json" } });
+        }
+        // A guest holds a real, verified anonymous JWT: authenticated, not
+        // permitted. Same split the chat routes use in both runtimes.
+        if (claims.isAnonymous) {
+          return new Response(JSON.stringify({ error: "not a member of any team" }), { status: 403, headers: { "Content-Type": "application/json" } });
+        }
+        const lookup = createMembershipLookup({
           supabaseUrl: env.SUPABASE_URL,
-          publishableKey: env.SUPABASE_PUBLISHABLE_KEY,
-          jwksUrl: env.SUPABASE_JWKS_URL,
-        };
-        const user = await createRequireAllowedUser(gatewayConfig, createIsEmailAllowed(env))(request);
-        if (!user) return new Response(JSON.stringify({ error: "not authenticated" }), { status: 401, headers: { "Content-Type": "application/json" } });
+          supabaseSecretKey: env.SUPABASE_SECRET_KEY,
+        });
+        const teams = await lookup.teamsFor(claims.sub);
+        if (teams.length === 0) {
+          return new Response(JSON.stringify({ error: "not a member of any team" }), { status: 403, headers: { "Content-Type": "application/json" } });
+        }
         try {
-          const result = await runJamSync({
-            supabaseUrl: env.SUPABASE_URL,
-            supabaseSecretKey: env.SUPABASE_SECRET_KEY,
-          });
+          const result = await runJamSync(
+            {
+              supabaseUrl: env.SUPABASE_URL,
+              supabaseSecretKey: env.SUPABASE_SECRET_KEY,
+            },
+            { teamIds: teams.map(t => t.team_id) }
+          );
           return new Response(JSON.stringify(result), { status: 200, headers: { "Content-Type": "application/json" } });
         } catch (err) {
           Sentry.captureException(err);
@@ -182,6 +187,9 @@ export default Sentry.withSentry(
 
     // Daily JAM Sports calendar sync at 6am Eastern (see wrangler.jsonc's triggers.crons).
     async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+      // No teamIds: the nightly job legitimately syncs every team that has
+      // configured a calendar source. There is no caller here whose memberships
+      // could scope it, so leave this unfiltered.
       ctx.waitUntil(
         Sentry.withMonitor(
           JAM_SYNC_MONITOR_SLUG,

@@ -6,7 +6,7 @@ import {
   pkceCookie,
   sessionCookies,
 } from './cookies.js'
-import { isExpired } from './jwt.js'
+import { decodeJwtPayload, isExpired } from './jwt.js'
 
 // Server-side minimum password length. Mirrors the client's PASSWORD_MIN_LENGTH
 // so we enforce the same rule regardless of Supabase's dashboard setting
@@ -122,15 +122,15 @@ async function pkcePair(): Promise<{ verifier: string; challenge: string }> {
   return { verifier, challenge: base64url(new Uint8Array(digest)) }
 }
 
-export interface OrgMembership {
+export interface TeamMembership {
   organization_id: number
   name: string
-  role: string
+  role: 'captain' | 'editor' | 'member'
   is_public: boolean
 }
 
-async function getOrganizations(config: GatewayConfig, accessToken: string): Promise<OrgMembership[]> {
-  const res = await fetch(`${config.supabaseUrl}/rest/v1/rpc/my_organizations`, {
+async function getTeams(config: GatewayConfig, accessToken: string): Promise<TeamMembership[]> {
+  const res = await fetch(`${config.supabaseUrl}/rest/v1/rpc/my_teams`, {
     method: 'POST',
     headers: {
       apikey: config.publishableKey,
@@ -313,8 +313,76 @@ export async function handleAuthRequest(
       if (status !== 200 || !data?.id) {
         return json({ user: null }, 401, clearSessionCookies(url))
       }
-      const organizations = await getOrganizations(config, accessToken)
-      return json({ user: { id: data.id, email: data.email }, organizations }, 200, setCookies)
+      // Consume any invite addressed to this user's confirmed email. Cheap, and
+      // it means an invited teammate simply signs in and is on the team, with no
+      // accept-link to lose. accept_invite() itself enforces the confirmed-email
+      // requirement -- the gateway does not second-guess it.
+      //
+      // Guests can never hold an invite: accept_invite() rejects anonymous
+      // callers outright, so skip the round-trip rather than provoke a
+      // guaranteed exception on the highest-volume session path.
+      if (data.is_anonymous !== true) {
+        try {
+          const res = await fetch(`${config.supabaseUrl}/rest/v1/rpc/accept_invite`, {
+            method: 'POST',
+            headers: {
+              apikey: config.publishableKey,
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: '{}',
+          })
+          if (!res.ok) {
+            // Never fatal: a failed invite must not block sign-in. But PostgREST
+            // reports RPC errors as an HTTP error RESPONSE rather than a rejected
+            // promise, so it has to be checked explicitly or it stays invisible.
+            // Read defensively: if the body itself fails to read, that must not
+            // fall through to the network catch below and get logged as a
+            // request failure, which would misdescribe the incident.
+            const body = await res.text().catch(() => '<unreadable body>')
+            console.error('accept_invite failed during session load', res.status, body)
+          }
+        } catch (err) {
+          // Network-level failure: also non-fatal, also must not be silent.
+          console.error('accept_invite request failed during session load', err)
+        }
+      }
+      const teams = await getTeams(config, accessToken)
+      return json(
+        {
+          user: { id: data.id, email: data.email ?? null },
+          is_anonymous: data.is_anonymous === true,
+          teams,
+          // Deprecated alias: the frontend still reads `organizations` and calls
+          // .some() on it. Removed once the frontend migrates to `teams`.
+          organizations: teams,
+        },
+        200,
+        setCookies
+      )
+    }
+
+    case 'POST /auth/guest': {
+      // Supabase anonymous sign-in. The resulting JWT carries
+      // is_anonymous: true, which is what every guest check keys on. Flows
+      // through the identical cookie plumbing as a real login, so nothing
+      // downstream needs a second session concept.
+      const { status, data } = await supabaseAuth(config, '/signup', { body: {} })
+      if (status !== 200 || !data?.access_token) {
+        return json({ error: authErrorMessage(data) }, 400)
+      }
+      const payload = decodeJwtPayload(data.access_token)
+      if (payload?.is_anonymous !== true) {
+        // Never hand back a non-anonymous session from the guest route. If GoTrue
+        // ever answers an empty-body signup with a real session, that session was
+        // not authenticated by this caller and must not be issued here.
+        return json({ error: 'anonymous sign-in is not available' }, 400)
+      }
+      return json(
+        { user: { id: data.user?.id ?? null }, is_anonymous: true },
+        200,
+        sessionCookies(url, data)
+      )
     }
 
     case 'POST /auth/passkeys/registration/options': {

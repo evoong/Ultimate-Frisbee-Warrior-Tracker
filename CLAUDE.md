@@ -8,6 +8,32 @@
    No `.env.example` exists — get real Supabase values from the Supabase dashboard (project `ultimate-frisbee-warrior-tracker`, ref `pyqngqyqwevfpaxcmfnd`, org `caypalgdyzpvqqecqhfd`, region `ca-central-1`) → Project Settings → API for the URL/keys, → Database for `DATABASE_URL`. `server/index.ts` throws at import time (crashes the whole process) if `SUPABASE_URL`/`SUPABASE_SECRET_KEY` are blank — there's no graceful fallback. `SENTRY_DSN` is different: it's optional and safe to leave blank (`server/instrument.ts` only calls `Sentry.init` when it's set) — get the real value from the Sentry org `eric-4a`'s `ufwt-backend` project (Settings → Client Keys (DSN)) if you want backend error reporting locally.
    Also create `frontend/.env` (separate file, same gitignore treatment) with `VITE_SENTRY_DSN` — same optional/blank-is-fine rule, value comes from the `ufwt-frontend` Sentry project instead. The Cloudflare Worker's DSN (`SENTRY_DSN_WORKER`) needs no local setup — it's already committed as a plain `vars` entry in `wrangler.jsonc` since Sentry DSNs are public client keys, not secrets.
 4. Start both dev servers from `.claude/launch.json`: "Express API Server" (port 3001) and "Vite Frontend" (port 5199, cwd `frontend`). The frontend alone will run but backend-dependent features (chat, uploads) need the Express server too.
+5. Local JWT signing key: `npm run db:signing-key`. Do this **before** first
+   starting the stack. Without it the local stack signs HS256 and serves an
+   **empty** JWKS (`{"keys":[]}`), so `verifyAccessToken` in `gateway/jwt.ts`
+   cannot verify any locally minted token and every gateway-authenticated
+   request fails locally for a reason that looks like a code bug.
+   `supabase/config.toml` points at `./signing_keys.json`, which is gitignored
+   because it is a private key -- generate your own per clone.
+6. Local database: `npm run db:start` (needs Docker), then `npm run db:reset`
+   to load the baseline plus seed data and test identities. `npm run db:test`
+   runs the pgTAP permission suite. Copy `.env.local.example` to `.env.local`
+   and fill in the keys printed by `supabase status`. If you started the stack
+   before step 5, restart it (`npm run db:stop && npm run db:start`) so GoTrue
+   picks up the key.
+
+## MCP server (AI tool access)
+- `MCP_ORGANIZATION_ID` is required for the local stdio server
+  (`mcp-server/index.ts`). It refuses to start without one, deliberately,
+  because an accidental default of `1` is a cross-team leak. It must be a
+  positive integer; the Worker agent enforces the same rule.
+- For the hosted Worker agent (`gateway/mcpAgent.ts`), the OAuth-authenticated
+  identity must be a member of that team, or no tools are registered at all.
+- That membership is re-checked on **every tool call**, not only when the
+  Durable Object wakes, so revoking a role takes effect within the lookup's
+  30s cache rather than lasting for the life of the warm instance. The check is
+  installed by wrapping the MCP SDK's `executeToolHandler`; if that seam ever
+  disappears, `init()` throws rather than serving tools unguarded.
 
 ## References
 - Bugs and feature requests are tracked as GitHub issues in this repo (`gh issue list`), not in a separate tracker.
@@ -16,3 +42,6 @@
 ## Gotchas
 - Windows: `node node_modules/.bin/tsx <file>` fails with a syntax error — `.bin/tsx` is a POSIX shell shim, not a Node script. Use `node node_modules/tsx/dist/cli.mjs <file>` (or `npx tsx <file>`) instead. `.claude/launch.json`'s "Express API Server" config already uses the fixed form, but `package.json`'s own `server`/`dev` npm scripts still use the broken one and will fail the same way if run directly.
 - Vercel CLI (`vercel env pull`) cannot reveal env vars marked "Sensitive" in any environment — it always returns `[SENSITIVE]` placeholders. Don't rely on it to recover secrets; get them from the Supabase dashboard instead.
+- `npm test` runs `node server.test.mjs`, which does `import "dotenv/config"` and builds its Supabase client from the root `.env` file, not `.env.local`. The root `.env` points at PRODUCTION. Running `npm test` therefore reads and asserts against the live production database, not the local Supabase stack. Never run it casually, and never run it at all while testing anything migration-related. Use `npm run db:test` for the local pgTAP suite instead.
+- `server.test.mjs` asserts that `players` still has `phone`, `first_name_edit`, and `last_name_edit` columns. The team-permissions migrations move those columns to `player_private`. The assertion passes today only because `npm test` reads production, which these migrations have not been applied to yet. Once production is cut over, that assertion will fail. Whoever runs the production cutover must update `server.test.mjs` to match the new `players`/`player_private` split in the same change.
+- Deleting a sole captain's `auth.users` row (Supabase dashboard "delete user", the admin API, or any GDPR deletion path) fails with a bare `team % must have at least one captain` error. This is `enforce_last_captain()` on `team_members` doing its job — the same trigger that blocks demoting or removing a team's last captain also fires when that captain's account is deleted, since `team_members.user_id` cascades from `auth.users`. Before deleting a sole captain's account, promote another member to captain (`set_member_role`) and, if appropriate, `remove_member` the original captain first.

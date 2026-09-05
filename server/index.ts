@@ -8,11 +8,14 @@ import path from "path";
 import fs from "fs";
 import { GoogleGenAI } from "@posthog/ai/gemini";
 import { PostHog } from "posthog-node";
-import { createGateway, createRequireAllowedUser } from "../gateway/index.js";
+import { createGateway } from "../gateway/index.js";
 import { nodeAdapter } from "../gateway/node-adapter.js";
 import { getVaultSecret } from "../gateway/secrets.js";
 import { runJamSync, JAM_SYNC_MONITOR_SLUG, JAM_SYNC_MONITOR_CONFIG } from "../gateway/jamSync.js";
-import { CHAT_FUNCTION_DECLARATIONS, callChatFunction, type ActionsConfig } from "../gateway/gameActions.js";
+import { CHAT_FUNCTION_DECLARATIONS, WRITE_FUNCTIONS, callChatFunction, type ActionsConfig } from "../gateway/gameActions.js";
+import { createMembershipLookup, hasAtLeast, type TeamRole } from "../gateway/membership.js";
+import { parseCookies, cookieNames } from "../gateway/cookies.js";
+import { verifyAccessToken } from "../gateway/jwt.js";
 import { track, trackError, shutdown } from "./lib/posthog.js";
 
 const app = express();
@@ -79,55 +82,58 @@ const posthogAi = new PostHog(process.env.POSTHOG_PROJECT_TOKEN!, {
 // ── Auth guard for chat routes ───────────────────────────────────────────────
 // The chat endpoints below query Supabase with the SERVICE ROLE, which
 // bypasses RLS — so they must enforce auth themselves: JWKS-verified access
-// token from the httpOnly cookie + allowlist membership (cached 60s).
-
-const allowlistCache = new Map<string, { allowed: boolean; expires: number }>();
+// token from the httpOnly cookie + real membership lookups (cached 30s by
+// gateway/membership.ts, not by anything in this file).
+//
+// This is a module-scoped lookup, not a per-request one. Per Task 2's
+// gateway/membership.ts, the Worker builds a fresh lookup inside the
+// per-request handler because a Worker isolate is long-lived and a chat
+// turn is exactly one request there, so per-request scoping costs nothing
+// and avoids any cross-request staleness. This Express process has no such
+// per-request boundary — classifyChatCaller calls the lookup directly from
+// route handlers — so the cache
+// here is bounded by the number of distinct users rather than by request
+// volume, and staleness across requests is capped at the lookup's 30s TTL,
+// which the design's Global Constraint explicitly permits ("cached for at
+// most 30 seconds. A revoked role must take effect promptly").
+const membership = createMembershipLookup({
+  supabaseUrl: process.env.SUPABASE_URL || "",
+  supabaseSecretKey: process.env.SUPABASE_SECRET_KEY || "",
+});
 
 // "Allowed" means "belongs to at least one organization" (allowed_users
-// was fully replaced by organization_members in 016_organizations.sql).
-// Soft launch (app not released yet): always true, so any signed-in user
-// passes; requireAllowedUser still verifies the session cookie itself.
-// When isolation is wanted, restore the organization_members lookup:
-//   const cached = allowlistCache.get(email);
-//   if (cached && cached.expires > Date.now()) return cached.allowed;
-//   const { data, error } = await supabase.from("organization_members")
-//     .select("email").eq("email", email).limit(1).maybeSingle();
-//   const allowed = !error && data !== null;
-//   allowlistCache.set(email, { allowed, expires: Date.now() + 60_000 });
-//   return allowed;
-async function isEmailAllowed(_email: string): Promise<boolean> {
-  return true;
-}
+// was fully replaced by organization_members, then team_members, per Plan
+// 1). PostgREST cannot express "team_members joined to auth.users by
+// email" as a single subquery, so resolve the user id first via the GoTrue
+// admin API, then check membership by id.
 
-// True only when the email is a member of this specific organization.
-// Soft launch (app not released yet): always true, so any signed-in user
-// may use chat against any organization, matching the any-authenticated
-// RLS in 017_open_access_for_now.sql. When isolation is wanted, restore
-// the organization_members lookup:
-//   const { data, error } = await supabase.from("organization_members")
-//     .select("email").eq("email", email)
-//     .eq("organization_id", organizationId).limit(1).maybeSingle();
-//   return !error && data !== null;
-async function isOrgMember(_email: string, _organizationId: number): Promise<boolean> {
-  return true;
-}
+// True only when the user is a member of this specific organization/team.
 
-const requireAllowedUser = createRequireAllowedUser(gatewayConfig, isEmailAllowed);
+// Mirrors the Worker's requireTeamMember (gateway/chat.ts): 401 means
+// "authenticate", 403 means "authenticated, but not on this team". A guest
+// holds a real, verified anonymous JWT, so it is the second case.
+// A guard that returns a bare null cannot express that distinction, which is
+// how an unauthenticated caller and a rejected member came to look identical.
+// So the chat routes classify the caller themselves.
+type ChatCaller =
+  | { ok: true; sub: string; role: TeamRole }
+  | { ok: false; status: 401 | 403; error: string }
 
-async function requireAuth(req: ExpressRequest, res: ExpressResponse, next: NextFunction) {
-  try {
-    const proto = req.protocol;
-    const host = req.get("host") ?? "localhost";
-    const webRequest = new Request(`${proto}://${host}${req.originalUrl}`, {
-      headers: { cookie: req.headers.cookie ?? "" },
-    });
-    const user = await requireAllowedUser(webRequest);
-    if (!user) return res.status(401).json({ error: "not authenticated" });
-    next();
-  } catch (err) {
-    next(err);
+async function classifyChatCaller(webRequest: Request, organizationId: number): Promise<ChatCaller> {
+  const url = new URL(webRequest.url)
+  const token = parseCookies(webRequest)[cookieNames(url).accessToken]
+  if (!token) return { ok: false, status: 401, error: "not authenticated" }
+  const claims = await verifyAccessToken(token, gatewayConfig.jwksUrl, gatewayConfig.supabaseUrl)
+  if (!claims) return { ok: false, status: 401, error: "not authenticated" }
+  if (claims.isAnonymous) return { ok: false, status: 403, error: "not a member of this team" }
+  const role = await membership.roleFor(claims.sub, organizationId)
+  if (!hasAtLeast(role, "member")) {
+    return { ok: false, status: 403, error: "not a member of this team" }
   }
+  return { ok: true, sub: claims.sub, role: role as TeamRole }
 }
+
+
 
 // ── AI Chat ───────────────────────────────────────────────────────────────────
 
@@ -401,13 +407,14 @@ app.post("/api/chat", async (req, res) => {
     const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
       headers: { cookie: req.headers.cookie ?? "" },
     });
-    const user = await requireAllowedUser(webRequest);
-    if (!user || !(await isOrgMember(user.email.toLowerCase(), organization_id))) {
-      return res.status(401).json({ error: "not authenticated" });
-    }
-    distinctId = user.sub;
+    const teamId = Number(organization_id);
+    const caller = await classifyChatCaller(webRequest, teamId);
+    if (!caller.ok) return res.status(caller.status).json({ error: caller.error });
+    distinctId = caller.sub;
 
-    const systemContext = await getTeamContext(organization_id);
+    // From here on only teamId is used. The raw body value never reaches a
+    // query again, matching the same invariant in gateway/chat.ts.
+    const systemContext = await getTeamContext(teamId);
 
     const geminiApiKey = await getVaultSecret(vaultConfig, "gemini_api_key", process.env.GEMINI_API_KEY);
     const geminiModel = (await getVaultSecret(vaultConfig, "gemini_model", process.env.GEMINI_MODEL)) ?? DEFAULT_GEMINI_MODEL;
@@ -468,7 +475,9 @@ app.post("/api/chat", async (req, res) => {
         let output: unknown;
         let error: string | undefined;
         try {
-          output = await callChatFunction(actionsConfig, organization_id, call.name!, call.args ?? {});
+          output = WRITE_FUNCTIONS.has(call.name!) && !hasAtLeast(caller.role, "member")
+            ? { error: "you do not have permission to change this team's data" }
+            : await callChatFunction(actionsConfig, teamId, call.name!, call.args ?? {});
         } catch (err) {
           Sentry.captureException(err);
           error = err instanceof Error ? err.message : String(err);
@@ -504,8 +513,8 @@ app.post("/api/chat", async (req, res) => {
 
     // Save both turns to chat_logs
     await supabase.from("chat_logs").insert([
-      { session_id, role: "user", content: message, organization_id },
-      { session_id, role: "assistant", content: reply, organization_id },
+      { session_id, role: "user", content: message, organization_id: teamId },
+      { session_id, role: "assistant", content: reply, organization_id: teamId },
     ]);
 
     await track(distinctId, "chat_message_sent", {
@@ -533,16 +542,15 @@ app.get("/api/chat/history", async (req, res) => {
     const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
       headers: { cookie: req.headers.cookie ?? "" },
     });
-    const user = await requireAllowedUser(webRequest);
-    if (!user || !(await isOrgMember(user.email.toLowerCase(), Number(organization_id)))) {
-      return res.status(401).json({ error: "not authenticated" });
-    }
+    const teamId = Number(organization_id);
+    const caller = await classifyChatCaller(webRequest, teamId);
+    if (!caller.ok) return res.status(caller.status).json({ error: caller.error });
 
     const { data, error } = await supabase
       .from("chat_logs")
       .select("role, content, created_at")
       .eq("session_id", session_id)
-      .eq("organization_id", organization_id)
+      .eq("organization_id", teamId)
       .order("created_at", { ascending: true });
 
     if (error) throw error;
@@ -563,13 +571,12 @@ app.delete("/api/chat/history", async (req, res) => {
     const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
       headers: { cookie: req.headers.cookie ?? "" },
     });
-    const user = await requireAllowedUser(webRequest);
-    if (!user || !(await isOrgMember(user.email.toLowerCase(), Number(organization_id)))) {
-      return res.status(401).json({ error: "not authenticated" });
-    }
-    distinctId = user.sub;
+    const teamId = Number(organization_id);
+    const caller = await classifyChatCaller(webRequest, teamId);
+    if (!caller.ok) return res.status(caller.status).json({ error: caller.error });
+    distinctId = caller.sub;
 
-    const { error } = await supabase.from("chat_logs").delete().eq("session_id", session_id).eq("organization_id", organization_id);
+    const { error } = await supabase.from("chat_logs").delete().eq("session_id", session_id).eq("organization_id", teamId);
     if (error) throw error;
     await track(distinctId, "chat_history_cleared", { organization_id, session_id });
     res.json({ ok: true });
@@ -599,15 +606,39 @@ function jamSyncConfig() {
   };
 }
 
-app.post("/api/schedule/sync-jam", requireAuth, async (req, res) => {
+// Scoped to the caller's own teams, matching worker.ts's copy of this route.
+// The sync runs under the service-role key, so its authority comes from the
+// caller's memberships and nothing else. This route previously asserted only
+// "is a member of some team", which let any member trigger a sync across every
+// team and read back per-source counts and errors naming other teams'
+// organizers.
+app.post("/api/schedule/sync-jam", async (req, res) => {
   let distinctId = "unknown";
   try {
-    const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
+    const proto = req.protocol;
+    const host = req.get("host") ?? "localhost";
+    const webRequest = new Request(`${proto}://${host}${req.originalUrl}`, {
       headers: { cookie: req.headers.cookie ?? "" },
     });
-    const user = await requireAllowedUser(webRequest);
-    distinctId = user?.sub ?? "unknown";
-    const result = await runJamSync(jamSyncConfig());
+    const url = new URL(webRequest.url);
+    const token = parseCookies(webRequest)[cookieNames(url).accessToken];
+    const claims = token
+      ? await verifyAccessToken(token, gatewayConfig.jwksUrl, gatewayConfig.supabaseUrl)
+      : null;
+    if (!claims) return res.status(401).json({ error: "not authenticated" });
+    // A guest holds a real, verified anonymous JWT: authenticated, not
+    // permitted. Same split the chat routes use in both runtimes.
+    if (claims.isAnonymous) {
+      return res.status(403).json({ error: "not a member of any team" });
+    }
+    // PostHog identity comes from the token this route already verified;
+    // requireAllowedUser is gone and is not needed to resolve it.
+    distinctId = claims.sub;
+    const teams = await membership.teamsFor(claims.sub);
+    if (teams.length === 0) {
+      return res.status(403).json({ error: "not a member of any team" });
+    }
+    const result = await runJamSync(jamSyncConfig(), { teamIds: teams.map(t => t.team_id) });
     await track(distinctId, "jam_sync_triggered", {});
     res.json(result);
   } catch (err: unknown) {
