@@ -395,7 +395,14 @@ export default function Roster() {
       // otherwise a same-text repeat of a previously-dismissed error
       // wouldn't visibly change and could stay hidden.
       setPhoneErrorDismissed(false)
-      if (currentTeamId != null) await upsertPlayerPrivate({ teamId: currentTeamId, playerId: selectedPlayer.id, phone })
+      // useUpsertPlayerPrivate's trigger never throws -- on failure it
+      // stashes the message in its own `error` state and resolves to
+      // undefined -- so the resolved value (not a try/catch, and not
+      // reading `.error` synchronously right after the await, which would
+      // observe the stale pre-update render closure) is what tells us
+      // whether the save actually succeeded.
+      const phoneSaved = currentTeamId == null
+        || await upsertPlayerPrivate({ teamId: currentTeamId, playerId: selectedPlayer.id, phone })
       // Merge the players-table fields only. phone is intentionally NOT
       // copied onto selectedPlayer -- the detail view below derives it live
       // from phoneByPlayerId so it can never go stale, including right now:
@@ -404,8 +411,14 @@ export default function Roster() {
       track('player_updated', { player_id: selectedPlayer.id })
       fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
       if (currentTeamId != null) fetchPlayerPrivate({ teamId: currentTeamId })
+      // Keep the form open when the phone save failed, so the error banner
+      // rendered next to the Phone field (bound to upsertPlayerPrivate's
+      // `error` state) is actually visible instead of being unmounted in
+      // the same render pass that produced it.
+      if (phoneSaved) setEditing(false)
+    } else {
+      setEditing(false)
     }
-    setEditing(false)
   }
 
   const handleStartEditSeasons = () => {
