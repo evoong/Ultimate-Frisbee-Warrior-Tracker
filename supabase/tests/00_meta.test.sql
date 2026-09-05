@@ -21,10 +21,13 @@ select is_empty(
   'every table in public has RLS enabled'
 );
 
--- standings is deprecated but still has one policy (016 dropped only its
--- write policies, leaving "authenticated read" using (true) behind). It is
--- excluded here because it would pass this assertion either way; the
--- exclusion is not needed for correctness, just kept as-is.
+-- standings is deprecated and now has zero policies: Task 4
+-- (20260905000200_lockdown_standings.sql) dropped the last remaining one
+-- ("authenticated read" using (true)) because the table is confirmed
+-- dead/unused -- see that migration for the rationale. The exclusion
+-- below is now load-bearing: without it, standings (having no policy at
+-- all) would fail this "every table has at least one policy" assertion
+-- the same way a misconfigured table would.
 select is_empty(
   $$ select c.relname::text
        from pg_class c
