@@ -649,6 +649,64 @@ app.post("/api/schedule/sync-jam", async (req, res) => {
   }
 });
 
+// ── Feedback ─────────────────────────────────────────────────────────────────
+
+const FEEDBACK_LABELS: Record<"bug" | "feature", string> = {
+  bug: "bug",
+  feature: "enhancement",
+};
+
+app.post("/api/feedback", async (req, res) => {
+  let distinctId = "unknown";
+  try {
+    const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
+      headers: { cookie: req.headers.cookie ?? "" },
+    });
+    const url = new URL(webRequest.url);
+    const token = parseCookies(webRequest)[cookieNames(url).accessToken];
+    const claims = token
+      ? await verifyAccessToken(token, gatewayConfig.jwksUrl, gatewayConfig.supabaseUrl)
+      : null;
+    if (!claims) return res.status(401).json({ error: "not authenticated" });
+    if (claims.isAnonymous) return res.status(403).json({ error: "not a member of any team" });
+    distinctId = claims.sub;
+
+    const { type, title, description } = req.body as { type?: string; title?: string; description?: string };
+    if (type !== "bug" && type !== "feature") return res.status(400).json({ error: "type must be 'bug' or 'feature'" });
+    if (!title?.trim() || !description?.trim()) return res.status(400).json({ error: "title and description required" });
+
+    const githubToken = await getVaultSecret(vaultConfig, "github_token", process.env.GITHUB_TOKEN);
+    if (!githubToken) return res.status(500).json({ error: "GitHub integration not configured" });
+    const repo = process.env.GITHUB_REPO || "evoong/Ultimate-Frisbee-Warrior-Tracker";
+
+    const ghRes = await fetch(`https://api.github.com/repos/${repo}/issues`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${githubToken}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        title: title.trim().slice(0, 200),
+        body: `${description.trim()}\n\n---\nReported by ${claims.email ?? claims.sub} via in-app feedback form.`,
+        labels: [FEEDBACK_LABELS[type], "customer-reported"],
+      }),
+    });
+    if (!ghRes.ok) {
+      const detail = await ghRes.text().catch(() => "");
+      throw new Error(`GitHub issue creation failed (${ghRes.status}): ${detail}`);
+    }
+    const issue = await ghRes.json();
+
+    await track(distinctId, "feedback_submitted", { type });
+    res.json({ url: issue.html_url });
+  } catch (err: unknown) {
+    await trackError(distinctId, err);
+    Sentry.captureException(err);
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 app.get("/api/cron/sync-jam", async (req, res) => {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || req.headers.authorization !== `Bearer ${cronSecret}`) {

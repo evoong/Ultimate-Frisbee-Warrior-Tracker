@@ -1,4 +1,4 @@
-import { Disc, Moon, Sun, LogOut, KeyRound, Settings } from "lucide-react"
+import { Disc, Moon, Sun, LogOut, KeyRound, Settings, MessageSquarePlus } from "lucide-react"
 import { visibleNavItems, type Tab } from "../lib/nav"
 import type { TeamMembership } from "../lib/authClient"
 import {
@@ -29,6 +29,7 @@ type AppSidebarProps = {
   openSettings: () => void
   // Absent when passkeys are unavailable on this deployment (see passkeys.ts).
   openPasskeys?: () => void
+  openFeedback: () => void
 }
 
 export default function AppSidebar({
@@ -44,6 +45,7 @@ export default function AppSidebar({
   isGuest,
   openSettings,
   openPasskeys,
+  openFeedback,
 }: AppSidebarProps) {
   return (
     <Sidebar collapsible="icon">
@@ -117,6 +119,12 @@ export default function AppSidebar({
               </SidebarMenuButton>
             </SidebarMenuItem>
           )}
+          <SidebarMenuItem>
+            <SidebarMenuButton onClick={openFeedback} tooltip="Report a bug or idea">
+              <MessageSquarePlus />
+              <span>Report a bug / idea</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton onClick={() => logout()} tooltip={userEmail}>
               <LogOut />

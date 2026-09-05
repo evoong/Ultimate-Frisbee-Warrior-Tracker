@@ -11,13 +11,14 @@ const ResetPassword = lazy(() => import('./pages/ResetPassword'))
 const CreateOrganization = lazy(() => import('./pages/CreateOrganization'))
 const PublicTeams = lazy(() => import('./pages/PublicTeams'))
 import { useAuth } from './contexts/AuthContext'
-import { Moon, Sun, Loader2, LogOut, KeyRound, Settings } from 'lucide-react'
+import { Moon, Sun, Loader2, LogOut, KeyRound, Settings, MessageSquarePlus } from 'lucide-react'
 import { NAV_ITEMS, visibleNavItems, tabForPath, pathForTab, isKnownPath, type Tab } from './lib/nav'
 import { useMediaQuery } from './lib/shadcn/use-media-query'
 import { SidebarProvider, SidebarInset, SidebarTrigger } from './lib/shadcn/sidebar'
 import AppSidebar from './components/AppSidebar'
 import PasskeysDialog from './components/PasskeysDialog'
 import OrganizationSettingsDialog from './components/OrganizationSettingsDialog'
+import FeedbackDialog from './components/FeedbackDialog'
 import { passkeysAvailable } from './lib/passkeys'
 
 const THEME_KEY = 'ufwt_theme'
@@ -46,6 +47,7 @@ export default function App() {
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme)
   const [passkeysOpen, setPasskeysOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
   const isDesktop = useMediaQuery('(min-width: 1024px)')
   const { user, teams, currentTeamId, switchTeam, can, isGuest, loading, logout } = useAuth()
 
@@ -260,9 +262,11 @@ export default function App() {
           isGuest={isGuest}
           openSettings={() => setSettingsOpen(true)}
           openPasskeys={passkeysAvailable() ? () => setPasskeysOpen(true) : undefined}
+          openFeedback={() => setFeedbackOpen(true)}
         />
         <PasskeysDialog open={passkeysOpen} onOpenChange={setPasskeysOpen} />
         <OrganizationSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+        <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
         <SidebarInset>
           <header className="sticky top-0 z-10 flex h-14 items-center gap-2 border-b border-border bg-card px-4">
             <SidebarTrigger />
@@ -302,6 +306,13 @@ export default function App() {
               </button>
             )}
             <button
+              onClick={() => setFeedbackOpen(true)}
+              className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+              aria-label="Report a bug or idea"
+            >
+              <MessageSquarePlus className="w-5 h-5" />
+            </button>
+            <button
               onClick={toggleTheme}
               className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
               aria-label="Toggle theme"
@@ -339,6 +350,7 @@ export default function App() {
 
       <PasskeysDialog open={passkeysOpen} onOpenChange={setPasskeysOpen} />
       <OrganizationSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
 
       <main className="max-w-2xl mx-auto px-4 py-6 pb-24">
         {pageContent}
