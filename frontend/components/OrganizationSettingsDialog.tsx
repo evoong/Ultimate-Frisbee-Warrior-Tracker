@@ -13,11 +13,11 @@ import { Label } from '../lib/shadcn/label'
 import { Skeleton } from '../lib/shadcn/skeleton'
 import { useAuth } from '../contexts/AuthContext'
 import {
-  useGetOrganizationMembers,
-  useAddOrganizationMember,
-  useRemoveOrganizationMember,
-  useUpdateOrganization,
-} from '../hooks/backend/organizations'
+  useGetTeamMembers as useGetOrganizationMembers,
+  useInviteMember as useAddOrganizationMember,
+  useRemoveMember as useRemoveOrganizationMember,
+  useUpdateTeam as useUpdateOrganization,
+} from '../hooks/backend/teams'
 
 type OrganizationSettingsDialogProps = {
   open: boolean
