@@ -1,14 +1,14 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { useLocation, useNavigate, Routes, Route } from 'react-router-dom'
-import Schedule from './pages/Schedule'
-import Roster from './pages/Roster'
-import Stats from './pages/Stats'
-import Strategy from './pages/Strategy'
-import Chat from './pages/Chat'
-import Home from './pages/Home'
-import Login from './pages/Login'
-import ResetPassword from './pages/ResetPassword'
-import CreateOrganization from './pages/CreateOrganization'
+const Schedule = lazy(() => import('./pages/Schedule'))
+const Roster = lazy(() => import('./pages/Roster'))
+const Stats = lazy(() => import('./pages/Stats'))
+const Strategy = lazy(() => import('./pages/Strategy'))
+const Chat = lazy(() => import('./pages/Chat'))
+const Home = lazy(() => import('./pages/Home'))
+const Login = lazy(() => import('./pages/Login'))
+const ResetPassword = lazy(() => import('./pages/ResetPassword'))
+const CreateOrganization = lazy(() => import('./pages/CreateOrganization'))
 import { useAuth } from './contexts/AuthContext'
 import { Moon, Sun, Loader2, LogOut, KeyRound, Settings } from 'lucide-react'
 import { NAV_ITEMS, tabForPath, pathForTab, isKnownPath, type Tab } from './lib/nav'
@@ -26,6 +26,12 @@ function getInitialTheme(): 'light' | 'dark' {
   if (stored === 'light' || stored === 'dark') return stored
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
+
+const PageFallback = () => (
+  <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
+    <Loader2 className="w-8 h-8 animate-spin text-primary" />
+  </div>
+)
 
 export default function App() {
   const location = useLocation()
@@ -73,7 +79,11 @@ export default function App() {
   // Recovery-link landing page (the auth gateway redirects here after
   // verifying the email token and setting session cookies).
   if (window.location.pathname === '/reset-password') {
-    return <ResetPassword />
+    return (
+      <Suspense fallback={<PageFallback />}>
+        <ResetPassword />
+      </Suspense>
+    )
   }
 
   // Anyone signed in may enter (read-only, or read-write for a public org
@@ -88,17 +98,23 @@ export default function App() {
   // above takes over and these two paths stop being special.
   if (!user) {
     return (
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="*" element={<Home theme={theme} toggleTheme={toggleTheme} />} />
-      </Routes>
+      <Suspense fallback={<PageFallback />}>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="*" element={<Home theme={theme} toggleTheme={toggleTheme} />} />
+        </Routes>
+      </Suspense>
     )
   }
 
   // Every domain table requires an organization_id, so a user with zero
   // memberships has nothing to see yet: send them to create one first.
   if (organizations.length === 0) {
-    return <CreateOrganization />
+    return (
+      <Suspense fallback={<PageFallback />}>
+        <CreateOrganization />
+      </Suspense>
+    )
   }
 
   // Each tab additionally accepts one sub-path (a specific game, player,
@@ -107,17 +123,19 @@ export default function App() {
   // state — see the "selected game/player/play mirrors the URL" comments in
   // Schedule.tsx/Roster.tsx/Strategy.tsx and Stats.tsx's subtab handling.
   const pageContent = (
-    <Routes>
-      <Route path="/schedule" element={<Schedule />} />
-      <Route path="/schedule/:gameId" element={<Schedule />} />
-      <Route path="/roster" element={<Roster />} />
-      <Route path="/roster/:playerId" element={<Roster />} />
-      <Route path="/stats" element={<Stats />} />
-      <Route path="/stats/:subtab" element={<Stats />} />
-      <Route path="/plays" element={<Strategy />} />
-      <Route path="/plays/:playId" element={<Strategy />} />
-      <Route path="/ai" element={<Chat />} />
-    </Routes>
+    <Suspense fallback={<PageFallback />}>
+      <Routes>
+        <Route path="/schedule" element={<Schedule />} />
+        <Route path="/schedule/:gameId" element={<Schedule />} />
+        <Route path="/roster" element={<Roster />} />
+        <Route path="/roster/:playerId" element={<Roster />} />
+        <Route path="/stats" element={<Stats />} />
+        <Route path="/stats/:subtab" element={<Stats />} />
+        <Route path="/plays" element={<Strategy />} />
+        <Route path="/plays/:playId" element={<Strategy />} />
+        <Route path="/ai" element={<Chat />} />
+      </Routes>
+    </Suspense>
   )
 
   const readOnlyNotice = !allowed && (

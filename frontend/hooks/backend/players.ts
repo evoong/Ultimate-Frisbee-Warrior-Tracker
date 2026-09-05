@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
-import { isTurnoverEvent } from '../../lib/eventUtils'
+import { isTurnoverEvent, TURNOVER_EVENT_TYPES } from '../../lib/eventUtils'
 
 type HookResult<T, P = void> = {
   data: T | undefined
@@ -474,6 +474,101 @@ export function useGetPlayerGameStats() {
     return [...statsMap.values()].sort((a, b) => b.game_date.localeCompare(a.game_date)) as any[]
   }, [])
   return useApiCall<any[], { playerId: number }>(fn)
+}
+
+export type AssistPairingRow = { teammateId: number; teammateName: string; count: number }
+export type PlayerAssistPairings = { received: AssistPairingRow[]; given: AssistPairingRow[] }
+
+// "Received" = goals this player scored, broken down by who assisted them
+// (game_events.related_player_id on their own Goal rows). "Given" = goals
+// this player assisted, broken down by who scored (game_events.player_id
+// on Goal rows where they're the related_player_id) — the two directions
+// of the same Goal-event relationship used by the Stats tab's Top Pairings
+// card (useGetAssistPairings in hooks/backend/stats.ts), just scoped to one player.
+//
+// seasonIds mirrors the Roster detail page's own Seasons chips (seasonFilters
+// there), not the Stats page's season-filter convention: an empty array here
+// means "no seasons selected" and returns nothing, matching how that page's
+// own Games/Goals/Assists summary already goes to zero in that state —
+// it does NOT mean "all-time" the way other hooks' optional seasonIds do.
+export function useGetPlayerAssistPairings() {
+  const fn = useCallback(async (params: { playerId: number; seasonIds: number[] }): Promise<PlayerAssistPairings> => {
+    let scopedGameIds: number[] = []
+    if (params.seasonIds.length > 0) {
+      const { data: games, error: gamesError } = await supabase
+        .from('games')
+        .select('id')
+        .in('season_id', params.seasonIds)
+      if (gamesError) throw new Error(gamesError.message)
+      scopedGameIds = (games ?? []).map((g: any) => g.id)
+    }
+    if (scopedGameIds.length === 0) return { received: [], given: [] }
+
+    const { data: receivedEvents, error: receivedError } = await supabase
+      .from('game_events')
+      .select('related_player_id')
+      .eq('player_id', params.playerId)
+      .eq('event_type', 'Goal')
+      .not('related_player_id', 'is', null)
+      .in('game_id', scopedGameIds)
+    if (receivedError) throw new Error(receivedError.message)
+
+    const { data: givenEvents, error: givenError } = await supabase
+      .from('game_events')
+      .select('player_id')
+      .eq('related_player_id', params.playerId)
+      .eq('event_type', 'Goal')
+      .not('player_id', 'is', null)
+      .in('game_id', scopedGameIds)
+    if (givenError) throw new Error(givenError.message)
+
+    const teammateIds = new Set<number>()
+    ;(receivedEvents ?? []).forEach((e: any) => teammateIds.add(e.related_player_id))
+    ;(givenEvents ?? []).forEach((e: any) => teammateIds.add(e.player_id))
+    if (teammateIds.size === 0) return { received: [], given: [] }
+
+    const { data: teammates, error: teammatesError } = await supabase
+      .from('players')
+      .select('id, display_name')
+      .in('id', [...teammateIds])
+    if (teammatesError) throw new Error(teammatesError.message)
+    const nameMap = new Map(teammates?.map((p: any) => [p.id, p.display_name as string]) ?? [])
+
+    const tally = (rows: any[], key: 'related_player_id' | 'player_id'): AssistPairingRow[] => {
+      const counts = new Map<number, number>()
+      rows.forEach(r => counts.set(r[key], (counts.get(r[key]) ?? 0) + 1))
+      return [...counts.entries()]
+        .map(([teammateId, count]) => ({ teammateId, teammateName: nameMap.get(teammateId) ?? 'Unknown', count }))
+        .sort((a, b) => b.count - a.count || a.teammateName.localeCompare(b.teammateName))
+    }
+
+    return {
+      received: tally(receivedEvents ?? [], 'related_player_id'),
+      given: tally(givenEvents ?? [], 'player_id'),
+    }
+  }, [])
+  return useApiCall<PlayerAssistPairings, { playerId: number; seasonIds: number[] }>(fn)
+}
+
+export type TurnoverBreakdownRow = { type: string; count: number }
+
+// Splits the same total shown in the Roster summary card's TOs count (see
+// isTurnoverEvent) into its component event types, so a player known for
+// drops vs. throwaways shows up differently even when their TO totals match.
+export function useGetPlayerTurnoverBreakdown() {
+  const fn = useCallback(async (params: { playerId: number }): Promise<TurnoverBreakdownRow[]> => {
+    const { data, error } = await supabase
+      .from('game_events')
+      .select('event_type')
+      .eq('player_id', params.playerId)
+      .in('event_type', [...TURNOVER_EVENT_TYPES])
+    if (error) throw new Error(error.message)
+
+    const counts = new Map<string, number>()
+    ;(data ?? []).forEach((e: any) => counts.set(e.event_type, (counts.get(e.event_type) ?? 0) + 1))
+    return TURNOVER_EVENT_TYPES.map(type => ({ type, count: counts.get(type) ?? 0 })).filter(r => r.count > 0)
+  }, [])
+  return useApiCall<TurnoverBreakdownRow[], { playerId: number }>(fn)
 }
 
 // Roster's per-game breakdown lets you toggle whether a player was in a

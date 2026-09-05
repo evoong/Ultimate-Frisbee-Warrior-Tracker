@@ -2,6 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import * as authClient from '../lib/authClient'
 import type { AuthUser, OrgMembership } from '../lib/authClient'
 import { supabase } from '../lib/supabase'
+import { posthog } from '../lib/posthog'
+import { track } from '../lib/analytics'
 
 const CURRENT_ORG_STORAGE_KEY = 'ufwt_current_org_id'
 
@@ -39,6 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refreshSessionState = useCallback(async () => {
     const session = await authClient.getSession()
     setUser(session.user)
+    if (session.user) posthog.identify(session.user.id, { email: session.user.email })
     setOrganizations(session.organizations)
     setCurrentOrgId(prev => {
       const stored = prev ?? readStoredOrgId()
@@ -59,6 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (email: string, password: string) => {
       await authClient.login(email, password)
       await refreshSessionState()
+      track('user_logged_in')
     },
     [refreshSessionState]
   )
@@ -66,6 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signup = useCallback(
     async (email: string, password: string) => {
       const result = await authClient.signup(email, password)
+      track('user_signed_up')
       if (!result.confirmationRequired) await refreshSessionState()
       return { confirmationRequired: result.confirmationRequired }
     },
@@ -75,13 +80,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loginWithPasskey = useCallback(async () => {
     await authClient.signInWithPasskey()
     await refreshSessionState()
+    track('user_logged_in', { via: 'passkey' })
   }, [refreshSessionState])
 
   const logout = useCallback(async () => {
     await authClient.logout()
+    track('user_logged_out')
+    posthog.reset()
     setUser(null)
     setOrganizations([])
     setCurrentOrgId(null)
+  }, [])
+
+  const forgotPassword = useCallback(async (email: string) => {
+    await authClient.forgotPassword(email)
+    track('password_reset_requested')
   }, [])
 
   const switchOrg = useCallback((organizationId: number) => {
@@ -107,6 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (memberError) throw new Error(memberError.message)
       await refreshSessionState()
       setCurrentOrgId(org.id)
+      track('organization_created', { organization_id: org.id })
     },
     [user, refreshSessionState]
   )
@@ -124,6 +138,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (error) throw new Error(error.message)
       await refreshSessionState()
       setCurrentOrgId(organizationId)
+      track('organization_joined', { organization_id: organizationId })
     },
     [user, refreshSessionState]
   )
@@ -148,7 +163,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loginWithGoogle: authClient.loginWithGoogle,
         loginWithPasskey,
         logout,
-        forgotPassword: authClient.forgotPassword,
+        forgotPassword,
         switchOrg,
         createOrganization,
         joinOrganization,

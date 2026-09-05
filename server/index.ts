@@ -1,6 +1,7 @@
-import "dotenv/config";
+import "./instrument.js";
 import express from "express";
 import type { Request as ExpressRequest, Response as ExpressResponse, NextFunction } from "express";
+import * as Sentry from "@sentry/node";
 import { createClient } from "@supabase/supabase-js";
 import multer from "multer";
 import path from "path";
@@ -9,8 +10,9 @@ import { GoogleGenAI } from "@google/genai";
 import { createGateway, createRequireAllowedUser } from "../gateway/index.js";
 import { nodeAdapter } from "../gateway/node-adapter.js";
 import { getVaultSecret } from "../gateway/secrets.js";
-import { runJamSync } from "../gateway/jamSync.js";
+import { runJamSync, JAM_SYNC_MONITOR_SLUG, JAM_SYNC_MONITOR_CONFIG } from "../gateway/jamSync.js";
 import { CHAT_FUNCTION_DECLARATIONS, callChatFunction, type ActionsConfig } from "../gateway/gameActions.js";
+import { track, trackError, shutdown } from "./lib/posthog.js";
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
@@ -375,6 +377,9 @@ function isTransientGeminiError(err: unknown): boolean {
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 app.post("/api/chat", async (req, res) => {
+  const startedAt = Date.now();
+  let usedToolCall = false;
+  let distinctId = "unknown";
   try {
     const { message, session_id, history = [], organization_id } = req.body as {
       message: string; session_id: string; history: { role: string; content: string }[]; organization_id: number
@@ -389,6 +394,7 @@ app.post("/api/chat", async (req, res) => {
     if (!user || !(await isOrgMember(user.email.toLowerCase(), organization_id))) {
       return res.status(401).json({ error: "not authenticated" });
     }
+    distinctId = user.sub;
 
     const systemContext = await getTeamContext(organization_id);
 
@@ -433,11 +439,13 @@ app.post("/api/chat", async (req, res) => {
     for (let round = 0; round < MAX_FUNCTION_ROUNDS; round++) {
       const calls = response.functionCalls;
       if (!calls || calls.length === 0) break;
+      usedToolCall = true;
       const parts = await Promise.all(calls.map(async (call) => {
         try {
           const output = await callChatFunction(actionsConfig, organization_id, call.name!, call.args ?? {});
           return { functionResponse: { name: call.name!, response: { output } } };
         } catch (err) {
+          Sentry.captureException(err);
           return { functionResponse: { name: call.name!, response: { error: err instanceof Error ? err.message : String(err) } } };
         }
       }));
@@ -451,8 +459,17 @@ app.post("/api/chat", async (req, res) => {
       { session_id, role: "assistant", content: reply, organization_id },
     ]);
 
+    await track(distinctId, "chat_message_sent", {
+      organization_id,
+      session_id,
+      model: geminiModel,
+      duration_ms: Date.now() - startedAt,
+      used_tool_call: usedToolCall,
+    });
     res.json({ reply });
   } catch (err: unknown) {
+    await trackError(distinctId, err);
+    Sentry.captureException(err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
@@ -481,11 +498,13 @@ app.get("/api/chat/history", async (req, res) => {
     if (error) throw error;
     res.json(data ?? []);
   } catch (err: unknown) {
+    Sentry.captureException(err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 
 app.delete("/api/chat/history", async (req, res) => {
+  let distinctId = "unknown";
   try {
     const { session_id, organization_id } = req.query as { session_id: string; organization_id: string };
     if (!session_id) return res.status(400).json({ error: "session_id required" });
@@ -498,11 +517,15 @@ app.delete("/api/chat/history", async (req, res) => {
     if (!user || !(await isOrgMember(user.email.toLowerCase(), Number(organization_id)))) {
       return res.status(401).json({ error: "not authenticated" });
     }
+    distinctId = user.sub;
 
     const { error } = await supabase.from("chat_logs").delete().eq("session_id", session_id).eq("organization_id", organization_id);
     if (error) throw error;
+    await track(distinctId, "chat_history_cleared", { organization_id, session_id });
     res.json({ ok: true });
   } catch (err: unknown) {
+    await trackError(distinctId, err);
+    Sentry.captureException(err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
@@ -526,11 +549,20 @@ function jamSyncConfig() {
   };
 }
 
-app.post("/api/schedule/sync-jam", requireAuth, async (_req, res) => {
+app.post("/api/schedule/sync-jam", requireAuth, async (req, res) => {
+  let distinctId = "unknown";
   try {
+    const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
+      headers: { cookie: req.headers.cookie ?? "" },
+    });
+    const user = await requireAllowedUser(webRequest);
+    distinctId = user?.sub ?? "unknown";
     const result = await runJamSync(jamSyncConfig());
+    await track(distinctId, "jam_sync_triggered", {});
     res.json(result);
   } catch (err: unknown) {
+    await trackError(distinctId, err);
+    Sentry.captureException(err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
@@ -541,17 +573,30 @@ app.get("/api/cron/sync-jam", async (req, res) => {
     return res.status(401).json({ error: "not authenticated" });
   }
   try {
-    const result = await runJamSync(jamSyncConfig());
+    const result = await Sentry.withMonitor(
+      JAM_SYNC_MONITOR_SLUG,
+      () => runJamSync(jamSyncConfig()),
+      JAM_SYNC_MONITOR_CONFIG
+    );
+    await track("cron", "jam_sync_triggered", { via: "cron" });
     res.json(result);
   } catch (err: unknown) {
+    await trackError("cron", err);
+    Sentry.captureException(err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
+
+Sentry.setupExpressErrorHandler(app);
 
 // Only bind a port when running directly (not as a Vercel serverless function)
 if (!process.env.VERCEL) {
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`API server running on http://0.0.0.0:${PORT}`);
+  });
+  process.on("SIGTERM", async () => {
+    await shutdown();
+    process.exit(0);
   });
 }
 
