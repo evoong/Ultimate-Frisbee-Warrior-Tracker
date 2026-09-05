@@ -6,6 +6,7 @@ const host = import.meta.env.VITE_PUBLIC_POSTHOG_HOST
 if (key) {
   posthog.init(key, {
     api_host: host,
+    defaults: '2026-01-30', // enables capture_pageview: 'history_change' so React Router route changes fire $pageview (plain `true` only captures the initial hard load)
     person_profiles: 'identified_only', // avoid billing for anonymous visitors on paid tiers
     capture_exceptions: true, // feeds the Error Tracking product configured in PostHog
     loaded: (ph) => {

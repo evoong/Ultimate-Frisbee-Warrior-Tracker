@@ -1,4 +1,6 @@
-import { GoogleGenAI } from '@google/genai'
+import { GoogleGenAI } from '@posthog/ai/gemini'
+import type { Content } from '@google/genai'
+import { PostHog } from 'posthog-node'
 import type { GatewayConfig } from './index.js'
 import { getVaultSecret } from './secrets.js'
 import { cookieNames, parseCookies } from './cookies.js'
@@ -19,6 +21,8 @@ export interface ChatConfig extends GatewayConfig {
   // dev before Vault is populated.
   geminiApiKey?: string
   geminiModel?: string
+  posthogProjectToken?: string
+  posthogHost?: string
 }
 
 // Switched from gemma-4-31b-it: side-by-side timing showed gemini-flash-lite
@@ -336,22 +340,25 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function callGemini(
-  apiKey: string, model: string, systemInstruction: string,
+  posthog: PostHog, apiKey: string, model: string, systemInstruction: string,
   history: { role: string; content: string }[], message: string,
-  actionsConfig: ActionsConfig, organizationId: number, callerRole: TeamRole
+  actionsConfig: ActionsConfig, organizationId: number, callerRole: TeamRole,
+  sessionId: string, distinctId: string
 ): Promise<string> {
-  const genai = new GoogleGenAI({ apiKey })
+  // PostHog's Gemini wrapper only instruments models.generateContent (not
+  // the chats.create()/sendMessage() session helper), so the conversation
+  // history is threaded through generateContent calls by hand below —
+  // mirroring what Chat.sendMessage does internally in @google/genai.
+  const genai = new GoogleGenAI({ apiKey, posthog })
+  const traceId = crypto.randomUUID()
+  const posthogProperties = { $ai_session_id: sessionId }
+  const config = { systemInstruction, tools: [{ functionDeclarations: CHAT_FUNCTION_DECLARATIONS }] }
 
-  const chatHistory = history.map(h => ({
+  const contents: Content[] = history.map(h => ({
     role: h.role === 'assistant' ? 'model' : 'user',
     parts: [{ text: h.content }],
   }))
-
-  const chat = genai.chats.create({
-    model,
-    history: chatHistory,
-    config: { systemInstruction, tools: [{ functionDeclarations: CHAT_FUNCTION_DECLARATIONS }] },
-  })
+  contents.push({ role: 'user', parts: [{ text: message }] })
 
   // Retry transient Gemini errors, but only for this first turn (was tuned
   // against gemma-4-31b-it, which could fail its transient 500 several
@@ -363,7 +370,12 @@ async function callGemini(
   let response
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      response = await chat.sendMessage({ message })
+      response = await genai.models.generateContent({
+        model, contents, config,
+        posthogDistinctId: distinctId,
+        posthogTraceId: traceId,
+        posthogProperties,
+      })
       break
     } catch (err) {
       if (attempt === MAX_ATTEMPTS || !isTransientGeminiError(err)) throw err
@@ -380,21 +392,50 @@ async function callGemini(
   for (let round = 0; round < MAX_FUNCTION_ROUNDS; round++) {
     const calls = response.functionCalls
     if (!calls || calls.length === 0) break
+
+    const modelContent = response.candidates?.[0]?.content
+    if (modelContent) contents.push(modelContent)
+
     const parts = await Promise.all(calls.map(async call => {
+      const start = Date.now()
+      let output: unknown
+      let error: string | undefined
       try {
         // Writes require member-tier on this team. A guest never reaches
         // here (requireTeamMember rejects anonymous/non-member callers
         // before callGemini is even invoked), but a future read-only role
         // would, and the model must not be the thing that decides.
-        const output = WRITE_FUNCTIONS.has(call.name!) && !hasAtLeast(callerRole, 'member')
+        output = WRITE_FUNCTIONS.has(call.name!) && !hasAtLeast(callerRole, 'member')
           ? { error: "you do not have permission to change this team's data" }
           : await callChatFunction(actionsConfig, organizationId, call.name!, call.args ?? {})
-        return { functionResponse: { name: call.name!, response: { output } } }
       } catch (err) {
-        return { functionResponse: { name: call.name!, response: { error: err instanceof Error ? err.message : String(err) } } }
+        error = err instanceof Error ? err.message : String(err)
       }
+      posthog.capture({
+        distinctId,
+        event: '$ai_span',
+        properties: {
+          $ai_trace_id: traceId,
+          $ai_session_id: sessionId,
+          $ai_span_id: crypto.randomUUID(),
+          $ai_span_name: call.name,
+          $ai_input_state: call.args,
+          $ai_output_state: error ? { error } : output,
+          $ai_latency: (Date.now() - start) / 1000,
+        },
+      })
+      return error
+        ? { functionResponse: { name: call.name!, response: { error } } }
+        : { functionResponse: { name: call.name!, response: { output } } }
     }))
-    response = await chat.sendMessage({ message: parts })
+    contents.push({ role: 'user', parts })
+
+    response = await genai.models.generateContent({
+      model, contents, config,
+      posthogDistinctId: distinctId,
+      posthogTraceId: traceId,
+      posthogProperties,
+    })
   }
 
   return response.text ?? ''
@@ -422,7 +463,16 @@ export async function handleChatRequest(config: ChatConfig, request: Request): P
     const geminiModel = await getVaultSecret(config, 'gemini_model', config.geminiModel) ?? DEFAULT_GEMINI_MODEL
     if (!geminiApiKey) return json({ error: 'Gemini API key not configured' }, 500)
     const actionsConfig: ActionsConfig = { supabaseUrl: config.supabaseUrl, supabaseSecretKey: config.supabaseSecretKey }
-    const reply = await callGemini(geminiApiKey, geminiModel, systemContext, history, message, actionsConfig, teamId, user.role)
+
+    // Per-request client (Workers has no module-scope access to `env`), so
+    // it's shut down (not flushed) once this request's events are queued.
+    const posthog = new PostHog(config.posthogProjectToken!, { host: config.posthogHost, flushAt: 1, flushInterval: 0 })
+    let reply: string
+    try {
+      reply = await callGemini(posthog, geminiApiKey, geminiModel, systemContext, history, message, actionsConfig, teamId, user.role, session_id, user.sub)
+    } finally {
+      await posthog.shutdown()
+    }
 
     await insertChatLogs(config, teamId, [
       { session_id, role: 'user', content: message },
