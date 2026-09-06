@@ -23,7 +23,7 @@
     "db:test": "supabase test db",
     "db:signing-key": "node scripts/gen-local-signing-key.mjs",
     "test:gateway:offline": "node node_modules/tsx/dist/cli.mjs gateway/jwt.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/gameActions.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/jamSync.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/feedbackTriage.test.mjs",
-    "test:triage": "node node_modules/tsx/dist/cli.mjs gateway/feedbackTriage.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/feedbackStore.test.mjs"
+    "test:triage": "node node_modules/tsx/dist/cli.mjs gateway/feedbackTriage.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/feedbackStore.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/feedbackJudge.test.mjs"
   },
   "retool": {
     "app": {
