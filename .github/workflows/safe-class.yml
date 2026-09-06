@@ -61,7 +61,7 @@ jobs:
             echo "Branch '${{ github.head_ref }}' does not start with agent/issue-<digits>; aborting." >&2
             exit 1
           fi
-          IS_BUG=$(gh issue view "$ISSUE" --json labels -q '[.labels[].name] | contains(["bug"])')
+          IS_BUG=$(gh issue view "$ISSUE" --json labels -q '[.labels[].name] | any(. == "bug")')
           if [ "$IS_BUG" = "true" ]; then echo "type=bug" >> "$GITHUB_OUTPUT";
           else echo "type=feature" >> "$GITHUB_OUTPUT"; fi
 
