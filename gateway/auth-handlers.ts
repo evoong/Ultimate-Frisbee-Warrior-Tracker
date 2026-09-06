@@ -350,7 +350,13 @@ export async function handleAuthRequest(
       const teams = await getTeams(config, accessToken)
       return json(
         {
-          user: { id: data.id, email: data.email ?? null },
+          // `|| null`, not `?? null`: GoTrue returns an EMPTY STRING for an
+          // anonymous user's email, not null, and `??` would pass that straight
+          // through. The declared client type is `string | null`, so "" is a
+          // value that satisfies the type while lying about what it means --
+          // and every `email ?? 'Guest'` fallback downstream silently renders
+          // blank. Normalise it here, at the boundary, so "no email" is null.
+          user: { id: data.id, email: data.email || null },
           is_anonymous: data.is_anonymous === true,
           teams,
           // Deprecated alias: the frontend still reads `organizations` and calls
