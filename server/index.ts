@@ -656,7 +656,28 @@ const FEEDBACK_LABELS: Record<"bug" | "feature", string> = {
   feature: "enhancement",
 };
 
-app.post("/api/feedback", async (req, res) => {
+// Memory storage, not the disk-based `upload` above: this file never needs
+// to be served from our own origin, only re-uploaded to Supabase Storage,
+// and Vercel's /tmp doesn't survive past the request anyway.
+const feedbackUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) cb(null, true);
+    else cb(new Error("Only image files are allowed"));
+  },
+});
+
+// A signed URL, not a public one: feedback-attachments is a private bucket
+// (see its migration), so this is the only way the screenshot embedded in
+// the GitHub issue body is ever fetchable -- GitHub's own servers render
+// that markdown with no session of ours to authenticate with. Expiry is
+// long (5 years) because there's no later moment to refresh this URL from;
+// once the issue is filed, this is the only copy of the link that will
+// ever exist.
+const FEEDBACK_ATTACHMENT_URL_TTL_SECONDS = 60 * 60 * 24 * 365 * 5;
+
+app.post("/api/feedback", feedbackUpload.single("photo"), async (req, res) => {
   let distinctId = "unknown";
   try {
     const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
@@ -679,6 +700,22 @@ app.post("/api/feedback", async (req, res) => {
     if (!githubToken) return res.status(500).json({ error: "GitHub integration not configured" });
     const repo = process.env.GITHUB_REPO || "evoong/Ultimate-Frisbee-Warrior-Tracker";
 
+    let attachmentMarkdown = "";
+    const photo = req.file;
+    if (photo) {
+      const ext = path.extname(photo.originalname).toLowerCase() || ".jpg";
+      const objectPath = `${claims.sub}/${Date.now()}${ext}`;
+      const { error: uploadError } = await supabase.storage
+        .from("feedback-attachments")
+        .upload(objectPath, photo.buffer, { contentType: photo.mimetype });
+      if (uploadError) throw new Error(`Attachment upload failed: ${uploadError.message}`);
+      const { data: signed, error: signError } = await supabase.storage
+        .from("feedback-attachments")
+        .createSignedUrl(objectPath, FEEDBACK_ATTACHMENT_URL_TTL_SECONDS);
+      if (signError || !signed) throw new Error(`Attachment signing failed: ${signError?.message ?? "no URL returned"}`);
+      attachmentMarkdown = `\n\n![screenshot](${signed.signedUrl})`;
+    }
+
     const ghRes = await fetch(`https://api.github.com/repos/${repo}/issues`, {
       method: "POST",
       headers: {
@@ -688,7 +725,7 @@ app.post("/api/feedback", async (req, res) => {
       },
       body: JSON.stringify({
         title: title.trim().slice(0, 200),
-        body: `${description.trim()}\n\n---\nReported by ${claims.email ?? claims.sub} via in-app feedback form.`,
+        body: `${description.trim()}${attachmentMarkdown}\n\n---\nReported by ${claims.email ?? claims.sub} via in-app feedback form.`,
         labels: [FEEDBACK_LABELS[type], "customer-reported"],
       }),
     });
@@ -698,7 +735,7 @@ app.post("/api/feedback", async (req, res) => {
     }
     const issue = await ghRes.json();
 
-    await track(distinctId, "feedback_submitted", { type });
+    await track(distinctId, "feedback_submitted", { type, hasPhoto: !!photo });
     res.json({ url: issue.html_url });
   } catch (err: unknown) {
     await trackError(distinctId, err);
