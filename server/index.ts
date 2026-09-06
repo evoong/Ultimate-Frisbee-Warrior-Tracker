@@ -776,9 +776,8 @@ async function addGithubLabel(token: string, repo: string, issueNumber: number, 
 }
 
 // Translates a TriageOutcome into cluster status, GitHub labels, and (for a
-// bug clearing the threshold) the repository_dispatch that starts an agent.
-// Task 10 supplies dispatchAgent; until then it is a no-op that only records
-// the status, which is why Phase 0 can land before any agent can run.
+// bug clearing the threshold) the repository_dispatch that starts an agent
+// (see dispatchAgent below, and .github/workflows/feedback-agent.yml).
 async function applyOutcome(
   config: ActionsConfig,
   githubToken: string,
@@ -810,9 +809,38 @@ async function applyOutcome(
   await dispatchAgent(githubToken, repo, issueNumber);
 }
 
-// Replaced in Task 10 by the real repository_dispatch call.
-async function dispatchAgent(_token: string, _repo: string, _issueNumber: number): Promise<void> {
-  return;
+// Starts the feedback-agent workflow for a cluster that cleared the bug
+// threshold (or, via the workflow's human path, was approved by a
+// maintainer). This POSTs a repository_dispatch event; the event_type
+// "feedback-agent" must match the `types` filter on the
+// `repository_dispatch` trigger in .github/workflows/feedback-agent.yml, and
+// client_payload.issue_number must match the field that workflow reads
+// (`github.event.client_payload.issue_number`) -- a mismatch on either side
+// means the dispatch silently does nothing.
+//
+// Failure here must not fail the request that triggered it -- applyOutcome
+// has already marked the cluster "dispatched" by the time this is called, so
+// on failure we report to Sentry (already imported in this file) rather than
+// throw. A maintainer can always re-run the workflow from the issue by hand
+// (adding agent-approved) if the automatic dispatch never landed.
+async function dispatchAgent(token: string, repo: string, issueNumber: number): Promise<void> {
+  const res = await fetch(`https://api.github.com/repos/${repo}/dispatches`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      event_type: "feedback-agent",
+      client_payload: { issue_number: issueNumber },
+    }),
+  });
+  if (!res.ok) {
+    Sentry.captureException(
+      new Error(`Agent dispatch failed (${res.status}): ${await res.text().catch(() => "")}`)
+    );
+  }
 }
 
 app.post("/api/feedback", feedbackUpload.single("photo"), async (req, res) => {
