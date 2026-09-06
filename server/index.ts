@@ -20,6 +20,7 @@ import { verifyAccessToken } from "../gateway/jwt.js";
 import { decideEscalation, DISPATCH_THRESHOLD, CONFLICT_MARGIN, type TriageOutcome, type VariantTally } from "../gateway/feedbackTriage.js";
 import { insertReport, listOpenClusters, attachReportToCluster, createCluster, tallyFor, setClusterStatus } from "../gateway/feedbackStore.js";
 import { judgeReport } from "../gateway/feedbackJudge.js";
+import { sbGet } from "../gateway/supabaseRest.js";
 import { track, trackError, shutdown } from "./lib/posthog.js";
 
 const app = express();
@@ -931,6 +932,51 @@ app.post("/api/feedback", feedbackUpload.single("photo"), async (req, res) => {
   }
 });
 
+// Reports whose judge or GitHub call failed at submit time are stored with a
+// null cluster_id. Nothing else would ever pick them up, so the daily cron
+// retries them through the same path a live submission takes. Bounded at 50
+// per run: this is a cleanup pass, not a batch importer, and an unbounded
+// loop here would be an unbounded Gemini bill.
+async function reconcileOrphanReports(
+  config: ActionsConfig,
+  githubToken: string,
+  repo: string,
+  geminiApiKey: string,
+  geminiModel: string
+): Promise<{ attached: number }> {
+  const orphans = await sbGet(
+    config,
+    "feedback_reports?select=id,type,title,description&cluster_id=is.null&order=created_at.asc&limit=50"
+  );
+  let attached = 0;
+  for (const orphan of orphans ?? []) {
+    // Re-fetched every iteration (rather than once up front) so a cluster
+    // created earlier in this same loop -- e.g. two orphans that both turn
+    // out to be the same new bug -- is visible to the next orphan's judge
+    // call instead of spawning a duplicate GitHub issue.
+    const clusters = await listOpenClusters(config);
+    const verdict = await judgeReport(geminiApiKey, geminiModel, orphan, clusters);
+    if (verdict.relation === "new") {
+      const issue = await createGithubIssue(githubToken, repo, {
+        title: verdict.suggestedTitle.slice(0, 200),
+        body: `${orphan.description}\n\n---\nRecovered from a failed submission.`,
+        labels: [FEEDBACK_LABELS[orphan.type as "bug" | "feature"], "customer-reported"],
+      });
+      const clusterId = await createCluster(config, {
+        type: orphan.type,
+        title: verdict.suggestedTitle,
+        summary: verdict.suggestedSummary,
+        githubIssueNumber: issue.number,
+      });
+      await attachReportToCluster(config, orphan.id, clusterId, verdict.variantLabel);
+    } else {
+      await attachReportToCluster(config, orphan.id, verdict.matchClusterId!, verdict.variantLabel);
+    }
+    attached++;
+  }
+  return { attached };
+}
+
 app.get("/api/cron/sync-jam", async (req, res) => {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret || req.headers.authorization !== `Bearer ${cronSecret}`) {
@@ -942,8 +988,22 @@ app.get("/api/cron/sync-jam", async (req, res) => {
       () => runJamSync(jamSyncConfig()),
       JAM_SYNC_MONITOR_CONFIG
     );
+    // Rides along on the existing daily cron rather than introducing a
+    // second schedule. A failure here must not fail the jam sync it rides
+    // with -- the .catch keeps this isolated and just reports zero attached.
+    const reconciled = await reconcileOrphanReports(
+      { supabaseUrl: process.env.SUPABASE_URL || "", supabaseSecretKey: process.env.SUPABASE_SECRET_KEY || "" },
+      (await getVaultSecret(vaultConfig, "github_token", process.env.GITHUB_TOKEN)) ?? "",
+      process.env.GITHUB_REPO || "evoong/Ultimate-Frisbee-Warrior-Tracker",
+      (await getVaultSecret(vaultConfig, "gemini_api_key", process.env.GEMINI_API_KEY)) ?? "",
+      (await getVaultSecret(vaultConfig, "gemini_model", process.env.GEMINI_MODEL)) ?? DEFAULT_GEMINI_MODEL
+    ).catch(err => {
+      // A failed cleanup pass must not fail the jam sync it rides along with.
+      Sentry.captureException(err);
+      return { attached: 0 };
+    });
     await track("cron", "jam_sync_triggered", { via: "cron" });
-    res.json(result);
+    res.json({ ...result, reconciled });
   } catch (err: unknown) {
     await trackError("cron", err);
     Sentry.captureException(err);
