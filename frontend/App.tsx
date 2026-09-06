@@ -135,6 +135,43 @@ export default function App() {
     )
   }
 
+  // A guest is a real (anonymous) Supabase user, so '/login' is unreachable
+  // while one is signed in: the unknown-path effect above replaces it with
+  // /schedule. Linking to it did nothing but bounce. Ending the anonymous
+  // session first is what makes the form reachable, and a guest owns no
+  // data, so nothing is lost by doing it.
+  const signUpFromGuest = async () => {
+    await logout()
+    navigate('/login')
+  }
+
+  const guestNotice = isGuest && (
+    <div className="border-b bg-muted/60 px-4 py-2 text-center text-sm">
+      You're browsing as a guest.{' '}
+      <button type="button" onClick={signUpFromGuest} className="font-medium underline">
+        Sign up
+      </button>{' '}
+      to join a team and track your own stats.
+      {/* The only entry point to /teams once a guest has picked one. The
+          route exists for exactly this, but nothing linked to it, so the
+          choice was effectively permanent until the session ended. Omitted
+          while currentTeamId is null, since that case already renders the
+          browser itself. */}
+      {currentTeamId != null && (
+        <>
+          {' '}
+          <Link to="/teams" className="font-medium underline">Browse other teams</Link>.
+        </>
+      )}
+    </div>
+  )
+
+  const readOnlyNotice = !isGuest && !can.record && (
+    <div className="border-b bg-muted/60 px-4 py-2 text-center text-sm">
+      You don't have permission to change this team's data.
+    </div>
+  )
+
   // A guest who hasn't picked a team yet has no organization_id to scope
   // Schedule/Roster/Stats to, so the normal shell has nothing to render.
   // Show the public-teams browser instead of the shell entirely; once
@@ -142,11 +179,41 @@ export default function App() {
   // stays NO_CAPABILITIES for a guest regardless of which team is current,
   // since `role` is derived from `teams`, which is empty for a guest) the
   // branches below take over and the normal shell renders.
+  //
+  // Sign out lives in the shell (sidebar on desktop, header on mobile), so
+  // this branch has to carry its own copy: without it a guest who lands
+  // here -- which is every guest, and permanently so when no team is public
+  // -- has no control anywhere on screen that ends the session.
   if (isGuest && currentTeamId == null) {
     return (
-      <Suspense fallback={<PageFallback />}>
-        <PublicTeams />
-      </Suspense>
+      <div className="min-h-screen bg-background text-foreground">
+        <header className="bg-card border-b border-border sticky top-0 z-10">
+          <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
+            <h1 className="text-lg font-bold text-primary">Warrior Tracker</h1>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={toggleTheme}
+                className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+                aria-label="Toggle theme"
+              >
+                {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+              </button>
+              <button
+                onClick={() => logout()}
+                className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
+                aria-label="Sign out"
+                title="Sign out"
+              >
+                <LogOut className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+        </header>
+        {guestNotice}
+        <Suspense fallback={<PageFallback />}>
+          <PublicTeams />
+        </Suspense>
+      </div>
     )
   }
 
@@ -173,20 +240,6 @@ export default function App() {
         {!isGuest && <Route path="/ai" element={<Chat />} />}
       </Routes>
     </Suspense>
-  )
-
-  const guestNotice = isGuest && (
-    <div className="border-b bg-muted/60 px-4 py-2 text-center text-sm">
-      You're browsing as a guest.{' '}
-      <Link to="/login" className="font-medium underline">Sign up</Link>{' '}
-      to join a team and track your own stats.
-    </div>
-  )
-
-  const readOnlyNotice = !isGuest && !can.record && (
-    <div className="border-b bg-muted/60 px-4 py-2 text-center text-sm">
-      You don't have permission to change this team's data.
-    </div>
   )
 
   // Desktop: collapsible sidebar shell.

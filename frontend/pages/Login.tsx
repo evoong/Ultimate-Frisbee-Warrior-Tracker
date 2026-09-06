@@ -218,7 +218,12 @@ export default function Login() {
                         setError(null)
                         try {
                           await loginAsGuest()
-                          navigate('/')
+                          // '/teams' is the public-teams browser, which is
+                          // exactly what a fresh guest gets shown. '/' is not
+                          // a known path, so App's unknown-path effect used to
+                          // rewrite it to '/schedule' -- an address bar that
+                          // disagreed with the page on screen.
+                          navigate('/teams')
                         } catch (err) {
                           setError(err instanceof Error ? err.message : 'Could not continue as a guest')
                         } finally {
