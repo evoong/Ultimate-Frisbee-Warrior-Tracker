@@ -83,7 +83,7 @@ type Board = {
 }
 
 export default function Strategy() {
-  const { allowed, currentOrgId } = useAuth()
+  const { can, currentTeamId } = useAuth()
   const navigate = useNavigate()
   // The selected play mirrors this URL segment (see the "default to first
   // play" effect below), so a reload, browser back/forward, or a
@@ -167,11 +167,11 @@ export default function Strategy() {
   const [gameInput, setGameInput] = useState<string>(NO_GAME)
 
   useEffect(() => {
-    if (currentOrgId == null) return
-    fetchPlays({ organizationId: currentOrgId })
-    fetchPlayers({ organizationId: currentOrgId })
-    fetchGames({ organizationId: currentOrgId })
-  }, [currentOrgId])
+    if (currentTeamId == null) return
+    fetchPlays({ organizationId: currentTeamId })
+    fetchPlayers({ organizationId: currentTeamId })
+    fetchGames({ organizationId: currentTeamId })
+  }, [currentTeamId])
 
   // Default the selection to the first play, and clear it if the selected
   // play was deleted (possibly by someone else, seen after a refetch).
@@ -216,15 +216,15 @@ export default function Strategy() {
   // "attending" via row?.in ?? true, same as the Events tab's convention,
   // since they have no row at all).
   useEffect(() => {
-    if (currentOrgId == null) return
+    if (currentTeamId == null) return
     if (selectedPlay?.game_id) {
       fetchAttendance({ gameId: selectedPlay.game_id })
       if (selectedGame?.season_id) {
         fetchSeasonRoster({ seasonId: selectedGame.season_id })
-        fetchOtherPlayers({ seasonId: selectedGame.season_id, organizationId: currentOrgId })
+        fetchOtherPlayers({ seasonId: selectedGame.season_id, organizationId: currentTeamId })
       }
     }
-  }, [selectedPlay?.game_id, selectedGame?.season_id, currentOrgId])
+  }, [selectedPlay?.game_id, selectedGame?.season_id, currentTeamId])
 
   // Load positions/opponents/arrows whenever the selected step changes.
   // Deliberately does NOT clear state first: leaving the previous step's
@@ -283,7 +283,7 @@ export default function Strategy() {
     if (selectedStepId === null) return
     pushHistory()
     setPositions(prev => new Map(prev).set(playerId, { x, y }))
-    const ok = await upsertPosition({ stepId: selectedStepId, playerId, x, y, organizationId: currentOrgId })
+    const ok = await upsertPosition({ stepId: selectedStepId, playerId, x, y, organizationId: currentTeamId })
     if (!ok) loadStepData(selectedStepId)
     else track('play_player_moved', { play_id: selectedPlayId, step_id: selectedStepId, player_id: playerId })
   }
@@ -331,7 +331,7 @@ export default function Strategy() {
     const tempId = -Date.now()
     const withNew = [...opponents, { id: tempId, label, x, y }]
     setOpponents(withNew)
-    const created = await trackCreate(createOpponent({ stepId: selectedStepId, label, x, y, organizationId: currentOrgId }))
+    const created = await trackCreate(createOpponent({ stepId: selectedStepId, label, x, y, organizationId: currentTeamId }))
     if (created) {
       const settled = withNew.map(o => (o.id === tempId ? created : o))
       setOpponents(settled)
@@ -380,7 +380,7 @@ export default function Strategy() {
     const tempId = -Date.now()
     const withNew = [...textBoxes, { id: tempId, text, x, y, color: null, filled: false, width: 0.12 }]
     setTextBoxes(withNew)
-    const created = await trackCreate(createTextBox({ stepId: selectedStepId, text, x, y, organizationId: currentOrgId }))
+    const created = await trackCreate(createTextBox({ stepId: selectedStepId, text, x, y, organizationId: currentTeamId }))
     if (created) {
       setTextBoxes(withNew.map(t => (t.id === tempId ? created : t)))
       track('text_box_created', { play_id: selectedPlayId, step_id: selectedStepId })
@@ -438,7 +438,7 @@ export default function Strategy() {
     const nextStep = stepList[stepIndex + 1]
     if (!nextStep) return
     if (arrow.start_player_id != null) {
-      await upsertPosition({ stepId: nextStep.id, playerId: arrow.start_player_id, x: arrow.x2, y: arrow.y2, organizationId: currentOrgId })
+      await upsertPosition({ stepId: nextStep.id, playerId: arrow.start_player_id, x: arrow.x2, y: arrow.y2, organizationId: currentTeamId })
     } else if (arrow.start_opponent_id != null) {
       const label = opponents.find(o => o.id === arrow.start_opponent_id)?.label
       if (!label) return
@@ -453,7 +453,7 @@ export default function Strategy() {
     pushHistory()
     const tempId = -Date.now()
     setArrows(prev => [...prev, { id: tempId, ...arrow }])
-    const created = await trackCreate(createArrow({ stepId: selectedStepId, ...arrow, organizationId: currentOrgId }))
+    const created = await trackCreate(createArrow({ stepId: selectedStepId, ...arrow, organizationId: currentTeamId }))
     if (created) {
       setArrows(prev => prev.map(a => (a.id === tempId ? created : a)))
       track('arrow_created', { play_id: selectedPlayId, step_id: selectedStepId, arrow_id: created.id, arrow_type: arrow.arrow_type })
@@ -496,7 +496,7 @@ export default function Strategy() {
     pushHistory()
     const tempId = -Date.now()
     setHighlights(prev => [...prev, { id: tempId, points, color, is_straight: isStraight, locked: false }])
-    const created = await trackCreate(createHighlight({ stepId: selectedStepId, points, color, organizationId: currentOrgId, isStraight }))
+    const created = await trackCreate(createHighlight({ stepId: selectedStepId, points, color, organizationId: currentTeamId, isStraight }))
     if (created) {
       setHighlights(prev => prev.map(h => (h.id === tempId ? created : h)))
       track('highlight_created', { play_id: selectedPlayId, step_id: selectedStepId, highlight_id: created.id })
@@ -542,7 +542,7 @@ export default function Strategy() {
     pushHistory()
     const tempId = -Date.now()
     setLines(prev => [...prev, { id: tempId, points, color, is_straight: isStraight, locked: false }])
-    const created = await trackCreate(createLine({ stepId: selectedStepId, points, color, organizationId: currentOrgId, isStraight }))
+    const created = await trackCreate(createLine({ stepId: selectedStepId, points, color, organizationId: currentTeamId, isStraight }))
     if (created) {
       setLines(prev => prev.map(l => (l.id === tempId ? created : l)))
       track('line_created', { play_id: selectedPlayId, step_id: selectedStepId, line_id: created.id })
@@ -629,7 +629,7 @@ export default function Strategy() {
     setPositions(new Map(target.positions))
     for (const [pid, pos] of target.positions) {
       const c = cur.positions.get(pid)
-      if (!c || c.x !== pos.x || c.y !== pos.y) ops.push(upsertPosition({ stepId, playerId: pid, x: pos.x, y: pos.y, organizationId: currentOrgId }))
+      if (!c || c.x !== pos.x || c.y !== pos.y) ops.push(upsertPosition({ stepId, playerId: pid, x: pos.x, y: pos.y, organizationId: currentTeamId }))
     }
     for (const [pid] of cur.positions) if (!target.positions.has(pid)) ops.push(deletePosition({ stepId, playerId: pid }))
 
@@ -640,7 +640,7 @@ export default function Strategy() {
       const c = curOpp.get(o.id)
       if (!c) {
         const oldId = o.id
-        ops.push(trackCreate(createOpponent({ stepId, label: o.label, x: o.x, y: o.y, organizationId: currentOrgId })).then(created => {
+        ops.push(trackCreate(createOpponent({ stepId, label: o.label, x: o.x, y: o.y, organizationId: currentTeamId })).then(created => {
           if (created) setOpponents(prev => prev.map(p => (p.id === oldId ? created : p)))
           return !!created
         }))
@@ -657,7 +657,7 @@ export default function Strategy() {
       const c = curText.get(t.id)
       if (!c) {
         const oldId = t.id
-        ops.push(trackCreate(createTextBox({ stepId, text: t.text, x: t.x, y: t.y, organizationId: currentOrgId })).then(created => {
+        ops.push(trackCreate(createTextBox({ stepId, text: t.text, x: t.x, y: t.y, organizationId: currentTeamId })).then(created => {
           if (created) setTextBoxes(prev => prev.map(p => (p.id === oldId ? created : p)))
           return !!created
         }))
@@ -674,7 +674,7 @@ export default function Strategy() {
       const c = curArr.get(a.id)
       if (!c) {
         const oldId = a.id
-        ops.push(trackCreate(createArrow({ stepId, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2, cx: a.cx, cy: a.cy, arrow_type: a.arrow_type, start_player_id: a.start_player_id, start_opponent_id: a.start_opponent_id, organizationId: currentOrgId })).then(created => {
+        ops.push(trackCreate(createArrow({ stepId, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2, cx: a.cx, cy: a.cy, arrow_type: a.arrow_type, start_player_id: a.start_player_id, start_opponent_id: a.start_opponent_id, organizationId: currentTeamId })).then(created => {
           if (created) setArrows(prev => prev.map(p => (p.id === oldId ? created : p)))
           return !!created
         }))
@@ -691,7 +691,7 @@ export default function Strategy() {
       const c = curHi.get(h.id)
       if (!c) {
         const oldId = h.id
-        ops.push(trackCreate(createHighlight({ stepId, points: h.points, color: h.color, isStraight: h.is_straight, organizationId: currentOrgId })).then(created => {
+        ops.push(trackCreate(createHighlight({ stepId, points: h.points, color: h.color, isStraight: h.is_straight, organizationId: currentTeamId })).then(created => {
           if (created) setHighlights(prev => prev.map(p => (p.id === oldId ? created : p)))
           return !!created
         }))
@@ -708,7 +708,7 @@ export default function Strategy() {
       const c = curLn.get(l.id)
       if (!c) {
         const oldId = l.id
-        ops.push(trackCreate(createLine({ stepId, points: l.points, color: l.color, isStraight: l.is_straight, organizationId: currentOrgId })).then(created => {
+        ops.push(trackCreate(createLine({ stepId, points: l.points, color: l.color, isStraight: l.is_straight, organizationId: currentTeamId })).then(created => {
           if (created) setLines(prev => prev.map(p => (p.id === oldId ? created : p)))
           return !!created
         }))
@@ -728,7 +728,7 @@ export default function Strategy() {
   const historyBusy = () => reconcilingRef.current || pendingCreatesRef.current > 0
 
   const undo = () => {
-    if (!allowed || selectedStepId === null || historyBusy()) return
+    if (!can.record || selectedStepId === null || historyBusy()) return
     const h = historyRef.current.get(selectedStepId)
     if (!h || h.past.length === 0) return
     const prev = h.past.pop()!
@@ -736,7 +736,7 @@ export default function Strategy() {
     reconcileBoard(prev)
   }
   const redo = () => {
-    if (!allowed || selectedStepId === null || historyBusy()) return
+    if (!can.record || selectedStepId === null || historyBusy()) return
     const h = historyRef.current.get(selectedStepId)
     if (!h || h.future.length === 0) return
     const next = h.future.pop()!
@@ -820,7 +820,7 @@ export default function Strategy() {
       // Group-moved arrows detach (start_player_id/start_opponent_id: null),
       // so there is no anchored run arrow left to propagate into the next step.
       Promise.all([
-        ...playerMoves.map(mv => upsertPosition({ stepId, playerId: mv.id, x: mv.x, y: mv.y, organizationId: currentOrgId })),
+        ...playerMoves.map(mv => upsertPosition({ stepId, playerId: mv.id, x: mv.x, y: mv.y, organizationId: currentTeamId })),
         ...oppMoves.map(mv => updateOpponent({ id: mv.id, x: mv.x, y: mv.y })),
         ...textMoves.map(mv => updateTextBox({ id: mv.id, x: mv.x, y: mv.y })),
         ...arrowMoves.map(mv => updateArrow({ id: mv.id, x1: mv.x1, y1: mv.y1, x2: mv.x2, y2: mv.y2, cx: mv.cx, cy: mv.cy, start_player_id: mv.start_player_id, start_opponent_id: mv.start_opponent_id })),
@@ -841,13 +841,13 @@ export default function Strategy() {
   const handleCreate = async () => {
     const name = nameInput.trim()
     if (!name) return
-    const play = await createPlay({ name, game_id: gameInput === NO_GAME ? null : parseInt(gameInput), organizationId: currentOrgId })
+    const play = await createPlay({ name, game_id: gameInput === NO_GAME ? null : parseInt(gameInput), organizationId: currentTeamId })
     if (play) {
       track('play_created', { play_id: play.id, game_id: play.game_id })
       setShowCreate(false)
       setNameInput('')
       setGameInput(NO_GAME)
-      await fetchPlays({ organizationId: currentOrgId })
+      await fetchPlays({ organizationId: currentTeamId })
       navigate(`/plays/${play.id}`)
     }
   }
@@ -859,14 +859,14 @@ export default function Strategy() {
     track('play_renamed', { play_id: selectedPlayId })
     setShowRename(false)
     setNameInput('')
-    fetchPlays({ organizationId: currentOrgId })
+    fetchPlays({ organizationId: currentTeamId })
   }
 
   const handleAssignGame = async (value: string) => {
     if (selectedPlayId === null) return
     await updatePlay({ id: selectedPlayId, game_id: value === NO_GAME ? null : parseInt(value) })
     track('play_game_assigned', { play_id: selectedPlayId, game_id: value === NO_GAME ? null : parseInt(value) })
-    fetchPlays({ organizationId: currentOrgId })
+    fetchPlays({ organizationId: currentTeamId })
   }
 
   const handleDelete = async () => {
@@ -874,7 +874,7 @@ export default function Strategy() {
     await deletePlay({ id: selectedPlayId })
     track('play_deleted', { play_id: selectedPlayId })
     setDeleteConfirm(false)
-    fetchPlays({ organizationId: currentOrgId })
+    fetchPlays({ organizationId: currentTeamId })
   }
 
   // Refresh every list the "add player" combobox depends on after a change:
@@ -882,10 +882,10 @@ export default function Strategy() {
   // season roster and attendance (who's visible on the board), and the
   // "from other seasons" list (who's still offerable to add).
   const refreshPlayerLists = async () => {
-    await fetchPlayers({ organizationId: currentOrgId })
+    await fetchPlayers({ organizationId: currentTeamId })
     if (selectedGame?.season_id) {
       await fetchSeasonRoster({ seasonId: selectedGame.season_id })
-      await fetchOtherPlayers({ seasonId: selectedGame.season_id, organizationId: currentOrgId })
+      await fetchOtherPlayers({ seasonId: selectedGame.season_id, organizationId: currentTeamId })
     }
     if (selectedPlay?.game_id) fetchAttendance({ gameId: selectedPlay.game_id })
   }
@@ -895,9 +895,9 @@ export default function Strategy() {
   // attendance, not just the season roster.
   const handleAddNewSub = async (name: string) => {
     if (selectedPlay?.game_id) {
-      await createPlayerForGame({ display_name: name, gameId: selectedPlay.game_id, seasonId: selectedGame?.season_id, organizationId: currentOrgId })
+      await createPlayerForGame({ display_name: name, gameId: selectedPlay.game_id, seasonId: selectedGame?.season_id, organizationId: currentTeamId })
     } else {
-      await createPlayer({ display_name: name, is_sub: true, organizationId: currentOrgId })
+      await createPlayer({ display_name: name, is_sub: true, organizationId: currentTeamId })
     }
     track('player_created', { game_id: selectedPlay?.game_id ?? null, is_sub: true, source: 'strategy_add_sub' })
     await refreshPlayerLists()
@@ -907,14 +907,14 @@ export default function Strategy() {
   // roster, same hook Schedule uses for the equivalent flow.
   const handleAddExistingPlayer = async (playerId: string) => {
     if (!selectedPlay?.game_id) return
-    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedPlay.game_id, seasonId: selectedGame?.season_id, organizationId: currentOrgId })
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedPlay.game_id, seasonId: selectedGame?.season_id, organizationId: currentTeamId })
     track('game_player_added', { player_id: parseInt(playerId), game_id: selectedPlay.game_id })
     await refreshPlayerLists()
   }
 
   const handleAddStep = async () => {
     if (selectedPlayId === null) return
-    const step = await addStep({ playId: selectedPlayId, organizationId: currentOrgId })
+    const step = await addStep({ playId: selectedPlayId, organizationId: currentTeamId })
     if (step) {
       // Seed the new step from the current one instead of starting empty: a
       // placed player or opponent keeps their position unless they have an
@@ -928,17 +928,17 @@ export default function Strategy() {
       for (const [playerId, pos] of positions.entries()) {
         const runArrow = arrows.find(a => a.arrow_type === 'run' && a.start_player_id === playerId)
         const target = runArrow ? { x: runArrow.x2, y: runArrow.y2 } : pos
-        seeds.push(upsertPosition({ stepId: step.id, playerId, x: target.x, y: target.y, organizationId: currentOrgId }))
+        seeds.push(upsertPosition({ stepId: step.id, playerId, x: target.x, y: target.y, organizationId: currentTeamId }))
       }
       for (const opp of opponents) {
         const runArrow = arrows.find(a => a.arrow_type === 'run' && a.start_opponent_id === opp.id)
         const target = runArrow ? { x: runArrow.x2, y: runArrow.y2 } : opp
-        seeds.push(createOpponent({ stepId: step.id, label: opp.label, x: target.x, y: target.y, organizationId: currentOrgId }))
+        seeds.push(createOpponent({ stepId: step.id, label: opp.label, x: target.x, y: target.y, organizationId: currentTeamId }))
       }
       // Text boxes carry their text and position forward unchanged (they
       // don't anchor arrows, so there's no head-position case to handle).
       for (const box of textBoxes) {
-        seeds.push(createTextBox({ stepId: step.id, text: box.text, x: box.x, y: box.y, organizationId: currentOrgId }))
+        seeds.push(createTextBox({ stepId: step.id, text: box.text, x: box.x, y: box.y, organizationId: currentTeamId }))
       }
       await Promise.all(seeds)
       track('play_step_added', { play_id: selectedPlayId, step_id: step.id })
@@ -1021,7 +1021,7 @@ export default function Strategy() {
             <CardContent className="p-10 text-center space-y-3">
               <ClipboardList className="w-12 h-12 text-muted-foreground mx-auto opacity-40" />
               <p className="text-muted-foreground text-sm">No plays yet. Create one and drag players onto the field.</p>
-              {allowed && (
+              {can.record && (
                 <Button onClick={() => { setNameInput(''); setGameInput(NO_GAME); setShowCreate(true) }}>
                   <Plus className="w-4 h-4 mr-1.5" />New play
                 </Button>
@@ -1037,7 +1037,7 @@ export default function Strategy() {
               <Select
                 value={selectedPlayId !== null ? String(selectedPlayId) : undefined}
                 onValueChange={v => navigate(`/plays/${v}`)}
-                onOpenChange={open => { if (open) fetchPlays({ organizationId: currentOrgId }) }}
+                onOpenChange={open => { if (open) fetchPlays({ organizationId: currentTeamId }) }}
               >
                 <SelectTrigger className="flex-1 bg-card text-foreground border-border">
                   <SelectValue placeholder="Select a play" />
@@ -1048,7 +1048,7 @@ export default function Strategy() {
                   ))}
                 </SelectContent>
               </Select>
-              {allowed && (
+              {can.record && (
                 <>
                   <Button variant="outline" size="icon" aria-label="New play"
                     onClick={() => { setNameInput(''); setGameInput(NO_GAME); setShowCreate(true) }}>
@@ -1073,7 +1073,7 @@ export default function Strategy() {
                 <Select
                   value={selectedPlay.game_id ? String(selectedPlay.game_id) : NO_GAME}
                   onValueChange={handleAssignGame}
-                  disabled={!allowed}
+                  disabled={!can.record}
                 >
                   <SelectTrigger className="flex-1 h-8 text-sm bg-card text-foreground border-border">
                     <SelectValue placeholder="No game assigned" />
@@ -1085,7 +1085,7 @@ export default function Strategy() {
                     ))}
                   </SelectContent>
                 </Select>
-                {allowed && (
+                {can.record && (
                   <PlayerCombobox
                     players={[]}
                     otherPlayers={otherPlayerOptions}
@@ -1122,7 +1122,7 @@ export default function Strategy() {
                   onClick={() => setSelectedStepId(stepList[stepIndex + 1]!.id)}>
                   <ChevronRight className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                 </Button>
-                {allowed && (
+                {can.record && (
                   <>
                     <Button variant="outline" size="icon" className="h-10 w-10 sm:h-7 sm:w-7" aria-label="Add step" onClick={handleAddStep}>
                       <Plus className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
@@ -1148,7 +1148,7 @@ export default function Strategy() {
               arrows={arrows}
               highlights={highlights}
               lines={lines}
-              allowed={allowed}
+              allowed={can.record}
               onPlace={handlePlace}
               onRemove={handleRemove}
               onAddOpponent={handleAddOpponent}
@@ -1177,7 +1177,7 @@ export default function Strategy() {
               onDeleteMany={handleDeleteMany}
               transitionMs={transitionMs}
             />
-            {allowed && (
+            {can.record && (
               <p className="text-xs text-muted-foreground">
                 Drag players from the bench onto the field. Drag a player off the field to bench them.
                 Add opponent markers or text boxes and drag them off the field to remove them. Toggle

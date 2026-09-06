@@ -98,7 +98,7 @@ function formatWeekday(dateStr: string) {
 const OUTCOME_OPTIONS = ['Win', 'Loss', 'Tie', 'Default Win', 'Default Loss', 'Forfeit']
 
 export default function Schedule() {
-  const { allowed, currentOrgId } = useAuth()
+  const { can, currentTeamId } = useAuth()
   const navigate = useNavigate()
   // The selected game mirrors this URL segment (see the effect near
   // handleSelectGame below), so a reload, browser back/forward, or a
@@ -278,40 +278,40 @@ export default function Schedule() {
   useEffect(() => {
     // fetchGames happens in the scheduleSeasonIds effect below (fires on mount too).
     // Player roster fetches happen in handleSelectGame, scoped to that game's season.
-    if (currentOrgId == null) return
-    fetchSeasons({ organizationId: currentOrgId })
-    fetchSeasonsMeta({ organizationId: currentOrgId })
+    if (currentTeamId == null) return
+    fetchSeasons({ organizationId: currentTeamId })
+    fetchSeasonsMeta({ organizationId: currentTeamId })
     fetchEventTypes()
-    fetchSeasonsWithGames({ organizationId: currentOrgId })
-    fetchJamConflicts({ organizationId: currentOrgId })
-  }, [currentOrgId])
+    fetchSeasonsWithGames({ organizationId: currentTeamId })
+    fetchJamConflicts({ organizationId: currentTeamId })
+  }, [currentTeamId])
 
   const handleSyncJamNow = async () => {
     await syncJamNow()
-    fetchJamConflicts({ organizationId: currentOrgId })
-    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentOrgId })
+    fetchJamConflicts({ organizationId: currentTeamId })
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentTeamId })
   }
 
   const handleCreateGameFromConflict = async (conflict: JamSyncConflict) => {
     const chosen = jamCreateSeasonChoice[conflict.id]
     await createGameFromConflict({ conflict, seasonId: chosen ? parseInt(chosen) : null })
     track('game_created', { source: 'jam_sync', season_id: chosen ? parseInt(chosen) : null, conflict_id: conflict.id })
-    fetchJamConflicts({ organizationId: currentOrgId })
-    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentOrgId })
+    fetchJamConflicts({ organizationId: currentTeamId })
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentTeamId })
   }
 
   const handleLinkJamConflict = async (conflict: JamSyncConflict) => {
     if (!conflict.existing_game_id) return
     await linkConflictToGame({ conflict, gameId: conflict.existing_game_id })
     track('jam_sync_conflict_linked', { conflict_id: conflict.id, game_id: conflict.existing_game_id })
-    fetchJamConflicts({ organizationId: currentOrgId })
-    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentOrgId })
+    fetchJamConflicts({ organizationId: currentTeamId })
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentTeamId })
   }
 
   const handleDismissJamConflict = async (conflictId: number) => {
     await dismissConflict({ conflictId })
     track('jam_sync_conflict_dismissed', { conflict_id: conflictId })
-    fetchJamConflicts({ organizationId: currentOrgId })
+    fetchJamConflicts({ organizationId: currentTeamId })
   }
 
   useEffect(() => {
@@ -324,9 +324,9 @@ export default function Schedule() {
 
   // Reload games when season filter changes
   useEffect(() => {
-    if (currentOrgId == null) return
-    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentOrgId })
-  }, [scheduleSeasonIds, currentOrgId])
+    if (currentTeamId == null) return
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentTeamId })
+  }, [scheduleSeasonIds, currentTeamId])
 
   // Keep the "Add Players" target valid against the loaded groups: if the
   // currently selected name was just deleted (or hasn't loaded yet), fall
@@ -372,13 +372,13 @@ export default function Schedule() {
   // exist" would treat the game as already set up and refuse to fill it.
   const applyLineupGroupsAndAssignment = async (game: Game, groupNames: string[], assignment: Map<number, string>) => {
     await Promise.all(groupNames.map((name, i) =>
-      createLineupGroup({ gameId: game.id, lineupName: name, sortOrder: i, organizationId: currentOrgId })
+      createLineupGroup({ gameId: game.id, lineupName: name, sortOrder: i, organizationId: currentTeamId })
     ))
     const sortCounters = new Map<string, number>()
     await Promise.all([...assignment.entries()].map(([playerId, targetGroup]) => {
       const sortOrder = sortCounters.get(targetGroup) ?? 0
       sortCounters.set(targetGroup, sortOrder + 1)
-      return addToLineup({ gameId: game.id, player_id: playerId, lineup_name: targetGroup, seasonId: game.season_id, sortOrder, organizationId: currentOrgId })
+      return addToLineup({ gameId: game.id, player_id: playerId, lineup_name: targetGroup, seasonId: game.season_id, sortOrder, organizationId: currentTeamId })
     }))
     fetchLineupGroups({ gameId: game.id })
     fetchLineups({ gameId: game.id })
@@ -399,8 +399,8 @@ export default function Schedule() {
       setCopyingLineup(true)
       try {
         await Promise.all([
-          createLineupGroup({ gameId: game.id, lineupName: 'Lineup 1', sortOrder: 0, organizationId: currentOrgId }),
-          createLineupGroup({ gameId: game.id, lineupName: 'Lineup 2', sortOrder: 1, organizationId: currentOrgId }),
+          createLineupGroup({ gameId: game.id, lineupName: 'Lineup 1', sortOrder: 0, organizationId: currentTeamId }),
+          createLineupGroup({ gameId: game.id, lineupName: 'Lineup 2', sortOrder: 1, organizationId: currentTeamId }),
         ])
         fetchLineupGroups({ gameId: game.id })
         track('lineup_reset', { game_id: game.id })
@@ -411,7 +411,7 @@ export default function Schedule() {
     }
     setSelectedCopyGameId(null)
     setShowCopyLineupDialog(true)
-    await fetchRecentLineupGames({ organizationId: currentOrgId, seasonId: game.season_id, gameId: game.id })
+    await fetchRecentLineupGames({ organizationId: currentTeamId, seasonId: game.season_id, gameId: game.id })
   }
 
   // Applies the picked game's groups: returning non-sub players keep the
@@ -499,11 +499,11 @@ export default function Schedule() {
     try {
       const groups = ((lineupGroups as LineupGroup[] | undefined) ?? []).map(g => ({ lineup_name: g.lineup_name, sort_order: g.sort_order }))
       const players = ((lineups as LineupEntry[] | undefined) ?? []).map(e => ({ lineup_name: e.lineup_name, player_id: e.player_id, sort_order: e.sort_order, role: e.role }))
-      await saveLineupTemplate({ organizationId: currentOrgId, seasonId: game.season_id, name, groups, players })
+      await saveLineupTemplate({ organizationId: currentTeamId, seasonId: game.season_id, name, groups, players })
       track('lineup_template_saved', { game_id: game.id, season_id: game.season_id })
       setTemplateNameInput('')
       setSavingTemplateOpen(false)
-      fetchLineupTemplates({ organizationId: currentOrgId, seasonId: game.season_id })
+      fetchLineupTemplates({ organizationId: currentTeamId, seasonId: game.season_id })
     } finally {
       setSavingTemplate(false)
     }
@@ -522,10 +522,10 @@ export default function Schedule() {
       const detail = await fetchLineupTemplateDetail({ templateId: parseInt(selectedTemplateId) })
       if (!detail) return
       await Promise.all(detail.groups.map((g, i) =>
-        createLineupGroup({ gameId: game.id, lineupName: g.lineup_name, sortOrder: i, organizationId: currentOrgId })
+        createLineupGroup({ gameId: game.id, lineupName: g.lineup_name, sortOrder: i, organizationId: currentTeamId })
       ))
       await Promise.all(detail.players.map(p =>
-        addToLineup({ gameId: game.id, player_id: p.player_id, lineup_name: p.lineup_name, seasonId: game.season_id, sortOrder: p.sort_order, role: p.role, organizationId: currentOrgId })
+        addToLineup({ gameId: game.id, player_id: p.player_id, lineup_name: p.lineup_name, seasonId: game.season_id, sortOrder: p.sort_order, role: p.role, organizationId: currentTeamId })
       ))
       track('lineup_template_applied', { game_id: game.id, template_id: parseInt(selectedTemplateId) })
       setSelectedTemplateId('')
@@ -541,7 +541,7 @@ export default function Schedule() {
     await deleteLineupTemplate({ templateId })
     track('lineup_template_deleted', { template_id: templateId })
     if (selectedTemplateId === templateId.toString()) setSelectedTemplateId('')
-    if (selectedGame?.season_id) fetchLineupTemplates({ organizationId: currentOrgId, seasonId: selectedGame.season_id })
+    if (selectedGame?.season_id) fetchLineupTemplates({ organizationId: currentTeamId, seasonId: selectedGame.season_id })
   }
 
   const handleSelectGame = async (game: Game) => {
@@ -550,11 +550,11 @@ export default function Schedule() {
     fetchAttendance({ gameId: game.id })
     if (game.season_id) {
       fetchPlayers({ seasonId: game.season_id })
-      fetchOtherPlayers({ seasonId: game.season_id, organizationId: currentOrgId })
-      fetchLineupSeasonStats({ seasonIds: [game.season_id], organizationId: currentOrgId })
-      fetchLineupTemplates({ organizationId: currentOrgId, seasonId: game.season_id })
+      fetchOtherPlayers({ seasonId: game.season_id, organizationId: currentTeamId })
+      fetchLineupSeasonStats({ seasonIds: [game.season_id], organizationId: currentTeamId })
+      fetchLineupTemplates({ organizationId: currentTeamId, seasonId: game.season_id })
     } else {
-      fetchOtherPlayers({ organizationId: currentOrgId })
+      fetchOtherPlayers({ organizationId: currentTeamId })
     }
     fetchLineupGroups({ gameId: game.id })
     fetchLineups({ gameId: game.id })
@@ -581,9 +581,9 @@ export default function Schedule() {
   const refreshRoster = async () => {
     if (selectedGameSeasonId) {
       await fetchPlayers({ seasonId: selectedGameSeasonId })
-      await fetchOtherPlayers({ seasonId: selectedGameSeasonId, organizationId: currentOrgId })
+      await fetchOtherPlayers({ seasonId: selectedGameSeasonId, organizationId: currentTeamId })
     } else {
-      await fetchOtherPlayers({ organizationId: currentOrgId })
+      await fetchOtherPlayers({ organizationId: currentTeamId })
     }
   }
 
@@ -601,12 +601,12 @@ export default function Schedule() {
     if (selectedGame?.id === id) return
     const fromList = (games as Game[] | undefined)?.find(g => g.id === id)
     if (fromList) { handleSelectGame(fromList); return }
-    if (currentOrgId == null) return
-    fetchGameById({ gameId: id, organizationId: currentOrgId }).then(g => {
+    if (currentTeamId == null) return
+    fetchGameById({ gameId: id, organizationId: currentTeamId }).then(g => {
       if (g) handleSelectGame(g as Game)
       else navigate('/schedule', { replace: true })
     })
-  }, [gameIdParam, games, currentOrgId])
+  }, [gameIdParam, games, currentTeamId])
 
   const handleSeasonSelect = (value: string) => {
     if (value === '__new__') { setShowNewSeason(true); setFormData(f => ({ ...f, season_id: '' })) }
@@ -622,12 +622,12 @@ export default function Schedule() {
       organizer: newSeasonData.organizer || undefined,
       location: newSeasonData.location || undefined,
       default_game_time: newSeasonData.default_game_time || undefined,
-      organizationId: currentOrgId,
+      organizationId: currentTeamId,
     }) as Season | undefined
     if (created) {
       track('season_created', { season_id: created.id })
-      await fetchSeasons({ organizationId: currentOrgId })
-      await fetchSeasonsMeta({ organizationId: currentOrgId })
+      await fetchSeasons({ organizationId: currentTeamId })
+      await fetchSeasonsMeta({ organizationId: currentTeamId })
       setFormData(f => ({
         ...f,
         season_id: String(created.id),
@@ -662,13 +662,13 @@ export default function Schedule() {
       game_time: formData.game_time,
       game_type: formData.game_type,
       season_id: formData.season_id ? parseInt(formData.season_id) : null,
-      organizationId: currentOrgId,
+      organizationId: currentTeamId,
     })
     track('game_created', { season_id: formData.season_id ? parseInt(formData.season_id) : null })
     setIsDialogOpen(false)
     setFormData({ opponent: '', game_date: '', game_time: '', game_type: 'Regular', season_id: '' })
     setShowNewSeason(false)
-    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentOrgId })
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentTeamId })
   }
 
   const handleDeleteGame = async (gameId: number) => {
@@ -676,7 +676,7 @@ export default function Schedule() {
     track('game_deleted', { game_id: gameId })
     setDeleteConfirmId(null)
     navigate('/schedule')
-    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentOrgId })
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentTeamId })
   }
 
   const handleOpenEditGame = () => {
@@ -710,7 +710,7 @@ export default function Schedule() {
         track('game_updated', { game_id: selectedGame.id })
       }
       setShowEditGame(false)
-      fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentOrgId })
+      fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentTeamId })
     } finally {
       setSavingGame(false)
     }
@@ -752,8 +752,8 @@ export default function Schedule() {
       })
       track('season_updated', { season_id: editSeasonId })
       setShowEditSeason(false)
-      fetchSeasons({ organizationId: currentOrgId })
-      fetchSeasonsMeta({ organizationId: currentOrgId })
+      fetchSeasons({ organizationId: currentTeamId })
+      fetchSeasonsMeta({ organizationId: currentTeamId })
     } finally {
       setSavingSeason(false)
     }
@@ -786,7 +786,7 @@ export default function Schedule() {
   // reordering reassigns the same set of timestamps the list already had
   // to events in their new positions rather than renumbering a position.
   const handleEventDragStart = (list: GameEvent[], event: GameEvent, rowEl: HTMLElement, e: React.PointerEvent) => {
-    if (!allowed) return
+    if (!can.record) return
     e.preventDefault()
     e.stopPropagation()
     const pointerId = e.pointerId
@@ -875,14 +875,14 @@ export default function Schedule() {
     // Picking "— Opponent —" as scorer on a goal means the other team scored
     const isOpponentGoal = newEventType === 'Goal' && newScorerId === '__opponent__'
     if (isOpponentGoal) {
-      await createOpponentGoal({ gameId: selectedGame.id, organizationId: currentOrgId })
+      await createOpponentGoal({ gameId: selectedGame.id, organizationId: currentTeamId })
     } else {
       await createGoal({
         gameId: selectedGame.id,
         playerId: resolveNewPlayerId(newScorerId),
         relatedPlayerId: resolveNewPlayerId(newAssisterId),
         eventType: newEventType,
-        organizationId: currentOrgId,
+        organizationId: currentTeamId,
       })
     }
     track('game_event_added', { game_id: selectedGame.id, event_type: isOpponentGoal ? 'opponent_goal' : newEventType, is_opponent: isOpponentGoal })
@@ -891,7 +891,7 @@ export default function Schedule() {
 
   const handleAddOpponentGoal = async () => {
     if (!selectedGame) return
-    await createOpponentGoal({ gameId: selectedGame.id, organizationId: currentOrgId })
+    await createOpponentGoal({ gameId: selectedGame.id, organizationId: currentTeamId })
     track('game_event_added', { game_id: selectedGame.id, event_type: 'opponent_goal', is_opponent: true })
     fetchEvents({ gameId: selectedGame.id })
   }
@@ -913,7 +913,7 @@ export default function Schedule() {
 
   const handleAddPlayer = async (name: string) => {
     if (!selectedGame) return
-    const result = await createPlayerForGame({ display_name: name, gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentOrgId, lineupName: defaultLineupName })
+    const result = await createPlayerForGame({ display_name: name, gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentTeamId, lineupName: defaultLineupName })
     if (result) {
       track('player_created', { game_id: selectedGame.id, source: 'quick_add' })
       await refreshRoster()
@@ -925,7 +925,7 @@ export default function Schedule() {
 
   const handleAddAssister = async (name: string) => {
     if (!selectedGame) return
-    const result = await createPlayerForGame({ display_name: name, gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentOrgId, lineupName: defaultLineupName })
+    const result = await createPlayerForGame({ display_name: name, gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentTeamId, lineupName: defaultLineupName })
     if (result) {
       track('player_created', { game_id: selectedGame.id, source: 'quick_add' })
       await refreshRoster()
@@ -937,7 +937,7 @@ export default function Schedule() {
 
   const handleAddExistingScorer = async (playerId: string) => {
     if (!selectedGame) return
-    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentOrgId, lineupName: defaultLineupName })
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentTeamId, lineupName: defaultLineupName })
     await refreshRoster()
     fetchAttendance({ gameId: selectedGame.id })
     fetchLineups({ gameId: selectedGame.id })
@@ -946,7 +946,7 @@ export default function Schedule() {
 
   const handleAddExistingAssister = async (playerId: string) => {
     if (!selectedGame) return
-    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentOrgId, lineupName: defaultLineupName })
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentTeamId, lineupName: defaultLineupName })
     await refreshRoster()
     fetchAttendance({ gameId: selectedGame.id })
     fetchLineups({ gameId: selectedGame.id })
@@ -972,7 +972,7 @@ export default function Schedule() {
     if (!selectedGame) return
     const currentGroupEntries = ((lineups as LineupEntry[] | undefined) ?? []).filter(e => e.lineup_name === lineupName)
     const nextSortOrder = currentGroupEntries.reduce((max, e) => Math.max(max, e.sort_order), -1) + 1
-    await addToLineup({ gameId: selectedGame.id, player_id: playerId, lineup_name: lineupName, seasonId: selectedGame.season_id, sortOrder: nextSortOrder, organizationId: currentOrgId })
+    await addToLineup({ gameId: selectedGame.id, player_id: playerId, lineup_name: lineupName, seasonId: selectedGame.season_id, sortOrder: nextSortOrder, organizationId: currentTeamId })
     fetchLineups({ gameId: selectedGame.id })
   }
 
@@ -988,7 +988,7 @@ export default function Schedule() {
     if (!selectedGame || !name.trim()) return
     const groups = (lineupGroups as LineupGroup[] | undefined) ?? []
     const nextSortOrder = groups.reduce((max, g) => Math.max(max, g.sort_order), -1) + 1
-    await createLineupGroup({ gameId: selectedGame.id, lineupName: name.trim(), sortOrder: nextSortOrder, organizationId: currentOrgId })
+    await createLineupGroup({ gameId: selectedGame.id, lineupName: name.trim(), sortOrder: nextSortOrder, organizationId: currentTeamId })
     setLineupName(name.trim())
     setAddingLineupName(false)
     fetchLineupGroups({ gameId: selectedGame.id })
@@ -1036,7 +1036,7 @@ export default function Schedule() {
   // rather than a full DnD library, consistent with this page's other
   // lightweight pointer-based drags.
   const handleLineupDragStart = (group: string, list: LineupEntry[], entry: LineupEntry, rowEl: HTMLElement, e: React.PointerEvent) => {
-    if (!allowed) return
+    if (!can.record) return
     e.preventDefault()
     e.stopPropagation()
     const pointerId = e.pointerId
@@ -1160,7 +1160,7 @@ export default function Schedule() {
   // pattern as handleLineupDragStart above, but reassigns
   // game_lineup_groups.sort_order instead of game_lineups.sort_order.
   const handleGroupDragStart = (list: LineupGroup[], group: LineupGroup, rowEl: HTMLElement, e: React.PointerEvent) => {
-    if (!allowed) return
+    if (!can.record) return
     e.preventDefault()
     e.stopPropagation()
     const pointerId = e.pointerId
@@ -1353,7 +1353,7 @@ export default function Schedule() {
             <ChevronLeft className="w-5 h-5" />
             <span className="text-sm font-medium">Back to Schedule</span>
           </button>
-          {allowed && (
+          {can.record && (
             <div className="flex items-center gap-3">
               <button
                 onClick={handleOpenEditGame}
@@ -1424,7 +1424,7 @@ export default function Schedule() {
                       {selectedGame.outcome_override && <span className="text-xs font-normal ml-1 opacity-70">(override)</span>}
                     </span>
                   )}
-                  {allowed && (
+                  {can.record && (
                     <button onClick={() => { setEditingOutcome(true); setOutcomeValue(selectedGame.outcome_override ?? '') }} className="text-muted-foreground hover:text-foreground">
                       <Edit2 className="w-3.5 h-3.5" />
                     </button>
@@ -1453,7 +1453,7 @@ export default function Schedule() {
         </div>
 
         {/* Add Event */}
-        {activeTab === 'events' && allowed && (
+        {activeTab === 'events' && can.record && (
           <Card className="bg-card text-card-foreground border-border">
             <button
               className="w-full flex items-center justify-between px-6 py-4"
@@ -1636,7 +1636,7 @@ export default function Schedule() {
                           </div>
                           <div className="text-xs text-muted-foreground">{formatTimestamp(event.event_timestamp)}</div>
                         </div>
-                        {allowed && (
+                        {can.record && (
                           <div className="flex items-center gap-0.5 shrink-0">
                             <button
                               onPointerDown={e => handleEventDragStart(gameEvents, event, e.currentTarget.closest('[data-event-row]') as HTMLElement, e)}
@@ -1676,7 +1676,7 @@ export default function Schedule() {
             <CardHeader>
               <div className="flex items-center justify-between gap-2">
                 <CardTitle className="text-base flex items-center gap-2"><Users className="w-4 h-4" />Lineups</CardTitle>
-                {allowed && orderedGroups.length > 0 && !savingTemplateOpen && (
+                {can.record && orderedGroups.length > 0 && !savingTemplateOpen && (
                   <Button type="button" size="sm" variant="outline" onClick={() => setSavingTemplateOpen(true)} className="h-7 text-xs bg-card border-border">
                     Save as Template
                   </Button>
@@ -1703,7 +1703,7 @@ export default function Schedule() {
             </CardHeader>
             <CardContent className="space-y-4">
               {/* Add to lineup */}
-              {allowed && (
+              {can.record && (
                 <div className="space-y-2 bg-background rounded-lg p-3">
                   <Label className="text-xs text-muted-foreground">Add Players</Label>
                   <div className="flex gap-2">
@@ -1972,7 +1972,7 @@ export default function Schedule() {
                       style={isGroupDragging ? { transform: `translateY(${dragGroupOffsetY}px)`, position: 'relative', zIndex: 20 } : undefined}
                     >
                       <div className="flex items-center gap-2 mb-2 flex-wrap">
-                        {allowed && (
+                        {can.record && (
                           <button
                             onPointerDown={ev => handleGroupDragStart(groups, g, ev.currentTarget.closest('[data-lineup-group-row]') as HTMLElement, ev)}
                             className="p-1 -ml-1 shrink-0 cursor-grab active:cursor-grabbing touch-none"
@@ -1996,7 +1996,7 @@ export default function Schedule() {
                         ) : (
                           <Badge variant="secondary" className="text-xs">{g.lineup_name}</Badge>
                         )}
-                        {allowed && editingGroupId !== g.id && (
+                        {can.record && editingGroupId !== g.id && (
                           <button
                             onClick={() => { setEditingGroupId(g.id); setEditingGroupNameValue(g.lineup_name) }}
                             className="p-1 rounded hover:bg-accent"
@@ -2010,7 +2010,7 @@ export default function Schedule() {
                           &middot; {totals.goals}G {totals.assists}A this season
                         </span>
                         <GenderRatio entries={entries} className="ml-auto" />
-                        {allowed && (
+                        {can.record && (
                           <button onClick={() => setDeleteGroupConfirm(g)} className="p-1 rounded hover:bg-destructive/10" aria-label={`Delete ${g.lineup_name}`}>
                             <Trash2 className="w-3.5 h-3.5 text-muted-foreground hover:text-destructive" />
                           </button>
@@ -2030,7 +2030,7 @@ export default function Schedule() {
                               className={`flex items-start gap-2 px-3 py-2 rounded-lg ${isDragging && dragLineupWillRemove ? 'bg-destructive/10 border border-destructive' : 'bg-background'}`}
                               style={isDragging ? { transform: `translate(${dragLineupOffsetX}px, ${dragLineupOffsetY}px)`, position: 'relative', zIndex: 10, pointerEvents: 'none', opacity: dragLineupWillRemove ? 0.85 : 1 } : undefined}
                             >
-                              {allowed && (
+                              {can.record && (
                                 <button
                                   onPointerDown={ev => handleLineupDragStart(g.lineup_name, entries, e, ev.currentTarget.closest('[data-lineup-row]') as HTMLElement, ev)}
                                   className="p-1 -ml-1 mt-0.5 shrink-0 cursor-grab active:cursor-grabbing touch-none"
@@ -2048,14 +2048,14 @@ export default function Schedule() {
                               <div className="flex-1 min-w-0 space-y-1">
                                 <div className="flex items-center justify-between gap-2">
                                   <span className="text-sm font-medium text-foreground truncate">{e.display_name}</span>
-                                  {allowed && (
+                                  {can.record && (
                                     <button onClick={() => handleRemoveFromLineup(e.player_id, e.lineup_name)} className="p-1 -mr-1 shrink-0 rounded hover:bg-destructive/10">
                                       <X className="w-3.5 h-3.5 text-muted-foreground hover:text-destructive" />
                                     </button>
                                   )}
                                 </div>
                                 <div className="flex items-center gap-2">
-                                  {allowed ? (
+                                  {can.record ? (
                                     <Select
                                       value={e.role ?? e.position ?? '__none__'}
                                       onValueChange={v => handleUpdateLineupRole(e.id, v === '__none__' ? '' : v)}
@@ -2093,7 +2093,7 @@ export default function Schedule() {
             <CardHeader>
               <CardTitle className="text-base flex items-center justify-between">
                 <span className="flex items-center gap-2"><StickyNote className="w-4 h-4" />Game Notes</span>
-                {allowed && !editingNotes && (
+                {can.record && !editingNotes && (
                   <button onClick={() => { setEditingNotes(true); setNotesValue(selectedGame.notes ?? '') }} className="text-muted-foreground hover:text-foreground">
                     <Edit2 className="w-4 h-4" />
                   </button>
@@ -2121,7 +2121,7 @@ export default function Schedule() {
                 <div>
                   {selectedGame.notes ? (
                     <p className="text-sm text-foreground whitespace-pre-wrap">{selectedGame.notes}</p>
-                  ) : allowed ? (
+                  ) : can.record ? (
                     <button onClick={() => setEditingNotes(true)} className="w-full text-center py-8 text-muted-foreground text-sm hover:text-foreground transition-colors">
                       <StickyNote className="w-10 h-10 mx-auto mb-2 opacity-40" />
                       No notes yet, tap to add
@@ -2431,7 +2431,7 @@ export default function Schedule() {
               <CalendarDays className="w-4 h-4" />
             </button>
           </div>
-          {allowed && (
+          {can.record && (
           <button
             onClick={handleSyncJamNow}
             disabled={syncingJam}
@@ -2441,7 +2441,7 @@ export default function Schedule() {
             <RefreshCw className={`w-4 h-4 ${syncingJam ? 'animate-spin' : ''}`} />
           </button>
           )}
-          {allowed && (
+          {can.record && (
           <Dialog open={isDialogOpen} onOpenChange={open => { setIsDialogOpen(open); if (!open) setShowNewSeason(false) }}>
             <button onClick={() => setIsDialogOpen(true)} className="flex items-center gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-2 text-sm font-medium transition-colors">
               <Plus className="w-4 h-4" />Add Game
@@ -2592,7 +2592,7 @@ export default function Schedule() {
             placeholder="All Seasons"
           />
         </div>
-        {allowed && (seasons as Season[] | undefined)?.length ? (
+        {can.record && (seasons as Season[] | undefined)?.length ? (
           <button
             onClick={() => handleOpenEditSeason()}
             title="Edit season details"
@@ -2606,7 +2606,7 @@ export default function Schedule() {
       {/* Calendar sync: anything the automatic daily sync from a
           calendar_sources feed couldn't confidently auto-create lands here
           for manual review. */}
-      {allowed && jamConflicts && jamConflicts.length > 0 && (
+      {can.record && jamConflicts && jamConflicts.length > 0 && (
         <Card className="bg-card border-amber-500/30">
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">

@@ -54,18 +54,18 @@ export default function Chat() {
   const [clearing, setClearing] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const sessionId = useRef(getSessionId())
-  const { allowed, currentOrgId } = useAuth()
+  const { can, currentTeamId } = useAuth()
 
   useEffect(() => {
-    if (currentOrgId == null) return
-    fetch(`/api/chat/history?session_id=${sessionId.current}&organization_id=${currentOrgId}`)
+    if (currentTeamId == null) return
+    fetch(`/api/chat/history?session_id=${sessionId.current}&organization_id=${currentTeamId}`)
       .then(r => r.json())
       .then((data: { role: string; content: string }[]) => {
         setMessages(data.map(d => ({ role: d.role as 'user' | 'assistant', content: d.content })))
         setHistoryLoaded(true)
       })
       .catch(() => setHistoryLoaded(true))
-  }, [currentOrgId])
+  }, [currentTeamId])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -73,7 +73,7 @@ export default function Chat() {
 
   const sendMessage = async () => {
     const text = input.trim()
-    if (!text || loading || currentOrgId == null) return
+    if (!text || loading || currentTeamId == null) return
     setInput('')
     const newMessages: Message[] = [...messages, { role: 'user', content: text }]
     setMessages(newMessages)
@@ -86,7 +86,7 @@ export default function Chat() {
           message: text,
           session_id: sessionId.current,
           history: newMessages.slice(0, -1).map(m => ({ role: m.role, content: m.content })),
-          organization_id: currentOrgId,
+          organization_id: currentTeamId,
         }),
       })
       const data = await res.json()
@@ -99,10 +99,10 @@ export default function Chat() {
   }
 
   const clearHistory = async () => {
-    if (currentOrgId == null) return
+    if (currentTeamId == null) return
     setClearing(true)
     try {
-      await fetch(`/api/chat/history?session_id=${sessionId.current}&organization_id=${currentOrgId}`, { method: 'DELETE' })
+      await fetch(`/api/chat/history?session_id=${sessionId.current}&organization_id=${currentTeamId}`, { method: 'DELETE' })
       setMessages([])
     } finally {
       setClearing(false)
@@ -114,7 +114,7 @@ export default function Chat() {
     <div className="flex flex-col h-[calc(100vh-8rem)]">
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-2xl font-bold text-foreground">Team Assistant</h1>
-        {allowed && messages.length > 0 && (
+        {can.record && messages.length > 0 && (
           <Button
             variant="outline"
             size="sm"
@@ -197,7 +197,7 @@ export default function Chat() {
 
       {/* Input — the assistant is a team-only feature (writes chat history via
           the service-role endpoint), so read-only users get a notice instead. */}
-      {allowed ? (
+      {can.record ? (
         <div className="flex gap-2 mt-3">
           <Input
             value={input}

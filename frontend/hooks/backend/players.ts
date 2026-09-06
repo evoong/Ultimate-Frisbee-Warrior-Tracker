@@ -134,9 +134,11 @@ export function useCreatePlayer() {
   const fn = useCallback(async (params: {
     organizationId: number | null;
     display_name: string; first_name?: string; last_name?: string;
-    gender_match?: string; phone?: string; number?: number; position?: string; is_sub?: boolean; season_ids?: number[]
+    gender_match?: string; number?: number; position?: string; is_sub?: boolean; season_ids?: number[]
   }) => {
-    // season_ids lives in the season_players junction table, not on players
+    // season_ids lives in the season_players junction table, not on players.
+    // phone (and first_name_edit/last_name_edit) live in player_private now --
+    // see useUpsertPlayerPrivate -- not here.
     const { season_ids, organizationId, ...playerFields } = params
     const { data, error } = await supabase
       .from('players')
@@ -304,7 +306,10 @@ export function useDeletePlayer() {
 }
 
 export function useUpdatePlayer() {
-  const fn = useCallback(async (params: { playerId: number; display_name?: string; phone?: string; number?: number | null; gender_match?: string; position?: string | null; is_sub?: boolean }) => {
+  // phone lives in player_private now (see useUpsertPlayerPrivate), not here
+  // -- players no longer has that column, and sending it in this update
+  // payload would error rather than silently dropping it.
+  const fn = useCallback(async (params: { playerId: number; display_name?: string; number?: number | null; gender_match?: string; position?: string | null; is_sub?: boolean }) => {
     const { playerId, ...body } = params
     const { data, error } = await supabase
       .from('players')
@@ -368,16 +373,21 @@ export function useUpdatePlayerSeasons() {
 }
 
 export function useUploadPlayerPhoto() {
-  const fn = useCallback(async (params: { playerId: number; file: File }) => {
-    const fileName = `player-${params.playerId}-${Date.now()}`
+  const fn = useCallback(async (params: { teamId: number; playerId: number; file: File }) => {
+    const ext = params.file.name.split('.').pop()?.toLowerCase() ?? 'jpg'
+    // The first path segment must be the team id: the storage policy
+    // (public.storage_path_team_id) reads it to decide whether this upload
+    // is allowed at all. upsert: true since a player's photo is a single
+    // slot -- a re-upload replaces it rather than accumulating objects.
+    const fileName = `${params.teamId}/${params.playerId}.${ext}`
     const { data, error } = await supabase.storage
       .from('player-photos')
-      .upload(fileName, params.file)
+      .upload(fileName, params.file, { upsert: true })
     if (error) throw new Error(error.message)
 
     // Store a domain-relative path, not an absolute URL: the app is served from
-    // multiple origins (Vercel + Cloudflare), and getPublicUrl() bakes in
-    // window.location.origin at upload time. An absolute URL only resolves
+    // multiple origins (Vercel + Cloudflare), and the storage client's public-URL
+    // helper bakes in window.location.origin at upload time. An absolute URL only resolves
     // (with the session cookie the proxy needs) on the origin it was uploaded
     // from — viewed from any other deployment it's a cross-origin request with
     // no cookie, so the gateway 401s and the image never loads.
@@ -682,4 +692,50 @@ export function useGetPlayerSeasons() {
     })) as any[]
   }, [])
   return useApiCall<any[], { playerId: number }>(fn)
+}
+
+// phone/first_name_edit/last_name_edit moved off `players` into this
+// members-only table (column-level GRANT can't hide a column from a
+// Supabase anon/guest reader, so the split is a separate table with its
+// own RLS instead). Keyed by player_id, not team_id -- team_id is only
+// there for the storage/RLS predicate.
+export type PlayerPrivate = {
+  player_id: number
+  phone: string | null
+  first_name_edit: string | null
+  last_name_edit: string | null
+}
+
+// Members-only by policy. A guest (or a member of a different team) reading
+// this gets an empty array rather than an error, so callers must treat
+// "absent" as normal, not exceptional -- do not fall back to swallowing a
+// real error the same way.
+export function useGetPlayerPrivate() {
+  const fn = useCallback(async (params: { teamId: number }) => {
+    const { data, error } = await supabase
+      .from('player_private')
+      .select('player_id,phone,first_name_edit,last_name_edit')
+      .eq('team_id', params.teamId)
+    if (error) throw new Error(error.message)
+    return (data ?? []) as PlayerPrivate[]
+  }, [])
+  return useApiCall<PlayerPrivate[], { teamId: number }>(fn)
+}
+
+export function useUpsertPlayerPrivate() {
+  const fn = useCallback(
+    async (params: { teamId: number; playerId: number; phone?: string | null;
+                     firstNameEdit?: string | null; lastNameEdit?: string | null }) => {
+      const row: Record<string, unknown> = { player_id: params.playerId, team_id: params.teamId }
+      if (params.phone !== undefined) row.phone = params.phone
+      if (params.firstNameEdit !== undefined) row.first_name_edit = params.firstNameEdit
+      if (params.lastNameEdit !== undefined) row.last_name_edit = params.lastNameEdit
+      const { error } = await supabase.from('player_private').upsert(row, { onConflict: 'player_id' })
+      if (error) throw new Error(error.message)
+      return true
+    },
+    []
+  )
+  return useApiCall<boolean, { teamId: number; playerId: number; phone?: string | null;
+                               firstNameEdit?: string | null; lastNameEdit?: string | null }>(fn)
 }

@@ -5,19 +5,23 @@ import { createCredential, getCredential } from './passkeys'
 
 export interface AuthUser {
   id: string
-  email: string
+  /** Null for guest (anonymous) sessions. */
+  email: string | null
 }
 
-export interface OrgMembership {
+export type TeamRole = 'captain' | 'editor' | 'member'
+
+export interface TeamMembership {
   organization_id: number
   name: string
-  role: 'owner' | 'member'
+  role: TeamRole
   is_public: boolean
 }
 
 export interface SessionInfo {
   user: AuthUser | null
-  organizations: OrgMembership[]
+  isAnonymous: boolean
+  teams: TeamMembership[]
 }
 
 async function post(path: string, body?: unknown): Promise<Response> {
@@ -40,9 +44,21 @@ async function readError(res: Response): Promise<string> {
 
 export async function getSession(): Promise<SessionInfo> {
   const res = await fetch('/auth/session', { credentials: 'include' })
-  if (!res.ok) return { user: null, organizations: [] }
+  if (!res.ok) return { user: null, isAnonymous: false, teams: [] }
   const data = await res.json()
-  return { user: data.user ?? null, organizations: Array.isArray(data.organizations) ? data.organizations : [] }
+  return {
+    user: data.user ?? null,
+    isAnonymous: data.is_anonymous === true,
+    teams: Array.isArray(data.teams) ? data.teams : [],
+  }
+}
+
+// Anonymous sign-in. The resulting session is a real session in every
+// mechanical sense -- same cookies, same refresh -- it simply belongs to no
+// team, which is what makes every read policy return nothing but public data.
+export async function loginAsGuest(): Promise<void> {
+  const res = await post('/auth/guest')
+  if (!res.ok) throw new Error(await readError(res))
 }
 
 export async function login(email: string, password: string): Promise<AuthUser> {
