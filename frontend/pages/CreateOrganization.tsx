@@ -15,7 +15,7 @@ import { Loader2 } from 'lucide-react'
 // by someone who already holds the power to grant it (captain/editor), so
 // the only actions left are "create a new team" or "wait for an invite".
 export default function CreateOrganization() {
-  const { createTeam, logout, user, isGuest } = useAuth()
+  const { createTeam, logout, user } = useAuth()
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -35,28 +35,11 @@ export default function CreateOrganization() {
     }
   }
 
-  // Guests can't create a team (the create_team RPC rejects them server-side)
-  // and have no invite to accept either, so the create-team form -- a
-  // control that writes -- must never render for them. A dedicated public
-  // teams browser for guests is Task 10; until that lands, give guests an
-  // explanation instead of a form they cannot submit.
-  if (isGuest) {
-    return (
-      <Card className="mx-auto mt-16 max-w-md">
-        <CardHeader>
-          <CardTitle>You're browsing as a guest</CardTitle>
-          <CardDescription>
-            Guests can't create or join a team. Sign in with an account and
-            ask a captain to invite you, or look for a public team to follow.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button variant="ghost" className="w-full" onClick={logout}>Sign out</Button>
-        </CardContent>
-      </Card>
-    )
-  }
-
+  // Guests never reach this screen: App.tsx gates it on `!isGuest` and sends
+  // a guest to the public-teams browser instead. That is also why there is no
+  // guest branch here -- guests can't create a team (create_team rejects them
+  // server-side) and have no invite to accept, so a create-team form would be
+  // a control they cannot submit.
   return (
     <Card className="mx-auto mt-16 max-w-md">
       <CardHeader>
