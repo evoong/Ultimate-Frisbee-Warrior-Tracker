@@ -59,3 +59,22 @@ jobs:
 
       - name: Run the pgTAP suite
         run: supabase test db
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Write .env.local from the running stack
+        run: |
+          {
+            echo "SUPABASE_URL=$(supabase status -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["API_URL"])')"
+            echo "SUPABASE_SECRET_KEY=$(supabase status -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["SERVICE_ROLE_KEY"])')"
+            echo "SUPABASE_PUBLISHABLE_KEY=$(supabase status -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["ANON_KEY"])')"
+          } > .env.local
+
+      - name: Seed test identities and memberships
+        run: npm run db:seed:users
+
+      # The full suite, not test:gateway:offline -- membership.test.mjs needs
+      # the live database this job now has.
+      - name: Run the full gateway suite
+        run: npm run test:gateway
