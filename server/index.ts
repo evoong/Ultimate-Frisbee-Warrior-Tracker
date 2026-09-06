@@ -821,25 +821,32 @@ async function applyOutcome(
 // Failure here must not fail the request that triggered it -- applyOutcome
 // has already marked the cluster "dispatched" by the time this is called, so
 // on failure we report to Sentry (already imported in this file) rather than
-// throw. A maintainer can always re-run the workflow from the issue by hand
-// (adding agent-approved) if the automatic dispatch never landed.
+// throw. That covers both failure modes: a non-ok HTTP response from GitHub,
+// and the fetch() promise itself rejecting (DNS failure, network timeout,
+// TLS error, connection abort) -- neither is allowed to propagate out of
+// this function. A maintainer can always re-run the workflow from the issue
+// by hand (adding agent-approved) if the automatic dispatch never landed.
 async function dispatchAgent(token: string, repo: string, issueNumber: number): Promise<void> {
-  const res = await fetch(`https://api.github.com/repos/${repo}/dispatches`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github+json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      event_type: "feedback-agent",
-      client_payload: { issue_number: issueNumber },
-    }),
-  });
-  if (!res.ok) {
-    Sentry.captureException(
-      new Error(`Agent dispatch failed (${res.status}): ${await res.text().catch(() => "")}`)
-    );
+  try {
+    const res = await fetch(`https://api.github.com/repos/${repo}/dispatches`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        event_type: "feedback-agent",
+        client_payload: { issue_number: issueNumber },
+      }),
+    });
+    if (!res.ok) {
+      Sentry.captureException(
+        new Error(`Agent dispatch failed (${res.status}): ${await res.text().catch(() => "")}`)
+      );
+    }
+  } catch (err) {
+    Sentry.captureException(err);
   }
 }
 
