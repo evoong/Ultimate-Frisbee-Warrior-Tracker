@@ -25,6 +25,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  issues: read
 
 jobs:
   classify-and-merge:
@@ -55,9 +56,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ISSUE=$(echo "${{ github.head_ref }}" | sed 's|agent/issue-||')
-          LABELS=$(gh issue view "$ISSUE" --json labels -q '[.labels[].name] | join(",")')
-          if echo "$LABELS" | grep -q 'bug'; then echo "type=bug" >> "$GITHUB_OUTPUT";
+          ISSUE=$(echo "${{ github.head_ref }}" | grep -oE '^agent/issue-[0-9]+' | grep -oE '[0-9]+$')
+          if [ -z "$ISSUE" ]; then
+            echo "Branch '${{ github.head_ref }}' does not start with agent/issue-<digits>; aborting." >&2
+            exit 1
+          fi
+          IS_BUG=$(gh issue view "$ISSUE" --json labels -q '[.labels[].name] | contains(["bug"])')
+          if [ "$IS_BUG" = "true" ]; then echo "type=bug" >> "$GITHUB_OUTPUT";
           else echo "type=feature" >> "$GITHUB_OUTPUT"; fi
 
       - name: Enable auto-merge
