@@ -1,0 +1,75 @@
+name: Safe class
+
+# Gates auto-merge on agent-authored PRs (see .github/workflows/feedback-agent.yml,
+# which opens branches named agent/issue-<n>). Two independent axes decide the
+# outcome:
+#
+#   1. What kind of issue does this PR fix -- bug or feature? Read from the
+#      linked issue's OWN labels via `gh issue view`, never from the PR body.
+#   2. Does the diff touch anything sensitive -- migrations, gateway, server,
+#      or workflow files? Read from `git diff --name-only` against the base
+#      branch, never from the PR's description of itself.
+#
+# Bug PRs auto-merge on green CI regardless of file class, because a bug fix
+# that's small enough for the agent to attempt is assumed low-risk and the
+# whole point of auto-dispatch is fast turnaround. Feature PRs only auto-merge
+# when the diff is safe-class, because a feature PR touching auth, migrations,
+# or CI is exactly the kind of change a fully-hijacked agent would use to
+# smuggle in a persistent backdoor -- and it could get there by fabricating a
+# PR description that lies about what it touched. Reading the actual diff
+# (not the PR's claims about the diff) is the control that closes that hole.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  classify-and-merge:
+    if: startsWith(github.head_ref, 'agent/issue-')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The classification reads the DIFF, never the agent's description of
+      # the diff. A hijacked agent cannot talk its way past this.
+      - name: Classify the diff
+        id: classify
+        run: |
+          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          echo "$FILES"
+          if echo "$FILES" | grep -Eq '^(supabase/migrations/|supabase-migrations/|gateway/|server/|\.github/workflows/)'; then
+            echo "safe=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "safe=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Which issue this PR fixes decides the policy: bug PRs auto-merge on
+      # green CI regardless of class; feature PRs only when the diff is safe.
+      - name: Determine the linked issue's type
+        id: kind
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ISSUE=$(echo "${{ github.head_ref }}" | sed 's|agent/issue-||')
+          LABELS=$(gh issue view "$ISSUE" --json labels -q '[.labels[].name] | join(",")')
+          if echo "$LABELS" | grep -q 'bug'; then echo "type=bug" >> "$GITHUB_OUTPUT";
+          else echo "type=feature" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Enable auto-merge
+        if: steps.kind.outputs.type == 'bug' || steps.classify.outputs.safe == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr merge --auto --squash "${{ github.event.pull_request.number }}"
+
+      - name: Explain why auto-merge was withheld
+        if: steps.kind.outputs.type != 'bug' && steps.classify.outputs.safe != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment "${{ github.event.pull_request.number }}" --body \
+            "Auto-merge withheld: this is a feature PR whose diff touches migrations, gateway, server, or workflows. A maintainer must review and merge it."
