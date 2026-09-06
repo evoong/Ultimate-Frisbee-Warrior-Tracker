@@ -16,6 +16,7 @@ export interface OpenCluster {
   title: string
   summary: string
   github_issue_number: number | null
+  status: string
   variant_labels: string[]
 }
 
@@ -47,7 +48,7 @@ export async function insertReport(
 export async function listOpenClusters(config: ActionsConfig): Promise<OpenCluster[]> {
   const clusters = await sbGet(
     config,
-    '/feedback_clusters?select=id,type,title,summary,github_issue_number&status=neq.implemented'
+    '/feedback_clusters?select=id,type,title,summary,github_issue_number,status&status=neq.implemented'
   )
   const labels = await sbGet(
     config,

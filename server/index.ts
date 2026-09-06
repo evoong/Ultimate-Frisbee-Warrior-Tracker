@@ -663,12 +663,23 @@ const FEEDBACK_LABELS: Record<"bug" | "feature", string> = {
 // Memory storage, not the disk-based `upload` above: this file never needs
 // to be served from our own origin, only re-uploaded to Supabase Storage,
 // and Vercel's /tmp doesn't survive past the request anyway.
+// An explicit allowlist, not `startsWith("image/")` -- that would also
+// accept image/svg+xml, which can embed script content. Confined to the
+// Supabase storage origin either way (not this app's), but excluding it
+// costs nothing.
+const FEEDBACK_ATTACHMENT_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+]);
+
 const feedbackUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    if (file.mimetype.startsWith("image/")) cb(null, true);
-    else cb(new Error("Only image files are allowed"));
+    if (FEEDBACK_ATTACHMENT_MIME_TYPES.has(file.mimetype)) cb(null, true);
+    else cb(new Error("Only PNG, JPEG, WebP, or GIF images are allowed"));
   },
 });
 
@@ -681,15 +692,21 @@ const feedbackUpload = multer({
 // ever exist.
 const FEEDBACK_ATTACHMENT_URL_TTL_SECONDS = 60 * 60 * 24 * 365 * 5;
 
-// Only an established team member's report can escalate anything. Guests and
-// signed-in users on no team may still file -- the signal is real -- but
-// three throwaway accounts must not be able to dispatch an agent at
+// Only an established team member's report can escalate anything. Guests
+// are already rejected with a 403 earlier in the /api/feedback handler
+// (claims.isAnonymous), so this function is never reached for them -- its
+// real job is excluding signed-in users who belong to no team, since three
+// throwaway accounts on zero teams must not be able to dispatch an agent at
 // production code. See the spec's "Abuse surface" section.
 async function reportCountsTowardThreshold(userId: string): Promise<boolean> {
   try {
     const teams = await membership.teamsFor(userId);
     return teams.length > 0;
-  } catch {
+  } catch (err) {
+    // Fail closed (a legitimate report just won't count toward escalation
+    // this time), but don't fail silently -- without this, a transient
+    // membership-lookup failure is invisible forever.
+    Sentry.captureException(err);
     return false;
   }
 }
@@ -729,6 +746,16 @@ async function addGithubComment(token: string, repo: string, issueNumber: number
 // every new report rather than appended to.
 const TALLY_START = "<!-- triage-tally -->";
 const TALLY_END = "<!-- /triage-tally -->";
+
+// A description containing either marker verbatim would make the
+// tally-rewrite regex in updateIssueTally match from the user's injected
+// marker through to the real one, silently corrupting the issue body on the
+// next rewrite. Strip both markers from any user-submitted text before it
+// flows into an issue body or comment -- not a security issue, a
+// content-integrity one.
+function stripTallyMarkers(text: string): string {
+  return text.split(TALLY_START).join("").split(TALLY_END).join("");
+}
 
 async function updateIssueTally(
   token: string,
@@ -778,15 +805,35 @@ async function addGithubLabel(token: string, repo: string, issueNumber: number, 
 // Translates a TriageOutcome into cluster status, GitHub labels, and (for a
 // bug clearing the threshold) the repository_dispatch that starts an agent
 // (see dispatchAgent below, and .github/workflows/feedback-agent.yml).
+//
+// `currentStatus` is the idempotency guard. decideEscalation is a pure
+// function of (type, tallies) with no status awareness -- by design, it
+// stays that way -- so it recomputes the same non-hold outcome for every
+// subsequent report once a cluster has crossed a threshold (e.g. a bug
+// already at 3 reporters still evaluates to `dispatch` at 4, 5, 6...).
+// Without this guard, applyOutcome would re-run its side effects (comment,
+// label, dispatch/repository_dispatch) on every single one of those later
+// reports: a dispatched bug cluster would fire ANOTHER agent run and
+// another auto-merging PR attempt per new reporter, and a feature cluster
+// sitting in awaiting_approval or decision_needed would get a duplicate
+// "please approve" / "pick a variant" comment each time. Only a cluster
+// still `open` should have this outcome's side effects applied -- once it
+// has moved to any other status (awaiting_approval, decision_needed,
+// dispatched, implemented), the escalation action for this cycle has
+// already happened and must not fire again. New reporters are still
+// recorded and tallied by the caller regardless; only the side-effecting
+// action here is suppressed.
 async function applyOutcome(
   config: ActionsConfig,
   githubToken: string,
   repo: string,
   clusterId: number,
   issueNumber: number,
-  outcome: TriageOutcome
+  outcome: TriageOutcome,
+  currentStatus: string
 ): Promise<void> {
   if (outcome.action === "hold") return;
+  if (currentStatus !== "open") return;
 
   if (outcome.action === "await_approval") {
     await setClusterStatus(config, clusterId, "awaiting_approval", outcome.variantLabel);
@@ -924,12 +971,14 @@ app.post("/api/feedback", feedbackUpload.single("photo"), async (req, res) => {
     let clusterId: number;
     let issueNumber: number;
     let issueUrl: string;
+    let clusterStatus: string;
     let alreadyTracked = false;
+    const cleanDescription = stripTallyMarkers(description.trim());
 
     if (verdict.relation === "new") {
       const issue = await createGithubIssue(githubToken, repo, {
         title: verdict.suggestedTitle.slice(0, 200),
-        body: `${description.trim()}${attachmentMarkdown}\n\n---\nReported by ${claims.email ?? claims.sub} via in-app feedback form.`,
+        body: `${cleanDescription}${attachmentMarkdown}\n\n---\nReported by ${claims.email ?? claims.sub} via in-app feedback form.`,
         labels: [FEEDBACK_LABELS[type], "customer-reported"],
       });
       issueNumber = issue.number;
@@ -940,14 +989,18 @@ app.post("/api/feedback", feedbackUpload.single("photo"), async (req, res) => {
         summary: verdict.suggestedSummary,
         githubIssueNumber: issueNumber,
       });
+      // A cluster is always 'open' the instant it's created, so the first
+      // report's own escalation check below runs exactly as it always has.
+      clusterStatus = "open";
     } else {
       const matched = clusters.find(c => c.id === verdict.matchClusterId)!;
       clusterId = matched.id;
       issueNumber = matched.github_issue_number!;
       issueUrl = `https://github.com/${repo}/issues/${issueNumber}`;
+      clusterStatus = matched.status;
       alreadyTracked = true;
       await addGithubComment(githubToken, repo, issueNumber,
-        `**Another report of this** (${claims.email ?? claims.sub}):\n\n> ${description.trim().replace(/\n/g, "\n> ")}${attachmentMarkdown}`);
+        `**Another report of this** (${claims.email ?? claims.sub}):\n\n> ${cleanDescription.replace(/\n/g, "\n> ")}${attachmentMarkdown}`);
     }
 
     await attachReportToCluster(actionsConfig, stored.id, clusterId, verdict.variantLabel);
@@ -956,7 +1009,7 @@ app.post("/api/feedback", feedbackUpload.single("photo"), async (req, res) => {
     const reportCount = tally.reduce((sum, t) => sum + t.reporters, 0);
     await updateIssueTally(githubToken, repo, issueNumber, tally);
     const outcome = decideEscalation(type, tally);
-    await applyOutcome(actionsConfig, githubToken, repo, clusterId, issueNumber, outcome);
+    await applyOutcome(actionsConfig, githubToken, repo, clusterId, issueNumber, outcome, clusterStatus);
 
     await track(distinctId, "feedback_submitted", { type, hasPhoto: !!photo, alreadyTracked });
     res.json({ url: issueUrl, alreadyTracked, reportCount });
@@ -1000,22 +1053,51 @@ async function reconcileOrphanReports(
     // call instead of spawning a duplicate GitHub issue.
     const clusters = await listOpenClusters(config);
     const verdict = await judgeReport(geminiApiKey, geminiModel, orphan, clusters);
+    const cleanDescription = stripTallyMarkers(String(orphan.description ?? ""));
+
+    let clusterId: number;
+    let issueNumber: number;
+    let clusterStatus: string;
+
     if (verdict.relation === "new") {
       const issue = await createGithubIssue(githubToken, repo, {
         title: verdict.suggestedTitle.slice(0, 200),
-        body: `${orphan.description}\n\n---\nRecovered from a failed submission.`,
+        body: `${cleanDescription}\n\n---\nRecovered from a failed submission.`,
         labels: [FEEDBACK_LABELS[orphan.type as "bug" | "feature"], "customer-reported"],
       });
-      const clusterId = await createCluster(config, {
+      issueNumber = issue.number;
+      clusterId = await createCluster(config, {
         type: orphan.type,
         title: verdict.suggestedTitle,
         summary: verdict.suggestedSummary,
         githubIssueNumber: issue.number,
       });
+      clusterStatus = "open";
       await attachReportToCluster(config, orphan.id, clusterId, verdict.variantLabel);
     } else {
-      await attachReportToCluster(config, orphan.id, verdict.matchClusterId!, verdict.variantLabel);
+      const matched = clusters.find(c => c.id === verdict.matchClusterId)!;
+      clusterId = matched.id;
+      issueNumber = matched.github_issue_number!;
+      clusterStatus = matched.status;
+      await attachReportToCluster(config, orphan.id, clusterId, verdict.variantLabel);
+      // Mirrors the live-submission "same"/"conflicting_variant" branch: a
+      // recovered report matched to an existing cluster otherwise leaves no
+      // trace anywhere a maintainer or the dispatched agent would see it.
+      // No attachmentMarkdown here -- orphan reconciliation has no photo
+      // data to work with, just the description text.
+      await addGithubComment(githubToken, repo, issueNumber,
+        `**Another report of this** (recovered from a failed submission):\n\n> ${cleanDescription.replace(/\n/g, "\n> ")}`);
     }
+
+    // Run the same tally/escalate sequence the live submission path runs --
+    // otherwise a cluster that only reaches the dispatch threshold via a
+    // recovered report never dispatches until some unrelated later live
+    // submission happens to arrive.
+    const tally = await tallyFor(config, clusterId);
+    await updateIssueTally(githubToken, repo, issueNumber, tally);
+    const outcome = decideEscalation(orphan.type as "bug" | "feature", tally);
+    await applyOutcome(config, githubToken, repo, clusterId, issueNumber, outcome, clusterStatus);
+
     attached++;
   }
   return { attached };

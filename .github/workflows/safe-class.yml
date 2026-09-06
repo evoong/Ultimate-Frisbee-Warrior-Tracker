@@ -61,20 +61,57 @@ jobs:
             echo "Branch '${{ github.head_ref }}' does not start with agent/issue-<digits>; aborting." >&2
             exit 1
           fi
+          echo "issue=$ISSUE" >> "$GITHUB_OUTPUT"
           IS_BUG=$(gh issue view "$ISSUE" --json labels -q '[.labels[].name] | any(. == "bug")')
           if [ "$IS_BUG" = "true" ]; then echo "type=bug" >> "$GITHUB_OUTPUT";
           else echo "type=feature" >> "$GITHUB_OUTPUT"; fi
 
+      # PARTIAL MITIGATION, not full closure -- both fields checked here are
+      # still agent-authored. The branch name is chosen by the same agent
+      # prompt that writes the PR body, so a fully hijacked agent could in
+      # principle set both to reference a bug-labelled issue while actually
+      # implementing something else. What this closes is the *cheaper*
+      # attack: an agent (or a bug in the dispatch prompt) naming the branch
+      # after a different issue than the one it actually worked -- e.g. to
+      # get `type=bug` and skip the safe-class file check on a diff that
+      # touches gateway/server/migrations. Requiring branch and PR body to
+      # independently agree raises the bar from "trust one agent-authored
+      # field" to "two independently-agent-authored fields must agree",
+      # which is not nothing, but full closure would require the dispatching
+      # side (server/index.ts's dispatchAgent, or the agent-approved label
+      # path) to record a cluster->issue mapping this workflow could verify
+      # against an authority outside the PR itself, rather than trusting
+      # anything derived from the PR.
+      - name: Cross-check the branch-derived issue against the PR body
+        id: crosscheck
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          BODY_ISSUE=$(printf '%s' "$PR_BODY" | grep -oE '^Fixes #[0-9]+' | head -1 | grep -oE '[0-9]+')
+          if [ "$BODY_ISSUE" = "${{ steps.kind.outputs.issue }}" ]; then
+            echo "match=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "match=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Enable auto-merge
-        if: steps.kind.outputs.type == 'bug' || steps.classify.outputs.safe == 'true'
+        if: steps.crosscheck.outputs.match == 'true' && (steps.kind.outputs.type == 'bug' || steps.classify.outputs.safe == 'true')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh pr merge --auto --squash "${{ github.event.pull_request.number }}"
 
-      - name: Explain why auto-merge was withheld
-        if: steps.kind.outputs.type != 'bug' && steps.classify.outputs.safe != 'true'
+      - name: Explain why auto-merge was withheld due to a class mismatch
+        if: steps.crosscheck.outputs.match == 'true' && steps.kind.outputs.type != 'bug' && steps.classify.outputs.safe != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh pr comment "${{ github.event.pull_request.number }}" --body \
             "Auto-merge withheld: this is a feature PR whose diff touches migrations, gateway, server, or workflows. A maintainer must review and merge it."
+
+      - name: Explain why auto-merge was withheld due to an issue-number mismatch
+        if: steps.crosscheck.outputs.match != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment "${{ github.event.pull_request.number }}" --body \
+            "Auto-merge withheld: the issue number implied by the branch name (agent/issue-${{ steps.kind.outputs.issue }}) does not match the issue referenced in the PR body ('Fixes #<n>'). A maintainer must review and merge this by hand."

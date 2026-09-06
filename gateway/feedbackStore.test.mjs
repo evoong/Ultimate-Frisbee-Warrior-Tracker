@@ -1,4 +1,4 @@
-import { tallyFor } from './feedbackStore.ts'
+import { tallyFor, listOpenClusters } from './feedbackStore.ts'
 
 let failed = 0
 function check(name, cond) {
@@ -80,6 +80,41 @@ check('tallyFor requests counts_toward_threshold=is.true',
   capture.url.includes('counts_toward_threshold=is.true'))
 check('tallyFor scopes the query to the given cluster id',
   capture.url.includes('cluster_id=eq.42'))
+
+// listOpenClusters is the other half of the Fix 1 (re-fire idempotency)
+// guard: applyOutcome in server/index.ts decides whether to skip
+// re-applying an escalation outcome based on the matched cluster's current
+// `status`, so listOpenClusters must actually select and return it -- a
+// query missing `status` from `select=` would leave every caller unable to
+// tell a dispatched/awaiting_approval/decision_needed cluster from an open
+// one, silently defeating the guard regardless of how applyOutcome itself
+// is written. This test guards the query shape and the mapped shape, not
+// applyOutcome's branching itself: applyOutcome lives in server/index.ts,
+// which does module-level env validation and process bootstrapping on
+// import, so it isn't practical to unit-test from here without dragging in
+// a running server.
+const clustersCapture = {}
+const openClusters = await (async () => {
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async (url) => {
+    const u = String(url)
+    if (u.includes('/feedback_clusters')) {
+      clustersCapture.url = u
+      return {
+        ok: true, status: 200, text: async () => '',
+        json: async () => [
+          { id: 7, type: 'bug', title: 't', summary: 's', github_issue_number: 42, status: 'dispatched' },
+        ],
+      }
+    }
+    return { ok: true, status: 200, text: async () => '', json: async () => [] }
+  }
+  return listOpenClusters(CONFIG).finally(() => { globalThis.fetch = realFetch })
+})()
+check('listOpenClusters requests the status column',
+  clustersCapture.url.includes('status') && clustersCapture.url.includes('select='))
+check('listOpenClusters preserves the cluster\'s current status',
+  openClusters[0]?.status === 'dispatched')
 
 console.log(failed === 0 ? '\nall passed' : `\n${failed} FAILED`)
 process.exit(failed === 0 ? 0 : 1)
