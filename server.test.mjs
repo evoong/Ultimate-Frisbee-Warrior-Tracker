@@ -89,8 +89,17 @@ await test("seasons — all columns present", () =>
 await test("players — all columns present", () =>
   assertColumns("players", [
     "id", "first_name", "last_name", "display_name", "gender_match",
-    "phone", "is_sub", "position", "photo_url", "number",
-    "first_name_edit", "last_name_edit",
+    "is_sub", "position", "photo_url", "number",
+  ])
+);
+
+// Contact details moved off `players` into `player_private` at the team-permissions
+// cutover: a column-level GRANT cannot hide a column from a Supabase anonymous user,
+// but a separate table with no `anon` grant can. `players` is tier A (readable by a
+// public team's visitors); `player_private` is members-only.
+await test("player_private — PII columns live here now, not on players", () =>
+  assertColumns("player_private", [
+    "player_id", "team_id", "phone", "first_name_edit", "last_name_edit",
   ])
 );
 
