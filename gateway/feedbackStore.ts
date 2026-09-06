@@ -30,7 +30,7 @@ export async function insertReport(
     countsTowardThreshold: boolean
   }
 ): Promise<StoredReport> {
-  const rows = await sbWrite(config, 'POST', 'feedback_reports', {
+  const rows = await sbWrite(config, 'POST', '/feedback_reports', {
     reporter_user_id: report.reporterUserId,
     type: report.type,
     title: report.title,
@@ -47,11 +47,11 @@ export async function insertReport(
 export async function listOpenClusters(config: ActionsConfig): Promise<OpenCluster[]> {
   const clusters = await sbGet(
     config,
-    'feedback_clusters?select=id,type,title,summary,github_issue_number&status=neq.implemented'
+    '/feedback_clusters?select=id,type,title,summary,github_issue_number&status=neq.implemented'
   )
   const labels = await sbGet(
     config,
-    'feedback_reports?select=cluster_id,variant_label&variant_label=not.is.null'
+    '/feedback_reports?select=cluster_id,variant_label&variant_label=not.is.null'
   )
   return (clusters ?? []).map((c: any) => ({
     ...c,
@@ -71,7 +71,7 @@ export async function attachReportToCluster(
   clusterId: number,
   variantLabel: string | null
 ): Promise<void> {
-  await sbWrite(config, 'PATCH', `feedback_reports?id=eq.${reportId}`, {
+  await sbWrite(config, 'PATCH', `/feedback_reports?id=eq.${reportId}`, {
     cluster_id: clusterId,
     variant_label: variantLabel,
   })
@@ -86,7 +86,7 @@ export async function createCluster(
     githubIssueNumber: number
   }
 ): Promise<number> {
-  const rows = await sbWrite(config, 'POST', 'feedback_clusters', {
+  const rows = await sbWrite(config, 'POST', '/feedback_clusters', {
     type: cluster.type,
     title: cluster.title,
     summary: cluster.summary,
@@ -106,7 +106,7 @@ export async function tallyFor(
 ): Promise<VariantTally[]> {
   const rows = await sbGet(
     config,
-    `feedback_reports?select=reporter_user_id,variant_label&cluster_id=eq.${clusterId}&counts_toward_threshold=is.true`
+    `/feedback_reports?select=reporter_user_id,variant_label&cluster_id=eq.${clusterId}&counts_toward_threshold=is.true`
   )
   const byLabel = new Map<string | null, Set<string>>()
   for (const row of rows ?? []) {
@@ -129,5 +129,5 @@ export async function setClusterStatus(
   const patch: Record<string, unknown> = { status, updated_at: new Date().toISOString() }
   if (winningVariantLabel !== undefined) patch.winning_variant_label = winningVariantLabel
   if (status === 'dispatched') patch.dispatched_at = new Date().toISOString()
-  await sbWrite(config, 'PATCH', `feedback_clusters?id=eq.${clusterId}`, patch)
+  await sbWrite(config, 'PATCH', `/feedback_clusters?id=eq.${clusterId}`, patch)
 }

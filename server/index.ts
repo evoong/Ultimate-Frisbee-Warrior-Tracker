@@ -944,9 +944,18 @@ async function reconcileOrphanReports(
   geminiApiKey: string,
   geminiModel: string
 ): Promise<{ attached: number }> {
+  // Mirror the /api/feedback guard: judgeReport falls back to relation:
+  // 'new' for every orphan when the Gemini key is empty, and each fallback
+  // files a real GitHub issue -- up to 50 duplicate issues in one cron run
+  // if this ran unguarded. Bail out (and say so loudly, since a cron
+  // failure here is otherwise invisible) rather than let that happen.
+  if (!githubToken || !geminiApiKey) {
+    Sentry.captureMessage("reconcileOrphanReports skipped: missing github_token or gemini_api_key", "warning");
+    return { attached: 0 };
+  }
   const orphans = await sbGet(
     config,
-    "feedback_reports?select=id,type,title,description&cluster_id=is.null&order=created_at.asc&limit=50"
+    "/feedback_reports?select=id,type,title,description&cluster_id=is.null&order=created_at.asc&limit=50"
   );
   let attached = 0;
   for (const orphan of orphans ?? []) {

@@ -68,6 +68,14 @@ await withRows(
   () => tallyFor(CONFIG, 42),
   capture
 )
+// Assert on the full path shape, not just a query fragment. sbGet/sbWrite
+// build the URL as `${supabaseUrl}/rest/v1${path}` -- path MUST start with a
+// leading slash, or this collapses to `.../rest/v1feedback_reports...`, a
+// 404 on every call. A substring check on just the query fragment can't
+// catch a missing separator; asserting the joined `/rest/v1/feedback_reports`
+// segment can.
+check('tallyFor hits the correct, well-formed REST path',
+  capture.url.includes('http://stub.invalid/rest/v1/feedback_reports?'))
 check('tallyFor requests counts_toward_threshold=is.true',
   capture.url.includes('counts_toward_threshold=is.true'))
 check('tallyFor scopes the query to the given cluster id',
