@@ -34,3 +34,28 @@ jobs:
       # Integration tests are not run in CI. Use npm run db:test for local pgTAP
       # suite testing. A future CI job to stand up the local Supabase stack for
       # testing is out of scope for this fix.
+
+  # The migration + RLS suites the previous CI comment deliberately excluded.
+  # They are no longer optional: docs/superpowers/specs/2026-09-06-feedback-triage-pipeline-design.md
+  # permits agent-authored bug PRs to auto-merge changes to migrations and
+  # gateway auth, and this job is the only thing that inspects those.
+  database-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Generate a local JWT signing key
+        run: node scripts/gen-local-signing-key.mjs
+
+      - name: Start the local Supabase stack
+        run: supabase start
+
+      - name: Apply migrations from the baseline
+        run: supabase db reset --no-seed
+
+      - name: Run the pgTAP suite
+        run: supabase test db
