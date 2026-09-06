@@ -17,6 +17,9 @@ import { CHAT_FUNCTION_DECLARATIONS, WRITE_FUNCTIONS, callChatFunction, type Act
 import { createMembershipLookup, hasAtLeast, type TeamRole } from "../gateway/membership.js";
 import { parseCookies, cookieNames } from "../gateway/cookies.js";
 import { verifyAccessToken } from "../gateway/jwt.js";
+import { decideEscalation, DISPATCH_THRESHOLD, CONFLICT_MARGIN, type TriageOutcome, type VariantTally } from "../gateway/feedbackTriage.js";
+import { insertReport, listOpenClusters, attachReportToCluster, createCluster, tallyFor, setClusterStatus } from "../gateway/feedbackStore.js";
+import { judgeReport } from "../gateway/feedbackJudge.js";
 import { track, trackError, shutdown } from "./lib/posthog.js";
 
 const app = express();
@@ -677,6 +680,140 @@ const feedbackUpload = multer({
 // ever exist.
 const FEEDBACK_ATTACHMENT_URL_TTL_SECONDS = 60 * 60 * 24 * 365 * 5;
 
+// Only an established team member's report can escalate anything. Guests and
+// signed-in users on no team may still file -- the signal is real -- but
+// three throwaway accounts must not be able to dispatch an agent at
+// production code. See the spec's "Abuse surface" section.
+async function reportCountsTowardThreshold(userId: string): Promise<boolean> {
+  try {
+    const teams = await membership.teamsFor(userId);
+    return teams.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function createGithubIssue(token: string, repo: string, issue: {
+  title: string; body: string; labels: string[];
+}): Promise<{ number: number; html_url: string }> {
+  const res = await fetch(`https://api.github.com/repos/${repo}/issues`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(issue),
+  });
+  if (!res.ok) throw new Error(`GitHub issue creation failed (${res.status}): ${await res.text().catch(() => "")}`);
+  return res.json();
+}
+
+async function addGithubComment(token: string, repo: string, issueNumber: number, body: string): Promise<void> {
+  const res = await fetch(`https://api.github.com/repos/${repo}/issues/${issueNumber}/comments`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ body }),
+  });
+  if (!res.ok) throw new Error(`GitHub comment failed (${res.status}): ${await res.text().catch(() => "")}`);
+}
+
+// The spec requires the issue body to carry a live tally, not just a trail of
+// comments -- "how many people hit this" must be readable at a glance from
+// the issue itself. The line is delimited so it can be rewritten in place on
+// every new report rather than appended to.
+const TALLY_START = "<!-- triage-tally -->";
+const TALLY_END = "<!-- /triage-tally -->";
+
+async function updateIssueTally(
+  token: string,
+  repo: string,
+  issueNumber: number,
+  tally: VariantTally[]
+): Promise<void> {
+  const total = tally.reduce((sum, t) => sum + t.reporters, 0);
+  const perVariant = tally
+    .filter(t => t.label !== null)
+    .map(t => `\n  - \`${t.label}\`: ${t.reporters}`)
+    .join("");
+  const block = `${TALLY_START}\n**Distinct reporters: ${total}**${perVariant}\n${TALLY_END}`;
+
+  const current = await fetch(`https://api.github.com/repos/${repo}/issues/${issueNumber}`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" },
+  });
+  if (!current.ok) return;
+  const body: string = (await current.json()).body ?? "";
+  const next = body.includes(TALLY_START)
+    ? body.replace(new RegExp(`${TALLY_START}[\\s\\S]*?${TALLY_END}`), block)
+    : `${body}\n\n${block}`;
+
+  await fetch(`https://api.github.com/repos/${repo}/issues/${issueNumber}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ body: next }),
+  });
+}
+
+async function addGithubLabel(token: string, repo: string, issueNumber: number, label: string): Promise<void> {
+  await fetch(`https://api.github.com/repos/${repo}/issues/${issueNumber}/labels`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ labels: [label] }),
+  });
+}
+
+// Translates a TriageOutcome into cluster status, GitHub labels, and (for a
+// bug clearing the threshold) the repository_dispatch that starts an agent.
+// Task 10 supplies dispatchAgent; until then it is a no-op that only records
+// the status, which is why Phase 0 can land before any agent can run.
+async function applyOutcome(
+  config: ActionsConfig,
+  githubToken: string,
+  repo: string,
+  clusterId: number,
+  issueNumber: number,
+  outcome: TriageOutcome
+): Promise<void> {
+  if (outcome.action === "hold") return;
+
+  if (outcome.action === "await_approval") {
+    await setClusterStatus(config, clusterId, "awaiting_approval", outcome.variantLabel);
+    await addGithubLabel(githubToken, repo, issueNumber, "awaiting-approval");
+    await addGithubComment(githubToken, repo, issueNumber,
+      `This has reached ${DISPATCH_THRESHOLD} distinct reporters. It is a feature request, so no agent runs until a maintainer adds the \`agent-approved\` label.`);
+    return;
+  }
+
+  if (outcome.action === "decision_needed") {
+    await setClusterStatus(config, clusterId, "decision_needed");
+    await addGithubLabel(githubToken, repo, issueNumber, "decision-needed");
+    const lines = outcome.tally.map(t => `- \`${t.label}\`: ${t.reporters} reporter(s)`).join("\n");
+    await addGithubComment(githubToken, repo, issueNumber,
+      `Reports here want incompatible outcomes and no option has a decisive lead (a winner needs ${CONFLICT_MARGIN}x the runner-up):\n\n${lines}\n\nAdd \`agent-approved\` to build the leading option, or say which option to build in a comment first.`);
+    return;
+  }
+
+  await setClusterStatus(config, clusterId, "dispatched", outcome.variantLabel);
+  await dispatchAgent(githubToken, repo, issueNumber);
+}
+
+// Replaced in Task 10 by the real repository_dispatch call.
+async function dispatchAgent(_token: string, _repo: string, _issueNumber: number): Promise<void> {
+  return;
+}
+
 app.post("/api/feedback", feedbackUpload.single("photo"), async (req, res) => {
   let distinctId = "unknown";
   try {
@@ -701,6 +838,7 @@ app.post("/api/feedback", feedbackUpload.single("photo"), async (req, res) => {
     const repo = process.env.GITHUB_REPO || "evoong/Ultimate-Frisbee-Warrior-Tracker";
 
     let attachmentMarkdown = "";
+    let attachmentPath: string | null = null;
     const photo = req.file;
     if (photo) {
       const ext = path.extname(photo.originalname).toLowerCase() || ".jpg";
@@ -714,29 +852,78 @@ app.post("/api/feedback", feedbackUpload.single("photo"), async (req, res) => {
         .createSignedUrl(objectPath, FEEDBACK_ATTACHMENT_URL_TTL_SECONDS);
       if (signError || !signed) throw new Error(`Attachment signing failed: ${signError?.message ?? "no URL returned"}`);
       attachmentMarkdown = `\n\n![screenshot](${signed.signedUrl})`;
+      attachmentPath = objectPath;
     }
 
-    const ghRes = await fetch(`https://api.github.com/repos/${repo}/issues`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${githubToken}`,
-        Accept: "application/vnd.github+json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        title: title.trim().slice(0, 200),
+    const actionsConfig: ActionsConfig = {
+      supabaseUrl: process.env.SUPABASE_URL || "",
+      supabaseSecretKey: process.env.SUPABASE_SECRET_KEY || "",
+    };
+
+    // Persist first, decide second. If the judge or GitHub call fails below,
+    // the report survives and the daily reconciliation pass picks it up --
+    // losing a user's bug report to an LLM timeout is the worst outcome
+    // available here.
+    const stored = await insertReport(actionsConfig, {
+      reporterUserId: claims.sub,
+      type,
+      title: title.trim(),
+      description: description.trim(),
+      photoPath: attachmentPath,
+      countsTowardThreshold: await reportCountsTowardThreshold(claims.sub),
+    });
+
+    const geminiApiKey = await getVaultSecret(vaultConfig, "gemini_api_key", process.env.GEMINI_API_KEY);
+    const geminiModel = (await getVaultSecret(vaultConfig, "gemini_model", process.env.GEMINI_MODEL)) ?? DEFAULT_GEMINI_MODEL;
+    if (!geminiApiKey) return res.status(500).json({ error: "Gemini API key not configured" });
+
+    const clusters = await listOpenClusters(actionsConfig);
+    const verdict = await judgeReport(
+      geminiApiKey,
+      geminiModel,
+      { type, title: title.trim(), description: description.trim() },
+      clusters
+    );
+
+    let clusterId: number;
+    let issueNumber: number;
+    let issueUrl: string;
+    let alreadyTracked = false;
+
+    if (verdict.relation === "new") {
+      const issue = await createGithubIssue(githubToken, repo, {
+        title: verdict.suggestedTitle.slice(0, 200),
         body: `${description.trim()}${attachmentMarkdown}\n\n---\nReported by ${claims.email ?? claims.sub} via in-app feedback form.`,
         labels: [FEEDBACK_LABELS[type], "customer-reported"],
-      }),
-    });
-    if (!ghRes.ok) {
-      const detail = await ghRes.text().catch(() => "");
-      throw new Error(`GitHub issue creation failed (${ghRes.status}): ${detail}`);
+      });
+      issueNumber = issue.number;
+      issueUrl = issue.html_url;
+      clusterId = await createCluster(actionsConfig, {
+        type,
+        title: verdict.suggestedTitle,
+        summary: verdict.suggestedSummary,
+        githubIssueNumber: issueNumber,
+      });
+    } else {
+      const matched = clusters.find(c => c.id === verdict.matchClusterId)!;
+      clusterId = matched.id;
+      issueNumber = matched.github_issue_number!;
+      issueUrl = `https://github.com/${repo}/issues/${issueNumber}`;
+      alreadyTracked = true;
+      await addGithubComment(githubToken, repo, issueNumber,
+        `**Another report of this** (${claims.email ?? claims.sub}):\n\n> ${description.trim().replace(/\n/g, "\n> ")}${attachmentMarkdown}`);
     }
-    const issue = await ghRes.json();
 
-    await track(distinctId, "feedback_submitted", { type, hasPhoto: !!photo });
-    res.json({ url: issue.html_url });
+    await attachReportToCluster(actionsConfig, stored.id, clusterId, verdict.variantLabel);
+
+    const tally = await tallyFor(actionsConfig, clusterId);
+    const reportCount = tally.reduce((sum, t) => sum + t.reporters, 0);
+    await updateIssueTally(githubToken, repo, issueNumber, tally);
+    const outcome = decideEscalation(type, tally);
+    await applyOutcome(actionsConfig, githubToken, repo, clusterId, issueNumber, outcome);
+
+    await track(distinctId, "feedback_submitted", { type, hasPhoto: !!photo, alreadyTracked });
+    res.json({ url: issueUrl, alreadyTracked, reportCount });
   } catch (err: unknown) {
     await trackError(distinctId, err);
     Sentry.captureException(err);
