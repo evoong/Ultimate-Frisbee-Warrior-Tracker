@@ -12,7 +12,7 @@ import { Label } from '../lib/shadcn/label'
 import { Input } from '../lib/shadcn/input'
 import { Textarea } from '../lib/shadcn/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
-import { submitFeedback, type FeedbackType } from '../lib/feedbackClient'
+import { submitFeedback, type FeedbackType, type FeedbackResult } from '../lib/feedbackClient'
 
 type FeedbackDialogProps = {
   open: boolean
@@ -30,7 +30,7 @@ export default function FeedbackDialog({ open, onOpenChange }: FeedbackDialogPro
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [issueUrl, setIssueUrl] = useState<string | null>(null)
+  const [result, setResult] = useState<FeedbackResult | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -40,7 +40,7 @@ export default function FeedbackDialog({ open, onOpenChange }: FeedbackDialogPro
       setDescription('')
       setPhoto(null)
       setError(null)
-      setIssueUrl(null)
+      setResult(null)
     }
   }, [open])
 
@@ -80,13 +80,13 @@ export default function FeedbackDialog({ open, onOpenChange }: FeedbackDialogPro
     setError(null)
     setBusy(true)
     try {
-      const { url } = await submitFeedback({
+      const result = await submitFeedback({
         type,
         title: title.trim(),
         description: description.trim(),
         photo: photo ?? undefined,
       })
-      setIssueUrl(url)
+      setResult(result)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not submit your report')
     } finally {
@@ -104,12 +104,16 @@ export default function FeedbackDialog({ open, onOpenChange }: FeedbackDialogPro
           </DialogDescription>
         </DialogHeader>
 
-        {issueUrl ? (
+        {result ? (
           <div className="flex flex-col items-center gap-3 py-4 text-center">
             <CheckCircle2 className="w-10 h-10 text-green-600 dark:text-green-500" />
-            <p className="text-sm">Thanks! Your report has been filed.</p>
+            <p className="text-sm">
+              {result.alreadyTracked
+                ? `Thanks! Someone already reported this — we've added your report (now ${result.reportCount}).`
+                : 'Thanks! Your report has been filed.'}
+            </p>
             <a
-              href={issueUrl}
+              href={result.url}
               target="_blank"
               rel="noreferrer"
               className="text-sm text-primary underline underline-offset-2"

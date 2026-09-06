@@ -7,6 +7,12 @@ export interface FeedbackReport {
   photo?: File
 }
 
+export interface FeedbackResult {
+  url: string
+  alreadyTracked: boolean
+  reportCount: number
+}
+
 async function readError(res: Response): Promise<string> {
   try {
     const data = await res.json()
@@ -20,7 +26,7 @@ async function readError(res: Response): Promise<string> {
 // the returned URL lets the reporter jump straight to the tracked issue.
 // multipart/form-data throughout (not just when a photo is attached) so the
 // server always parses the same way regardless of whether one was sent.
-export async function submitFeedback(report: FeedbackReport): Promise<{ url: string }> {
+export async function submitFeedback(report: FeedbackReport): Promise<FeedbackResult> {
   const body = new FormData()
   body.set('type', report.type)
   body.set('title', report.title)
