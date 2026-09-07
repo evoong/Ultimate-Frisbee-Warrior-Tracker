@@ -41,8 +41,10 @@ export default function WorkspaceSwitcher({
   const [open, setOpen] = useState(false)
   const current = teams.find(t => t.organization_id === currentTeamId)
   // A guest is signed in to a public team but is a member of none, so `teams`
-  // is empty and there is no name to show. The product wordmark is the honest
-  // answer there, and the guest banner below the header says the rest.
+  // is empty and there is no team name to show. Rather than print the product
+  // name on both lines, the overline drops away and the wordmark takes the
+  // primary line on its own -- the guest banner below the header says the
+  // rest.
   const workspace = current?.name ?? "Warrior Tracker"
   const switchable = teams.length > 1
 
@@ -68,10 +70,17 @@ export default function WorkspaceSwitcher({
           collapsible && "flex-1 group-data-[collapsible=icon]:hidden"
         )}
       >
-        <span className="nav-mono block text-[9px] uppercase leading-none tracking-[0.17em] text-muted-foreground">
-          Warrior Tracker
-        </span>
-        <span className="mt-[5px] block truncate text-[13.5px] font-semibold leading-none tracking-[-0.012em]">
+        {current && (
+          <span className="nav-mono block text-[9px] uppercase leading-none tracking-[0.17em] text-muted-foreground">
+            Warrior Tracker
+          </span>
+        )}
+        <span
+          className={cn(
+            "block truncate text-[13.5px] font-semibold leading-none tracking-[-0.012em]",
+            current && "mt-[5px]"
+          )}
+        >
           {workspace}
         </span>
       </span>
