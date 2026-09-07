@@ -28,6 +28,10 @@ import PlayerAvatar from '../components/PlayerAvatar'
 import GenderTag, { GenderRatio } from '../components/GenderTag'
 import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
+import GameRow from '../components/schedule/GameRow'
+import GameLedger from '../components/schedule/GameLedger'
+import IconButton, { SCHEDULE_ICON_PROPS } from '../components/schedule/IconButton'
+import type { MatchData, MatchDetail, MatchOutcome } from '../components/schedule/types'
 import { useAuth } from '../contexts/AuthContext'
 import { Calendar, Plus, Minus, Trophy, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Target, TrendingUp, PlusCircle, Trash2, Edit2, Save, X, Users, LayoutList, CalendarDays, StickyNote, AlertTriangle, RefreshCw, ArrowLeftRight, Undo2, Check, ChevronsUpDown, GripVertical, Table2 } from 'lucide-react'
 
@@ -81,18 +85,6 @@ function seasonLabel(s: { name: string; year: number; organizer: string | null }
 // its calendar date, so a game later today still shows as upcoming.
 function gameStartsAt(g: { game_date: string; game_time: string | null }): Date {
   return new Date(`${g.game_date}T${g.game_time || '00:00:00'}`)
-}
-
-function dateBadgeParts(dateStr: string) {
-  const d = new Date(dateStr + 'T00:00:00')
-  return {
-    month: d.toLocaleDateString('en-US', { month: 'short' }).toUpperCase(),
-    day: d.getDate(),
-  }
-}
-
-function formatWeekday(dateStr: string) {
-  return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' })
 }
 
 const OUTCOME_OPTIONS = ['Win', 'Loss', 'Tie', 'Default Win', 'Default Loss', 'Forfeit']
@@ -2286,166 +2278,92 @@ export default function Schedule() {
     return null
   }
 
-  const renderGameCard = (game: Game, index: number, isPlayed: boolean) => {
+  // Adapter: a `games` row -> the sport-agnostic MatchData that GameRow
+  // renders. Every schedule-specific judgement about what counts as a win
+  // lives on this side of the boundary, so the row itself never has to learn
+  // what an outcome_override is and can be reused by another sport as soon
+  // as something can map that sport onto MatchData.
+  const toMatchData = (game: Game, isPlayed: boolean): MatchData => {
     // our_score/their_score are derived live from game_events (see
     // useGetGames), but games.result is a stored column no write path ever
-    // populates, so it reads as null for every normally-scored game — an
+    // populates, so it reads as null for every normally-scored game -- an
     // outcome_override beats the score the same way Standings treats it,
     // but otherwise the live score itself is the source of truth, not
     // game.result.
-    const displayResult = game.outcome_override
-    const outcome: 'win' | 'loss' | 'tie' | null = !isPlayed ? null
-      : displayResult ? (displayResult.startsWith('Win') || displayResult === 'Default Win' ? 'win' : displayResult === 'Tie' ? 'tie' : 'loss')
+    const override = game.outcome_override
+    const outcome: MatchOutcome | null = !isPlayed ? null
+      : override ? (override.startsWith('Win') || override === 'Default Win' ? 'win' : override === 'Tie' ? 'tie' : 'loss')
       : game.our_score > game.their_score ? 'win' : game.our_score < game.their_score ? 'loss' : 'tie'
-    // Redundant once a single season is already the active filter; only earns
-    // its place in the meta line when the list is mixing seasons together.
-    const showSeasonLabel = game.season_id && scheduleSeasonIds.length !== 1
-    const badge = dateBadgeParts(game.game_date)
-    const scoreColorClass = outcome === 'win' ? 'text-green-600 dark:text-green-400'
-      : outcome === 'loss' ? 'text-red-600 dark:text-red-400'
-      : outcome === 'tie' ? 'text-yellow-600 dark:text-yellow-400'
-      : 'text-primary'
-    const outcomeLabel = outcome === 'win' ? 'Win' : outcome === 'loss' ? 'Loss' : outcome === 'tie' ? 'Tie' : null
-    return (
-      <FadeIn key={game.id} delay={index * 40}>
-        <Card
-          onClick={() => navigate(`/schedule/${game.id}`)}
-          className="bg-card text-card-foreground border-border cursor-pointer hover:bg-accent/50 active:scale-[0.99] transition-all"
-        >
-          <CardContent className="py-3.5">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-base font-bold text-foreground truncate">vs {game.opponent}</span>
-                  {game.game_type === 'Playoff' && <Trophy className="w-4 h-4 text-yellow-500 shrink-0" />}
-                </div>
-                {isPlayed ? (
-                  <div className="flex items-center gap-1.5 mt-0.5 text-sm text-muted-foreground truncate">
-                    <Calendar className="w-3.5 h-3.5 shrink-0" />
-                    <span>{formatDate(game.game_date)}</span>
-                    <span>•</span>
-                    <span>{formatTime(game.game_time)}</span>
-                    {showSeasonLabel && (
-                      <>
-                        <span>•</span>
-                        <span className="truncate">{getSeasonLabel(game.season_id!)}</span>
-                      </>
-                    )}
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1.5 mt-0.5 text-sm text-muted-foreground truncate">
-                    <span>{formatWeekday(game.game_date)}</span>
-                    <span>•</span>
-                    <span>{formatTime(game.game_time)}</span>
-                    {showSeasonLabel && (
-                      <>
-                        <span>•</span>
-                        <span className="truncate">{getSeasonLabel(game.season_id!)}</span>
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-              <div className="flex items-center gap-3 shrink-0">
-                {isPlayed ? (
-                  <div className="text-right">
-                    <div className="text-2xl font-bold leading-none">
-                      <span className={scoreColorClass}>{game.our_score}</span>
-                      <span className="text-muted-foreground mx-1">-</span>
-                      <span className="text-muted-foreground">{game.their_score}</span>
-                    </div>
-                    {outcomeLabel && (
-                      <div className={`text-xs font-medium mt-1 ${scoreColorClass}`}>
-                        {game.outcome_override || outcomeLabel}
-                        {game.outcome_override && <span className="text-[10px] opacity-60 ml-0.5">*</span>}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center shrink-0 rounded-lg w-14 h-14 bg-muted">
-                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{badge.month}</span>
-                    <span className="text-xl font-bold leading-none mt-0.5">{badge.day}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </FadeIn>
-    )
+    // Redundant once a single season is already the active filter; the season
+    // only earns its own grid slot when the list is mixing seasons together.
+    const details: MatchDetail[] = []
+    const seasonLabelText = scheduleSeasonIds.length !== 1 ? getSeasonLabel(game.season_id) : null
+    if (seasonLabelText) details.push({ label: 'Season', value: seasonLabelText })
+    return {
+      id: game.id,
+      opponent: game.opponent || 'TBD',
+      date: game.game_date,
+      time: game.game_time,
+      status: isPlayed ? 'played' : 'upcoming',
+      ourScore: isPlayed ? game.our_score : null,
+      theirScore: isPlayed ? game.their_score : null,
+      outcome,
+      outcomeLabel: outcome ? (override || (outcome === 'win' ? 'Win' : outcome === 'loss' ? 'Loss' : 'Tie')) : null,
+      outcomeOverridden: Boolean(override),
+      highlight: game.game_type === 'Playoff',
+      details,
+    }
   }
 
-  // Spotlight card for the very next upcoming game: bigger, with a month/day
-  // badge, so the game you're most likely opening next stands out from the
-  // rest of the upcoming list rather than blending in as a uniform row.
-  const renderSpotlightCard = (game: Game) => {
-    const relativeDay = formatRelativeDay(game.game_date)
-    const badge = dateBadgeParts(game.game_date)
-    const showSeasonLabel = game.season_id && scheduleSeasonIds.length !== 1
-    return (
-      <FadeIn key={game.id}>
-        <Card
-          onClick={() => navigate(`/schedule/${game.id}`)}
-          className="bg-card border-primary/40 ring-1 ring-primary/20 cursor-pointer hover:border-primary/70 active:scale-[0.99] transition-all"
-        >
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className="min-w-0 flex-1">
-              <div className="text-xs font-semibold uppercase tracking-wide mb-1 flex items-center gap-1.5 text-primary">
-                <Target className="w-3.5 h-3.5" />
-                Up Next{relativeDay ? ` · ${relativeDay}` : ''}
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-xl font-bold truncate">vs {game.opponent}</span>
-                {game.game_type === 'Playoff' && <Trophy className="w-4 h-4 text-yellow-500 shrink-0" />}
-              </div>
-              <div className="flex items-center gap-1.5 mt-1 text-sm truncate text-muted-foreground">
-                <span>{formatWeekday(game.game_date)}</span>
-                <span>•</span>
-                <span>{formatTime(game.game_time)}</span>
-                {showSeasonLabel && (
-                  <><span>•</span><span className="truncate">{getSeasonLabel(game.season_id!)}</span></>
-                )}
-              </div>
-            </div>
-            <div className="flex flex-col items-center justify-center shrink-0 rounded-lg w-14 h-14 bg-primary/10">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-primary">{badge.month}</span>
-              <span className="text-xl font-bold leading-none mt-0.5">{badge.day}</span>
-            </div>
-          </CardContent>
-        </Card>
-      </FadeIn>
-    )
-  }
+  // The next match up is the same row with its accent rail already down,
+  // rather than a separate spotlight card: one idiom for the whole ledger,
+  // and hovering the rows below reads as "these could be next too".
+  const renderGameRow = (game: Game, index: number, isPlayed: boolean, featured = false) => (
+    <GameRow
+      key={game.id}
+      matchData={toMatchData(game, isPlayed)}
+      delay={index * 35}
+      featured={featured}
+      featuredNote={featured ? (formatRelativeDay(game.game_date) ?? 'Up Next') : null}
+      onSelect={id => navigate(`/schedule/${id}`)}
+    />
+  )
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-foreground">Schedule</h1>
-        <div className="flex items-center gap-2">
-          {/* View mode toggle */}
-          <div className="flex bg-muted rounded-lg p-0.5">
-            <button onClick={() => setViewMode('list')} className={`p-1.5 rounded-md transition-colors ${viewMode === 'list' ? 'bg-card shadow-sm' : 'text-muted-foreground'}`}>
-              <LayoutList className="w-4 h-4" />
-            </button>
-            <button onClick={() => setViewMode('calendar')} className={`p-1.5 rounded-md transition-colors ${viewMode === 'calendar' ? 'bg-card shadow-sm' : 'text-muted-foreground'}`}>
-              <CalendarDays className="w-4 h-4" />
-            </button>
+        {/* Utility cluster. Every control here is the same 34px square with a
+            16px lucide glyph at strokeWidth 1.75 (see IconButton) so the row
+            reads as one instrument panel rather than four borrowed buttons. */}
+        <div className="schedule-scope flex items-center gap-1.5">
+          <div className="sch-icon-group">
+            <IconButton label="List view" active={viewMode === 'list'} onClick={() => setViewMode('list')}>
+              <LayoutList {...SCHEDULE_ICON_PROPS} />
+            </IconButton>
+            <IconButton label="Calendar view" active={viewMode === 'calendar'} onClick={() => setViewMode('calendar')}>
+              <CalendarDays {...SCHEDULE_ICON_PROPS} />
+            </IconButton>
           </div>
           {can.record && (
-          <button
-            onClick={handleSyncJamNow}
-            disabled={syncingJam}
-            title="Sync games from the JAM Sports calendar now (also runs automatically once a day at 6am Eastern)"
-            className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
-          >
-            <RefreshCw className={`w-4 h-4 ${syncingJam ? 'animate-spin' : ''}`} />
-          </button>
+            <IconButton
+              label="Sync games from the JAM Sports calendar now (also runs automatically once a day at 6am Eastern)"
+              onClick={handleSyncJamNow}
+              disabled={syncingJam}
+            >
+              <RefreshCw {...SCHEDULE_ICON_PROPS} className={`h-4 w-4 ${syncingJam ? 'animate-spin' : ''}`} />
+            </IconButton>
           )}
+          {can.record && (seasons as Season[] | undefined)?.length ? (
+            <IconButton label="Edit season details" onClick={() => handleOpenEditSeason()}>
+              <Edit2 {...SCHEDULE_ICON_PROPS} />
+            </IconButton>
+          ) : null}
           {can.record && (
           <Dialog open={isDialogOpen} onOpenChange={open => { setIsDialogOpen(open); if (!open) setShowNewSeason(false) }}>
-            <button onClick={() => setIsDialogOpen(true)} className="flex items-center gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-2 text-sm font-medium transition-colors">
-              <Plus className="w-4 h-4" />Add Game
-            </button>
+            <IconButton label="Add game" tone="accent" onClick={() => setIsDialogOpen(true)}>
+              <Plus {...SCHEDULE_ICON_PROPS} />
+            </IconButton>
             <DialogContent className="bg-card text-card-foreground max-h-[90vh] overflow-y-auto">
               <DialogHeader><DialogTitle>Schedule New Game</DialogTitle></DialogHeader>
               <form onSubmit={handleSubmit} className="space-y-4">
@@ -2592,15 +2510,6 @@ export default function Schedule() {
             placeholder="All Seasons"
           />
         </div>
-        {can.record && (seasons as Season[] | undefined)?.length ? (
-          <button
-            onClick={() => handleOpenEditSeason()}
-            title="Edit season details"
-            className="flex items-center justify-center w-9 h-9 shrink-0 rounded-md border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-          >
-            <Edit2 className="w-4 h-4" />
-          </button>
-        ) : null}
       </div>
 
       {/* Calendar sync: anything the automatic daily sync from a
@@ -2739,41 +2648,46 @@ export default function Schedule() {
               </CardContent>
             </Card>
           ) : (
-            <>
+            <div className="schedule-scope space-y-5">
               {upcomingGames.length > 0 && (
-                <>
+                <section className="space-y-2">
                   <button
                     onClick={() => setShowUpcoming(v => !v)}
-                    className="w-full flex items-center justify-between px-1 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground transition-colors"
+                    className="sch-section-rule w-full flex items-center gap-2.5 py-1 hover:opacity-80 transition-opacity"
                   >
-                    <span>Upcoming ({upcomingGames.length})</span>
-                    {showUpcoming ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                    <span>Upcoming</span>
+                    <span className="tabular-nums opacity-60">{upcomingGames.length}</span>
+                    {/* The rule runs to the fold: it is the section divider,
+                        so the heading does not also need a box around it. */}
+                    <span aria-hidden className="h-px flex-1" style={{ background: 'hsl(var(--sch-rule-strong))' }} />
+                    {showUpcoming ? <ChevronUp {...SCHEDULE_ICON_PROPS} /> : <ChevronDown {...SCHEDULE_ICON_PROPS} />}
                   </button>
                   {showUpcoming && (
-                    <div className="space-y-2">
-                      {renderSpotlightCard(upcomingGames[0]!)}
-                      {upcomingGames.slice(1).map((game, index) => renderGameCard(game, index, false))}
-                    </div>
+                    <GameLedger parkIndex={0}>
+                      {upcomingGames.map((game, index) => renderGameRow(game, index, false, index === 0))}
+                    </GameLedger>
                   )}
-                </>
+                </section>
               )}
               {pastGames.length > 0 && (
-                <>
+                <section className="space-y-2">
                   <button
                     onClick={() => setShowPlayed(v => !v)}
-                    className="w-full flex items-center justify-between px-1 py-1 pt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground transition-colors"
+                    className="sch-section-rule w-full flex items-center gap-2.5 py-1 hover:opacity-80 transition-opacity"
                   >
-                    <span>Played ({pastGames.length})</span>
-                    {showPlayed ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                    <span>Played</span>
+                    <span className="tabular-nums opacity-60">{pastGames.length}</span>
+                    <span aria-hidden className="h-px flex-1" style={{ background: 'hsl(var(--sch-rule-strong))' }} />
+                    {showPlayed ? <ChevronUp {...SCHEDULE_ICON_PROPS} /> : <ChevronDown {...SCHEDULE_ICON_PROPS} />}
                   </button>
                   {showPlayed && (
-                    <div className="space-y-2">
-                      {pastGames.map((game, index) => renderGameCard(game, index, true))}
-                    </div>
+                    <GameLedger>
+                      {pastGames.map((game, index) => renderGameRow(game, index, true))}
+                    </GameLedger>
                   )}
-                </>
+                </section>
               )}
-            </>
+            </div>
           )}
         </div>
       )}

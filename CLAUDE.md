@@ -35,6 +35,95 @@
   installed by wrapping the MCP SDK's `executeToolHandler`; if that seam ever
   disappears, `init()` throws rather than serving tools unguarded.
 
+## Design system
+
+The app ships **two** visual systems. Know which one you are in before styling
+anything.
+
+**Global (everything except the schedule list).** Stock shadcn tokens in
+`frontend/index.css` -- hue-240 cool neutrals, `--primary` is just black/white,
+and `--accent` is a grey rather than an accent colour. Light and dark are both
+live, toggled by a `dark` class on `<html>` (`App.tsx`) and persisted to
+localStorage. `frontend/orgTheme.css` is a **dead file**: a "Field Dark"
+lime-on-near-black system that nothing imports. Do not wire it up casually --
+it would restyle every page at once and effectively drop the light theme. Its
+font choices are still treated as this project's design intent (see below).
+
+**Schedule ledger (`frontend/components/schedule/`).** A scoped system under
+`.schedule-scope`, defined in `components/schedule/schedule-theme.css`. It
+exists because the global tokens are exactly the generic slate/zinc default the
+schedule redesign was asked to avoid. Everything is namespaced `--sch-*` and
+`.sch-*` so it cannot leak into Roster / Stats / Strategy.
+
+Rules that keep it coherent -- follow them or the component stops matching
+itself:
+
+- **Warm neutrals, never Tailwind greys.** The ink ramp is hue ~28-40 at very
+  low saturation. Inside the scope do not reach for `slate-*`, `gray-*`,
+  `zinc-*` or `indigo-*`; use `hsl(var(--sch-ink))`, `--sch-ink-mid`,
+  `--sch-ink-faint`.
+- **One accent, reserved for state.** Chartreuse (`--sch-accent`), used only for
+  the travelling rail, the featured-row wash, and the primary icon button. It is
+  never decoration -- when it appears it means "this row is active".
+- **Borders and hairlines, not shadows.** There is no `box-shadow` anywhere in
+  the scope and no `rounded-2xl`. The ledger is one 1px frame at radius 5px with
+  1px rules between rows; chips are radius 3px, deliberately not pills.
+- **Contrast is a hard requirement, and it is direction-dependent.**
+  `--sch-ink-mid` is ~9:1 in both themes. In dark that meant going *brighter*
+  (65% -> 76% L); in light it meant going *darker* (46% -> 30% L). "Brighter" is
+  not the goal, contrast is.
+- **Outcome chips keep a dark field in both themes** (deep green / oxblood with
+  bright text, ~9.2:1 and ~5.7:1). Holding them steady across the theme toggle
+  is what keeps win/loss instantly readable; do not invert them for light mode.
+- **Type.** Team names use the inherited sans at weight 650 with `-0.021em`
+  tracking. Every number and every piece of metadata uses **Space Mono**
+  (`--sch-mono`, loaded in `frontend/index.html`, two weights, `display=swap`) --
+  that is `orgTheme.css`'s declared `--font-mono`, so it honours existing intent
+  rather than introducing a new face. Secondary text always sets an explicit
+  `line-height` and slightly negative tracking; never let it inherit the default
+  leading.
+- **Scores align on the dash.** `.sch-score` is a `2ch 1.75ch 2ch` grid so the
+  dash forms a spine down the list regardless of digit count. Any new
+  score-like column should do the same.
+
+Structure and behaviour:
+
+- **`GameRow` takes `matchData` and nothing else.** It does no data fetching and
+  knows nothing about the `games` table -- `toMatchData()` in
+  `pages/Schedule.tsx` is the only place that knows what an `outcome_override`
+  is. Keep that boundary: it is what lets a second sport reuse the row.
+- **Rows are CSS Grid, never a flex stack.** Tracks are passed in as
+  `--sch-cols-sm` / `--sch-cols-md` custom properties, so each entry in
+  `matchData.details[]` becomes one more desktop track (hidden below `md`).
+  Adding venue, duration or division is one array entry -- do not nest flexbox
+  to squeeze a field in.
+- **The accent rail belongs to `GameLedger`, not to the row.** One rail per list
+  slides between rows on hover and on focus, so dragging the pointer down reads
+  as continuous travel rather than a string of blinks. It is a 1px bar moved by
+  `translateY(--rail-y) scaleY(--rail-h)` to stay on the compositor. `parkIndex`
+  is the row it rests on when idle (the featured fixture); with no park it fades
+  out. Do not reintroduce a per-row `::before` rail.
+- **Hover is staggered, and reduced motion is honoured.** Rail and background at
+  0ms, name shift at 90ms, caret at 140ms via `.sch-stagger-*`. Every transition
+  collapses under `prefers-reduced-motion: reduce`.
+- **Utility icons go through `IconButton`.** One 34px square, one 16px lucide
+  glyph at `strokeWidth 1.75` (`SCHEDULE_ICON_PROPS`). Do not hand-roll another
+  icon button in the schedule header -- mismatched stroke weights are the
+  loudest tell that a toolbar was assembled rather than designed. Pass `active`
+  only for real toggles; it emits `aria-pressed`.
+- **shadcn primitives live in `frontend/lib/shadcn/`**, not `components/ui/`,
+  and there is no `components.json`, so `npx shadcn add` will not work -- add the
+  file by hand. Unused primitives are normal there (`separator`, `sheet`,
+  `tooltip` and `avatar` currently have no importers).
+
+Verifying a visual change: there is no test harness checked in. Render the
+component against mock data from a throwaway Vite entry at the `frontend/` root,
+screenshot it in both themes and at 390px, then delete the harness and revert
+the temporary `tailwind.config.js` `content` entry it needed. Note that headless
+Chrome's `--virtual-time-budget` does not advance the CSS animation clock, so
+transitions read as stuck at their start value -- assert on
+`el.getAnimations()` instead of on sampled intermediate frames.
+
 ## References
 - Bugs and feature requests are tracked as GitHub issues in this repo (`gh issue list`), not in a separate tracker.
 - Project notes/planning doc in Notion: https://app.notion.com/p/e2e903a5dd4347c7be8fe9a0ab39b4f1?v=3d08e4449db2814b9332000c33d32b8b

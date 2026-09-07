@@ -1,0 +1,400 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   Schedule ledger — a design system scoped to the schedule list only.
+
+   Everything here lives under `.schedule-scope`, so none of it leaks into
+   Roster / Stats / Strategy, which keep the app's global shadcn tokens.
+
+   The neutral ramp is a warm ink (hue ~30, very low saturation), chosen
+   specifically so it does NOT read as Tailwind's default cool slate/zinc.
+   A single chartreuse accent — the disc — is reserved for active states and
+   never used as decoration, so when it appears it always means something.
+   ──────────────────────────────────────────────────────────────────────── */
+
+.schedule-scope {
+  /* Surfaces */
+  --sch-page: 36 22% 96%;
+  --sch-row: 0 0% 100%;
+  --sch-row-hover: 38 30% 95%;
+
+  /* Ink. --sch-ink-mid is deliberately much darker than the app's global
+     --muted-foreground (46% L, ~4.6:1). At 30% L it clears 8:1 on both the
+     row and its hover state, which is what requirement 3 is really asking
+     for in a light theme: more contrast, not more brightness. */
+  --sch-ink: 28 16% 9%;
+  --sch-ink-mid: 28 9% 30%;
+  --sch-ink-faint: 30 8% 46%;
+
+  /* Structure. Hairlines and a single crisp frame carry the hierarchy —
+     there are no drop shadows in this component on purpose. */
+  --sch-rule: 32 15% 88%;
+  --sch-rule-strong: 30 12% 78%;
+
+  /* Accent */
+  --sch-accent: 74 78% 42%;
+  --sch-accent-ink: 78 88% 25%;
+  --sch-accent-wash: 74 80% 45%;
+
+  /* Outcome chips keep the same deep field in both themes: a dark green or
+     dark oxblood block on warm paper reads as an editorial results table,
+     and holding it steady across themes keeps win/loss instantly learnable. */
+  --sch-win-bg: 152 56% 10%;
+  --sch-win-fg: 146 66% 68%;
+  --sch-win-edge: 150 42% 24%;
+  --sch-loss-bg: 4 50% 12%;
+  --sch-loss-fg: 6 86% 73%;
+  --sch-loss-edge: 4 44% 27%;
+  --sch-tie-bg: 40 52% 11%;
+  --sch-tie-fg: 44 86% 67%;
+  --sch-tie-edge: 40 38% 25%;
+
+  --sch-mono: 'Space Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+
+  color: hsl(var(--sch-ink));
+}
+
+.dark .schedule-scope {
+  --sch-page: 30 9% 7%;
+  --sch-row: 30 8% 11%;
+  --sch-row-hover: 32 9% 15%;
+
+  /* Here "brighter" is literal: 76% L against an 11% L row is ~9.5:1, a
+     clear step up from the global 65% muted-foreground, while staying well
+     short of pure white so a long list doesn't glare. */
+  --sch-ink: 40 22% 96%;
+  --sch-ink-mid: 38 11% 76%;
+  --sch-ink-faint: 34 8% 58%;
+
+  --sch-rule: 30 7% 19%;
+  --sch-rule-strong: 30 7% 27%;
+
+  --sch-accent: 72 92% 55%;
+  --sch-accent-ink: 72 92% 62%;
+  --sch-accent-wash: 72 90% 55%;
+}
+
+/* ── Ledger frame ───────────────────────────────────────────────────────
+   One border around the whole list, hairlines between rows. Rows are not
+   individually floating cards, so nothing here gets a shadow. */
+.sch-ledger {
+  position: relative;
+  background: hsl(var(--sch-row));
+  border: 1px solid hsl(var(--sch-rule-strong));
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.sch-ledger > * + *:not(.sch-rail) {
+  border-top: 1px solid hsl(var(--sch-rule));
+}
+
+/* One 2px accent rail for the whole list, slid between rows by GameLedger.
+   It is a 1px bar scaled to the row height rather than a sized box, so the
+   whole travel -- position and length -- is a single compositor transform. */
+.sch-rail {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  height: 1px;
+  background: hsl(var(--sch-accent));
+  transform-origin: top left;
+  transform: translateY(var(--rail-y, 0px)) scaleY(var(--rail-h, 0));
+  opacity: var(--rail-o, 0);
+  pointer-events: none;
+  will-change: transform;
+  transition:
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 200ms ease;
+  z-index: 1;
+}
+
+/* ── Row ────────────────────────────────────────────────────────────────
+   Grid, not a flex stack: `--sch-cols-sm` / `--sch-cols-md` are supplied per
+   row by GameRow, so a new field (venue, duration, referee…) becomes one more
+   track and one more cell rather than a nested flexbox. */
+.sch-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--sch-cols-sm);
+  align-items: center;
+  column-gap: 0.625rem;
+  width: 100%;
+  padding: 0.875rem 0.875rem 0.875rem 1.125rem;
+  text-align: left;
+  background: transparent;
+  transition: background-color 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (min-width: 768px) {
+  .sch-row {
+    grid-template-columns: var(--sch-cols-md);
+    column-gap: 1.25rem;
+    padding: 1rem 1.25rem 1rem 1.5rem;
+  }
+}
+
+.sch-row:hover,
+.sch-row:focus-visible {
+  background: hsl(var(--sch-row-hover));
+}
+
+.sch-row:focus-visible {
+  outline: 2px solid hsl(var(--sch-accent));
+  outline-offset: -2px;
+}
+
+.sch-row:active {
+  background: hsl(var(--sch-row-hover));
+}
+
+/* Staggered follow-through. Each element trails the rail by a beat so the
+   row resolves in sequence instead of everything snapping at once. */
+.sch-stagger {
+  transition: transform 340ms cubic-bezier(0.22, 1, 0.36, 1),
+              color 340ms cubic-bezier(0.22, 1, 0.36, 1),
+              opacity 340ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.sch-stagger-1 { transition-delay: 40ms; }
+.sch-stagger-2 { transition-delay: 90ms; }
+.sch-stagger-3 { transition-delay: 140ms; }
+
+.sch-row:hover .sch-shift,
+.sch-row:focus-visible .sch-shift {
+  transform: translateX(4px);
+}
+
+/* The chevron only exists on hover — it is the row telling you it is a link. */
+.sch-caret {
+  opacity: 0;
+  transform: translateX(-6px);
+  color: hsl(var(--sch-accent-ink));
+}
+.sch-row:hover .sch-caret,
+.sch-row:focus-visible .sch-caret {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sch-row,
+  .sch-rail,
+  .sch-stagger,
+  .sch-caret {
+    transition-duration: 1ms;
+    transition-delay: 0ms;
+  }
+  .sch-row:hover .sch-shift {
+    transform: none;
+  }
+}
+
+/* ── Typography ─────────────────────────────────────────────────────────
+   Team names: heavy, optically tightened. Metadata: mono, small, tracked in
+   rather than out, with an explicit line-height so it never inherits the
+   loose default that makes secondary text drift away from its heading. */
+.sch-team {
+  font-weight: 650;
+  font-size: 0.9375rem;
+  line-height: 1.15;
+  letter-spacing: -0.021em;
+  color: hsl(var(--sch-ink));
+}
+
+@media (min-width: 768px) {
+  .sch-team { font-size: 1rem; }
+  .sch-score { font-size: 1.625rem; }
+}
+
+.sch-meta {
+  font-family: var(--sch-mono);
+  font-size: 0.6875rem;
+  line-height: 1;
+  letter-spacing: -0.012em;
+  text-transform: uppercase;
+  color: hsl(var(--sch-ink-mid));
+  font-variant-numeric: tabular-nums;
+}
+
+.sch-meta-sep {
+  color: hsl(var(--sch-ink-faint));
+}
+
+/* A results column that does not line up is not a results column. The score
+   is its own three-track grid -- ours right-aligned, dash centred, theirs
+   left-aligned -- so the dash forms a spine down the list no matter whether
+   a score is one digit or two. tabular-nums keeps the ch unit honest. */
+.sch-score {
+  display: inline-grid;
+  grid-template-columns: 2ch 1.75ch 2ch;
+  align-items: baseline;
+  font-family: var(--sch-mono);
+  font-weight: 700;
+  font-size: 1.25rem;
+  line-height: 1;
+  letter-spacing: -0.045em;
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--sch-ink));
+}
+
+.sch-score-our {
+  text-align: right;
+}
+
+.sch-score-them {
+  text-align: left;
+  color: hsl(var(--sch-ink-mid));
+}
+
+.sch-score-dash {
+  text-align: center;
+  color: hsl(var(--sch-ink-faint));
+  font-weight: 400;
+}
+
+.sch-label {
+  font-family: var(--sch-mono);
+  font-size: 0.625rem;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: hsl(var(--sch-ink-faint));
+}
+
+/* ── Outcome chip ───────────────────────────────────────────────────────
+   Square-ish on purpose: 3px, not a pill. */
+.sch-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 3px;
+  border-width: 1px;
+  padding: 0.1875rem 0.4375rem;
+  font-family: var(--sch-mono);
+  font-size: 0.625rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.sch-chip--win {
+  background: hsl(var(--sch-win-bg));
+  border-color: hsl(var(--sch-win-edge));
+  color: hsl(var(--sch-win-fg));
+}
+.sch-chip--loss {
+  background: hsl(var(--sch-loss-bg));
+  border-color: hsl(var(--sch-loss-edge));
+  color: hsl(var(--sch-loss-fg));
+}
+.sch-chip--tie {
+  background: hsl(var(--sch-tie-bg));
+  border-color: hsl(var(--sch-tie-edge));
+  color: hsl(var(--sch-tie-fg));
+}
+.sch-chip--next {
+  background: hsl(var(--sch-accent-wash) / 0.14);
+  border-color: hsl(var(--sch-accent-wash) / 0.4);
+  color: hsl(var(--sch-accent-ink));
+}
+
+/* ── Section rule ───────────────────────────────────────────────────────*/
+.sch-section-rule {
+  font-family: var(--sch-mono);
+  font-size: 0.625rem;
+  line-height: 1;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: hsl(var(--sch-ink-mid));
+}
+
+/* ── Utility icon cluster ───────────────────────────────────────────────
+   One shape, one size, one stroke weight for every icon in the header. */
+.sch-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.125rem;
+  height: 2.125rem;
+  flex: none;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  color: hsl(var(--sch-ink-mid));
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease;
+}
+.sch-icon-btn:hover:not(:disabled) {
+  color: hsl(var(--sch-ink));
+  background: hsl(var(--sch-row-hover));
+  border-color: hsl(var(--sch-rule-strong));
+}
+.sch-icon-btn:disabled { opacity: 0.45; }
+.sch-icon-btn:focus-visible {
+  outline: 2px solid hsl(var(--sch-accent));
+  outline-offset: 1px;
+}
+.sch-icon-btn[data-active='true'] {
+  color: hsl(var(--sch-ink));
+  background: hsl(var(--sch-row-hover));
+  border-color: hsl(var(--sch-rule-strong));
+}
+.sch-icon-btn--accent {
+  color: hsl(var(--sch-ink));
+  border-color: hsl(var(--sch-accent) / 0.55);
+  background: hsl(var(--sch-accent-wash) / 0.14);
+}
+.sch-icon-btn--accent:hover:not(:disabled) {
+  background: hsl(var(--sch-accent-wash) / 0.24);
+  border-color: hsl(var(--sch-accent));
+}
+
+.sch-icon-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+  padding: 0.125rem;
+  border: 1px solid hsl(var(--sch-rule-strong));
+  border-radius: 5px;
+}
+
+/* ── Featured row ───────────────────────────────────────────────────────
+   The next match up. Its rail is already down, so hovering the rest of the
+   list reads as "these could be it too" rather than as a separate idiom. */
+.sch-row--featured {
+  background: hsl(var(--sch-accent-wash) / 0.06);
+}
+.dark .sch-row--featured {
+  background: hsl(var(--sch-accent-wash) / 0.035);
+}
+.dark .sch-row--featured:hover {
+  background: hsl(var(--sch-accent-wash) / 0.07);
+}
+.sch-row--featured:hover {
+  background: hsl(var(--sch-accent-wash) / 0.11);
+}
+
+/* Date block used by upcoming rows in the score track. */
+.sch-datemark {
+  display: grid;
+  justify-items: center;
+  gap: 0.1875rem;
+  padding: 0.3125rem 0.5rem;
+  border: 1px solid hsl(var(--sch-rule-strong));
+  border-radius: 4px;
+  font-family: var(--sch-mono);
+  min-width: 2.75rem;
+}
+.sch-datemark-month {
+  font-size: 0.5625rem;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: hsl(var(--sch-ink-mid));
+}
+.sch-datemark-day {
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: hsl(var(--sch-ink));
+  font-variant-numeric: tabular-nums;
+}
