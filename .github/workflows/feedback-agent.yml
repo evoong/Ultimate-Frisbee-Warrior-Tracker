@@ -50,10 +50,17 @@ jobs:
             echo "number=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: anthropics/claude-code-action@v1
+      - uses: google-github-actions/run-gemini-cli@main
+        env:
+          # The Gemini CLI shells out to `git`/`gh` itself to branch, commit,
+          # and open the PR the prompt below asks for -- gh needs a token in
+          # its env to authenticate those calls, same as any other step using
+          # the CLI non-interactively.
+          GITHUB_TOKEN: ${{ github.token }}
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          model: claude-sonnet-5
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          gemini_model: gemini-2.5-pro
+          github_issue_number: ${{ steps.target.outputs.number }}
           prompt: |
             Implement the change described in issue #${{ steps.target.outputs.number }}
             of this repository. Read it with `gh issue view ${{ steps.target.outputs.number }} --comments`.
