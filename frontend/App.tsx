@@ -11,14 +11,17 @@ const ResetPassword = lazy(() => import('./pages/ResetPassword'))
 const CreateOrganization = lazy(() => import('./pages/CreateOrganization'))
 const PublicTeams = lazy(() => import('./pages/PublicTeams'))
 import { useAuth } from './contexts/AuthContext'
-import { Moon, Sun, Loader2, LogOut, KeyRound, Settings, MessageSquarePlus } from 'lucide-react'
-import { NAV_ITEMS, visibleNavItems, tabForPath, pathForTab, isKnownPath, type Tab } from './lib/nav'
+import { Loader2, LogOut } from 'lucide-react'
+import { NAV_ITEMS, visibleNavItems, tabForPath, pathForTab, isKnownPath, renamedPathFor, type Tab } from './lib/nav'
 import { useMediaQuery } from './lib/shadcn/use-media-query'
 import { SidebarProvider, SidebarInset, SidebarTrigger } from './lib/shadcn/sidebar'
 import AppSidebar from './components/AppSidebar'
 import PasskeysDialog from './components/PasskeysDialog'
 import OrganizationSettingsDialog from './components/OrganizationSettingsDialog'
 import FeedbackDialog from './components/FeedbackDialog'
+import ThemeToggle from './components/nav/ThemeToggle'
+import UserMenu from './components/nav/UserMenu'
+import WorkspaceSwitcher from './components/nav/WorkspaceSwitcher'
 import { passkeysAvailable } from './lib/passkeys'
 
 const THEME_KEY = 'ufwt_theme'
@@ -49,7 +52,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const isDesktop = useMediaQuery('(min-width: 1024px)')
-  const { user, teams, currentTeamId, switchTeam, can, isGuest, loading, logout } = useAuth()
+  const { user, teams, currentTeamId, switchTeam, can, role, isGuest, loading, logout } = useAuth()
 
   useEffect(() => {
     const root = document.documentElement
@@ -64,12 +67,20 @@ export default function App() {
   // out, '/' and '/login' are real public pages (Home/Login below), not
   // unrecognized paths to bounce from.
   //
-  // A guest hitting a member-only route (/plays, /ai) by typing it directly
-  // gets the same bounce: those routes are omitted from pageContent below,
-  // so without this the Routes below would just render nothing.
+  // A guest hitting a member-only route (/playbook, /coach) by typing it
+  // directly gets the same bounce: those routes are omitted from pageContent
+  // below, so without this the Routes below would just render nothing.
   useEffect(() => {
     if (!user) return
     if (location.pathname === '/reset-password') return
+    // Links minted before Plays/AI were renamed still have to land on the
+    // real page. Without this they are simply "unknown" and get dropped on
+    // /schedule below, which loses the thing the link was pointing at.
+    const renamed = renamedPathFor(location.pathname)
+    if (renamed) {
+      navigate(renamed, { replace: true })
+      return
+    }
     if (!isKnownPath(location.pathname)) {
       navigate(pathForTab('schedule'), { replace: true })
       return
@@ -193,13 +204,7 @@ export default function App() {
           <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
             <h1 className="text-lg font-bold text-primary">Warrior Tracker</h1>
             <div className="flex items-center gap-1">
-              <button
-                onClick={toggleTheme}
-                className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
-                aria-label="Toggle theme"
-              >
-                {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-              </button>
+              <ThemeToggle theme={theme} toggleTheme={toggleTheme} />
               <button
                 onClick={() => logout()}
                 className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
@@ -237,9 +242,9 @@ export default function App() {
             a guest who already picked a team gets back to the browser to
             pick a different one. */}
         <Route path="/teams" element={<PublicTeams />} />
-        {!isGuest && <Route path="/plays" element={<Strategy />} />}
-        {!isGuest && <Route path="/plays/:playId" element={<Strategy />} />}
-        {!isGuest && <Route path="/ai" element={<Chat />} />}
+        {!isGuest && <Route path="/playbook" element={<Strategy />} />}
+        {!isGuest && <Route path="/playbook/:playId" element={<Strategy />} />}
+        {!isGuest && <Route path="/coach" element={<Chat />} />}
       </Routes>
     </Suspense>
   )
@@ -252,9 +257,8 @@ export default function App() {
         <AppSidebar
           activeTab={activeTab}
           setActiveTab={setActiveTab}
-          theme={theme}
-          toggleTheme={toggleTheme}
-          userEmail={user.email || 'Guest'}
+          userEmail={user.email}
+          role={role}
           logout={logout}
           teams={teams}
           currentTeamId={currentTeamId}
@@ -268,9 +272,12 @@ export default function App() {
         <OrganizationSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
         <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
         <SidebarInset>
+          {/* The theme toggle sits here, with the utility icons, rather than
+              as a labelled row in the sidebar -- see components/nav/ThemeToggle. */}
           <header className="sticky top-0 z-10 flex h-14 items-center gap-2 border-b border-border bg-card px-4">
             <SidebarTrigger />
             <h1 className="text-lg font-bold text-primary">{activeLabel}</h1>
+            <ThemeToggle theme={theme} toggleTheme={toggleTheme} className="ml-auto" />
           </header>
           {guestNotice}
           {readOnlyNotice}
@@ -285,65 +292,36 @@ export default function App() {
   // Mobile: sticky header plus fixed bottom navigation.
   return (
     <div className="min-h-screen bg-background text-foreground">
+      {/* Mobile carries the same two controls as the desktop shell, in the
+          same places: the workspace on the left, one theme toggle and one
+          account menu on the right. The five loose icons and the separate
+          team <select> bar below them were the same pile of leftover links
+          the sidebar footer had, just laid out horizontally. */}
       <header className="bg-card border-b border-border sticky top-0 z-10">
-        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
-          <h1 className="text-lg font-bold text-primary">Warrior Tracker</h1>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => setSettingsOpen(true)}
-              className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
-              aria-label="Organization settings"
-            >
-              <Settings className="w-5 h-5" />
-            </button>
-            {passkeysAvailable() && (
-              <button
-                onClick={() => setPasskeysOpen(true)}
-                className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
-                aria-label="Manage passkeys"
-              >
-                <KeyRound className="w-5 h-5" />
-              </button>
-            )}
-            <button
-              onClick={() => setFeedbackOpen(true)}
-              className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
-              aria-label="Report a bug or idea"
-            >
-              <MessageSquarePlus className="w-5 h-5" />
-            </button>
-            <button
-              onClick={toggleTheme}
-              className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
-              aria-label="Toggle theme"
-            >
-              {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-            </button>
-            <button
-              onClick={() => logout()}
-              className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
-              aria-label="Sign out"
-              title={user.email || 'Guest'}
-            >
-              <LogOut className="w-5 h-5" />
-            </button>
+        <div className="max-w-2xl mx-auto px-3 py-2 flex items-center justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <WorkspaceSwitcher
+              teams={teams}
+              currentTeamId={currentTeamId}
+              switchTeam={switchTeam}
+              variant="bar"
+            />
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <ThemeToggle theme={theme} toggleTheme={toggleTheme} />
+            <UserMenu
+              email={user.email}
+              role={role}
+              isGuest={isGuest}
+              logout={logout}
+              openSettings={() => setSettingsOpen(true)}
+              openPasskeys={passkeysAvailable() ? () => setPasskeysOpen(true) : undefined}
+              openFeedback={() => setFeedbackOpen(true)}
+              variant="bar"
+            />
           </div>
         </div>
       </header>
-
-      {teams.length > 1 && (
-        <div className="bg-card border-b border-border px-4 py-2">
-          <select
-            value={currentTeamId ?? ''}
-            onChange={e => switchTeam(Number(e.target.value))}
-            className="w-full text-sm bg-transparent border border-border rounded-md px-2 py-1"
-          >
-            {teams.map(t => (
-              <option key={t.organization_id} value={t.organization_id}>{t.name}</option>
-            ))}
-          </select>
-        </div>
-      )}
 
       {guestNotice}
       {readOnlyNotice}
@@ -356,20 +334,30 @@ export default function App() {
         {pageContent}
       </main>
 
+      {/* The active cell carries a 3px accent bar on its top edge -- the same
+          marker the sidebar puts on the left edge of the active item, rotated
+          to the edge the bottom nav actually has. Colour alone was doing all
+          the work here, and 'slightly darker grey' is not a position. */}
       <nav className="fixed bottom-0 left-0 right-0 bg-card border-t border-border">
         <div className="max-w-2xl mx-auto grid" style={{ gridTemplateColumns: `repeat(${visibleNavItems(isGuest).length}, minmax(0, 1fr))` }}>
-          {visibleNavItems(isGuest).map(({ key, icon: Icon, label }) => (
-            <button
-              key={key}
-              onClick={() => setActiveTab(key)}
-              className={`flex flex-col items-center gap-1 py-3 transition-colors ${
-                activeTab === key ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <Icon className="w-5 h-5" />
-              <span className="text-[10px] font-medium">{label}</span>
-            </button>
-          ))}
+          {visibleNavItems(isGuest).map(({ key, icon: Icon, label }) => {
+            const isActive = activeTab === key
+            return (
+              <button
+                key={key}
+                onClick={() => setActiveTab(key)}
+                aria-current={isActive ? 'page' : undefined}
+                className={`relative flex flex-col items-center gap-1 py-3 transition-colors before:absolute before:inset-x-3 before:top-0 before:h-[3px] before:rounded-b-full before:bg-[hsl(var(--nav-accent))] before:transition-opacity before:content-[''] motion-reduce:before:transition-none ${
+                  isActive
+                    ? 'font-semibold text-foreground before:opacity-100 [&>svg]:text-[hsl(var(--nav-accent-ink))]'
+                    : 'text-muted-foreground hover:text-foreground before:opacity-0'
+                }`}
+              >
+                <Icon className="w-5 h-5" strokeWidth={1.75} />
+                <span className="text-[10px] font-medium">{label}</span>
+              </button>
+            )
+          })}
         </div>
       </nav>
     </div>

@@ -2,7 +2,7 @@ import {
   Calendar,
   Users,
   BarChart3,
-  ClipboardList,
+  BookOpen,
   MessageCircle,
   type LucideIcon,
 } from "lucide-react"
@@ -17,15 +17,47 @@ export type Tab =
 // Each tab is also a real URL, so the browser's back/forward buttons (and
 // reloading, bookmarking, or sharing a link) land on the right page instead
 // of always resetting to the default 'schedule' tab. Paths use the same
-// user-facing names as the label ("Plays"/"AI"), not the internal Tab key,
-// since those are what a URL a person actually reads should say.
+// user-facing names as the label ("Playbook"/"Coach"), not the internal Tab
+// key, since those are what a URL a person actually reads should say.
+//
+// "Playbook" over "Plays", and "Coach" over "AI": a nav label is where an app
+// says what it is for. "AI" named the implementation, not the job -- every
+// product has an API wrapper behind some tab -- while "Coach" names what the
+// thing actually does for a team. "Playbook" reads as a curated collection
+// rather than a list of rows. Renaming the labels without renaming the paths
+// would have left /plays and /ai as the two URLs nobody could guess.
 export const NAV_ITEMS: { key: Tab; label: string; icon: LucideIcon; path: string }[] = [
   { key: "schedule", label: "Schedule", icon: Calendar, path: "/schedule" },
   { key: "roster", label: "Roster", icon: Users, path: "/roster" },
   { key: "stats", label: "Stats", icon: BarChart3, path: "/stats" },
-  { key: "strategy", label: "Plays", icon: ClipboardList, path: "/plays" },
-  { key: "chat", label: "AI", icon: MessageCircle, path: "/ai" },
+  { key: "strategy", label: "Playbook", icon: BookOpen, path: "/playbook" },
+  { key: "chat", label: "Coach", icon: MessageCircle, path: "/coach" },
 ]
+
+// The paths those two tabs used to live at. Anything already bookmarked,
+// shared in a group chat, or sitting in someone's history under the old name
+// still has to land on the real page: without this, App's unknown-path effect
+// would silently bounce every one of those links to /schedule. Sub-paths are
+// carried across too, so /plays/42 becomes /playbook/42 rather than the
+// playbook index.
+const RENAMED_PATHS: [from: string, to: string][] = [
+  ["/plays", "/playbook"],
+  ["/ai", "/coach"],
+]
+
+/**
+ * The current path for a URL that used a tab's old name, or null if the
+ * pathname is not one of those. Callers redirect (replace, not push -- the
+ * old URL should not be a back-button stop).
+ */
+export function renamedPathFor(pathname: string): string | null {
+  for (const [from, to] of RENAMED_PATHS) {
+    if (pathname === from || pathname.startsWith(from + "/")) {
+      return to + pathname.slice(from.length)
+    }
+  }
+  return null
+}
 
 // Matches a tab's own path exactly, or a sub-path under it (e.g.
 // "/schedule/42", a deep link to one game's detail view), so a tab still
@@ -35,9 +67,9 @@ function pathMatches(itemPath: string, pathname: string): boolean {
   return pathname === itemPath || pathname.startsWith(itemPath + "/")
 }
 
-// Plays and AI read strategy_* and chat_logs, which are members-only with no
-// public branch at all. Hiding them for guests matches what the database
-// will do anyway.
+// Playbook and Coach read strategy_* and chat_logs, which are members-only
+// with no public branch at all. Hiding them for guests matches what the
+// database will do anyway.
 const MEMBER_ONLY_TABS: Tab[] = ['strategy', 'chat']
 
 export function visibleNavItems(isGuest: boolean) {
