@@ -62,8 +62,16 @@ jobs:
       - name: Start the local Supabase stack
         run: supabase start
 
-      - name: Apply migrations from the baseline
-        run: supabase db reset --no-seed
+      # Not --no-seed. supabase/seed.sql is where organizations, teams,
+      # players and player_private come from, and almost every pgTAP file
+      # asserts against team 1 and players 101-104. Skipping it left the
+      # database with migrations and nothing in it, so the suite failed for
+      # want of rows rather than for any real defect -- and the membership
+      # insert below silently inserted nothing, because team_members.team_id
+      # references organizations, which did not exist either. This matches
+      # what `npm run db:reset` does locally; the two must not drift.
+      - name: Apply migrations and load the seed data
+        run: supabase db reset
 
       - name: Install root dependencies
         run: npm ci
@@ -80,9 +88,9 @@ jobs:
         run: npm run db:seed:users
 
       # Must run after seeding: pgTAP tests using tests.login_as(...) depend
-      # on auth.users rows that only scripts/seed-local-users.mjs creates --
-      # supabase/seed.sql has none, and `db reset --no-seed` above skips it
-      # regardless. Running this before seeding made every such test (17_
+      # on auth.users rows that only scripts/seed-local-users.mjs creates,
+      # which supabase/seed.sql cannot contain (it runs before any user
+      # exists). Running this before seeding made every such test (17_
       # feedback_triage.test.sql included) fail for lack of the identity, not
       # for any real defect -- a permanently red job either blocks all merges
       # or gets stripped from branch protection, exactly the outcome this job
