@@ -3,9 +3,13 @@ select plan(5);
 
 -- The triage tables are written only by the Express server under the
 -- service-role key. Nothing in the browser reads or writes them, so they get
--- no policies at all -- and with RLS enabled and zero policies, every
--- authenticated role must see nothing. These assertions exist so that a
--- later "convenience" policy cannot quietly open them up.
+-- no policies at all, and 20260907201815_lockdown_feedback_triage_grants.sql
+-- additionally revokes every grant from anon/authenticated -- so a plain
+-- select as either role doesn't just return zero rows via RLS, it fails
+-- outright with a permission error (SQLSTATE 42501) before RLS is ever
+-- evaluated. throws_ok, not is_empty, is the correct assertion for that.
+-- These assertions exist so that a later "convenience" grant or policy
+-- cannot quietly reopen them.
 
 insert into public.feedback_clusters (type, title, summary, github_issue_number, status)
 values ('bug', 'Schedule fails to load', 'Repeated reports of a blank schedule', 900, 'open');
@@ -19,19 +23,25 @@ select
   true;
 
 select tests.login_as('member@local.test');
-select is_empty(
+select throws_ok(
   $$ select id from public.feedback_clusters $$,
+  '42501',
+  null,
   'an authenticated team member cannot read feedback_clusters'
 );
-select is_empty(
+select throws_ok(
   $$ select id from public.feedback_reports $$,
+  '42501',
+  null,
   'an authenticated team member cannot read feedback_reports'
 );
 select tests.logout();
 
 select tests.login_as('captain@local.test');
-select is_empty(
+select throws_ok(
   $$ select id from public.feedback_reports $$,
+  '42501',
+  null,
   'not even a captain can read feedback_reports'
 );
 select tests.logout();

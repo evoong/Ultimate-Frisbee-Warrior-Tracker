@@ -24,17 +24,25 @@ select is_empty(
 -- standings is deprecated and now has zero policies: Task 4
 -- (20260905000200_lockdown_standings.sql) dropped the last remaining one
 -- ("authenticated read" using (true)) because the table is confirmed
--- dead/unused -- see that migration for the rationale. The exclusion
--- below is now load-bearing: without it, standings (having no policy at
--- all) would fail this "every table has at least one policy" assertion
--- the same way a misconfigured table would.
+-- dead/unused -- see that migration for the rationale.
+--
+-- feedback_clusters and feedback_reports (20260906182105_feedback_triage_tables.sql)
+-- are zero-policy for a different reason: they're service-role-only, with no
+-- client access story at all, so RLS-enabled-with-no-policies plus the
+-- explicit grant revocation in 20260907201815_lockdown_feedback_triage_grants.sql
+-- is the whole lockdown -- a policy would imply some role is meant to reach
+-- these rows, and none is.
+--
+-- The exclusion below is now load-bearing: without it, these three tables
+-- (having no policy at all) would fail this "every table has at least one
+-- policy" assertion the same way a misconfigured table would.
 select is_empty(
   $$ select c.relname::text
        from pg_class c
        join pg_namespace n on n.oid = c.relnamespace
       where n.nspname = 'public'
         and c.relkind in ('r', 'p')
-        and c.relname <> 'standings'
+        and c.relname not in ('standings', 'feedback_clusters', 'feedback_reports')
         and not exists (select 1 from pg_policy p where p.polrelid = c.oid) $$,
   'every table in public has at least one policy'
 );
