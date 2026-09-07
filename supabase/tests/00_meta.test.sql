@@ -36,13 +36,19 @@ select is_empty(
 -- The exclusion below is now load-bearing: without it, these three tables
 -- (having no policy at all) would fail this "every table has at least one
 -- policy" assertion the same way a misconfigured table would.
+--
+-- platform_admins and admin_audit_log (20260907210000_platform_admins.sql) are
+-- zero-policy for the same reason: the admin console reaches them only through
+-- /api/admin/* handlers holding the service-role key, so no client role is
+-- meant to reach these rows.
 select is_empty(
   $$ select c.relname::text
        from pg_class c
        join pg_namespace n on n.oid = c.relnamespace
       where n.nspname = 'public'
         and c.relkind in ('r', 'p')
-        and c.relname not in ('standings', 'feedback_clusters', 'feedback_reports')
+        and c.relname not in ('standings', 'feedback_clusters', 'feedback_reports',
+                              'platform_admins', 'admin_audit_log')
         and not exists (select 1 from pg_policy p where p.polrelid = c.oid) $$,
   'every table in public has at least one policy'
 );
