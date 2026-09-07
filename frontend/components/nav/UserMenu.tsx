@@ -106,9 +106,16 @@ export default function UserMenu({
         </button>
       </PopoverTrigger>
 
+      {/* The rail's menu opens *upward*, not out to the right. The card sits
+          at the bottom-left corner, so a right-side popover threw the menu
+          across the page content it was supposed to leave alone; opening up
+          keeps it inside the rail's own column. `align="start"` lines its
+          left edge up with the card, and Radix still flips it if a short
+          viewport leaves no room above. The mobile trigger has nothing above
+          it, so that one keeps opening down. */}
       <PopoverContent
-        side={variant === "bar" ? "bottom" : "right"}
-        align="end"
+        side={variant === "bar" ? "bottom" : "top"}
+        align={variant === "bar" ? "end" : "start"}
         sideOffset={8}
         className="w-60 p-1.5"
       >
