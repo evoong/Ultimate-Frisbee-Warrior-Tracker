@@ -104,6 +104,7 @@ const posthogAi = new PostHog(process.env.POSTHOG_PROJECT_TOKEN!, {
 const membership = createMembershipLookup({
   supabaseUrl: process.env.SUPABASE_URL || "",
   supabaseSecretKey: process.env.SUPABASE_SECRET_KEY || "",
+  onLookupError: (err) => Sentry.captureException(err),
 });
 
 // "Allowed" means "belongs to at least one organization" (allowed_users

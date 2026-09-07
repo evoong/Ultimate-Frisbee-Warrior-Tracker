@@ -991,8 +991,11 @@ function PlayerStatsView({ tab }: { tab: 'me' | 'overview' | 'table' }) {
                   onValueChange={async id => {
                     if (id === '__none__') return
                     const ok = await claim.trigger({ playerId: Number(id) })
-                    if (ok && currentTeamId != null && user) {
-                      await link.trigger({ teamId: currentTeamId, userId: user.id })
+                    if (ok) {
+                      track('player_claim_requested', { player_id: Number(id) })
+                      if (currentTeamId != null && user) {
+                        await link.trigger({ teamId: currentTeamId, userId: user.id })
+                      }
                     }
                   }}
                   placeholder="Select your name"

@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { cn } from '../lib/shadcn/utils'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
+import { track } from '../lib/analytics'
 import type { TeamRole } from '../lib/authClient'
 import {
   useGetTeamMembers,
@@ -397,7 +398,8 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
                             <Select
                               value={m.role}
                               onValueChange={async next => {
-                                await setRole.trigger({ teamId: currentTeamId!, userId: m.user_id, role: next as TeamRole })
+                                const ok = await setRole.trigger({ teamId: currentTeamId!, userId: m.user_id, role: next as TeamRole })
+                                if (ok) track('team_member_role_updated', { team_id: currentTeamId, role: next })
                                 await members.trigger({ teamId: currentTeamId! })
                               }}
                             >
@@ -421,7 +423,8 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
                               size="icon"
                               className="size-9 shrink-0 text-muted-foreground hover:text-destructive sm:size-8 sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
                               onClick={async () => {
-                                await removeMember.trigger({ teamId: currentTeamId!, userId: m.user_id })
+                                const ok = await removeMember.trigger({ teamId: currentTeamId!, userId: m.user_id })
+                                if (ok) track('team_member_removed', { team_id: currentTeamId })
                                 await members.trigger({ teamId: currentTeamId! })
                               }}
                               aria-label={`Remove ${m.email}`}
@@ -447,7 +450,8 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
                   onSubmit={async e => {
                     e.preventDefault()
                     if (currentTeamId == null) return
-                    await invite.trigger({ teamId: currentTeamId, email: inviteEmail, role: inviteRole })
+                    const ok = await invite.trigger({ teamId: currentTeamId, email: inviteEmail, role: inviteRole })
+                    if (ok) track('team_invite_sent', { team_id: currentTeamId, role: inviteRole })
                     setInviteEmail('')
                     await invites.trigger({ teamId: currentTeamId })
                   }}
@@ -510,7 +514,8 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
                               size="sm"
                               className="h-9 shrink-0 px-2 text-xs text-muted-foreground hover:text-destructive sm:h-8"
                               onClick={async () => {
-                                await revoke.trigger({ inviteId: i.id })
+                                const ok = await revoke.trigger({ inviteId: i.id })
+                                if (ok) track('team_invite_revoked', { invite_id: i.id })
                                 if (currentTeamId != null) await invites.trigger({ teamId: currentTeamId })
                               }}
                             >
@@ -569,7 +574,10 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
                             className="h-9 shrink-0 sm:h-8"
                             onClick={async () => {
                               const ok = await approveClaim.trigger({ linkId: l.id })
-                              if (ok && currentTeamId != null) await playerLinks.trigger({ teamId: currentTeamId })
+                              if (ok) {
+                                track('player_claim_approved', { link_id: l.id })
+                                if (currentTeamId != null) await playerLinks.trigger({ teamId: currentTeamId })
+                              }
                             }}
                           >
                             <Check className="mr-1.5 size-3.5" />

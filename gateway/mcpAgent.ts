@@ -66,6 +66,7 @@ class UfwtMcpBase extends McpAgent<Env, {}, McpAuthProps> {
     const lookup = createMembershipLookup({
       supabaseUrl: this.env.SUPABASE_URL,
       supabaseSecretKey: this.env.SUPABASE_SECRET_KEY,
+      onLookupError: (err) => Sentry.captureException(err),
     })
     if ((await lookup.roleFor(userId, orgId)) === null) {
       throw new Error(`MCP: ${email} is not a member of team ${orgId}`)

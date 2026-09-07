@@ -82,7 +82,12 @@ check('resolved distinct ids for captain/editor/outsider',
 
 // --- roleFor / teamsFor against the real seeded fixture ---
 
-const lookup = createMembershipLookup({ supabaseUrl, supabaseSecretKey })
+const lookupErrors = []
+const lookup = createMembershipLookup({
+  supabaseUrl,
+  supabaseSecretKey,
+  onLookupError: (err) => lookupErrors.push(err),
+})
 
 check('captain is captain of team 1',
   await lookup.roleFor(captainId, 1) === 'captain')
@@ -106,13 +111,17 @@ check('teamsFor(outsider) returns exactly team 2 as captain',
 // would catch it: a bad key must produce HTTP 401, and the lookup must map
 // that to an empty, non-cached result rather than throwing or reading as
 // membership.
+const brokenLookupErrors = []
 const brokenLookup = createMembershipLookup({
   supabaseUrl,
   supabaseSecretKey: 'sb_secret_deliberately_invalid_key',
+  onLookupError: (err) => brokenLookupErrors.push(err),
 })
 const failClosedTeams = await brokenLookup.teamsFor(captainId)
 check('fail-closed: bad secret key -> teamsFor returns [] rather than throwing or allowing',
   Array.isArray(failClosedTeams) && failClosedTeams.length === 0)
+check('fail-closed: bad secret key -> onLookupError is called so the denial is not silent',
+  brokenLookupErrors.length === 1 && brokenLookupErrors[0] instanceof Error)
 const failClosedRole = await brokenLookup.roleFor(captainId, 1)
 check('fail-closed: bad secret key -> roleFor returns null rather than throwing or allowing',
   failClosedRole === null)
@@ -126,13 +135,17 @@ check('fail-closed: bad secret key -> roleFor returns null rather than throwing 
 // thrown fetch, this section fails: teamsFor/roleFor would reject instead
 // of resolving to [] / null, defeating the "must not throw" half of
 // fail-closed.
+const unreachableLookupErrors = []
 const unreachableLookup = createMembershipLookup({
   supabaseUrl: 'http://127.0.0.1:59999',
   supabaseSecretKey,
+  onLookupError: (err) => unreachableLookupErrors.push(err),
 })
 const unreachableTeams = await unreachableLookup.teamsFor(captainId)
 check('fail-closed: unreachable host -> teamsFor resolves to [] rather than rejecting',
   Array.isArray(unreachableTeams) && unreachableTeams.length === 0)
+check('fail-closed: unreachable host -> onLookupError is called so the denial is not silent',
+  unreachableLookupErrors.length === 1)
 const unreachableRole = await unreachableLookup.roleFor(captainId, 1)
 check('fail-closed: unreachable host -> roleFor resolves to null rather than rejecting',
   unreachableRole === null)
@@ -159,13 +172,21 @@ check('fail-closed: unreachable host -> roleFor resolves to null rather than rej
       ok: false,
       status: 500,
       json: async () => [{ team_id: 1, role: 'captain' }],
+      text: async () => 'stubbed 500 body',
     })
     // A fresh lookup, not the shared `lookup`: its cache is empty, so this
     // call cannot be served from an earlier, unstubbed response.
-    const stubbedLookup = createMembershipLookup({ supabaseUrl, supabaseSecretKey })
+    const stubbedErrors = []
+    const stubbedLookup = createMembershipLookup({
+      supabaseUrl,
+      supabaseSecretKey,
+      onLookupError: (err) => stubbedErrors.push(err),
+    })
     const stubbedTeams = await stubbedLookup.teamsFor(captainId)
     check('fail-closed: non-ok response with an array body -> teamsFor returns [] (pins the res.ok check)',
       Array.isArray(stubbedTeams) && stubbedTeams.length === 0)
+    check('fail-closed: non-ok response with an array body -> onLookupError is called',
+      stubbedErrors.length === 1)
     const stubbedRole = await stubbedLookup.roleFor(captainId, 1)
     check('fail-closed: non-ok response with an array body -> roleFor returns null (pins the res.ok check)',
       stubbedRole === null)
@@ -185,5 +206,10 @@ check('user with no memberships -> teamsFor returns []',
 const anonRole = await lookup.roleFor(anonId, 1)
 check('user with no memberships -> roleFor returns null',
   anonRole === null)
+
+// onLookupError is for lookup FAILURES, not ordinary denials -- a user
+// genuinely having no memberships must not be reported as an error.
+check('onLookupError is never called for successful lookups, including "no memberships"',
+  lookupErrors.length === 0)
 
 process.exit(failed ? 1 : 0)

@@ -14,6 +14,14 @@ export function hasAtLeast(role: TeamRole | null, required: TeamRole): boolean {
 export interface MembershipConfig {
   supabaseUrl: string
   supabaseSecretKey: string
+  // Optional: called (never awaited, never allowed to affect the fail-closed
+  // deny below) whenever a lookup fails -- network error, non-2xx response,
+  // or a malformed body. This module stays framework-agnostic on purpose
+  // (see the note on createMembershipLookup below) and reports nothing on
+  // its own; callers wire this to their own Sentry.captureException so a
+  // Supabase outage or a bad SUPABASE_SECRET_KEY doesn't silently read as
+  // "everyone denied" with zero signal anywhere.
+  onLookupError?: (err: unknown) => void
 }
 
 // Named TeamRoleRow, not TeamMembership: auth-handlers.ts exports a
@@ -75,7 +83,10 @@ export function createMembershipLookup(config: MembershipConfig): MembershipLook
           Authorization: `Bearer ${config.supabaseSecretKey}`,
         },
       })
-      if (!res.ok) return []
+      if (!res.ok) {
+        config.onLookupError?.(new Error(`membership lookup failed: ${res.status} ${await res.text().catch(() => '')}`))
+        return []
+      }
       const rows = (await res.json()) as TeamRoleRow[]
       const safe = Array.isArray(rows) ? rows : []
       // Unlike the !res.ok and catch paths above, a 2xx response with an
@@ -83,9 +94,13 @@ export function createMembershipLookup(config: MembershipConfig): MembershipLook
       // asymmetry is intentional -- caching a deny is safe -- not a bug to
       // "fix" into an uncached path, which would reintroduce a lookup
       // storm during an outage that keeps returning malformed 2xx bodies.
+      if (!Array.isArray(rows)) {
+        config.onLookupError?.(new Error('membership lookup returned a non-array body'))
+      }
       cache.set(userId, { at: Date.now(), rows: safe })
       return safe
-    } catch {
+    } catch (err) {
+      config.onLookupError?.(err)
       return []
     }
   }

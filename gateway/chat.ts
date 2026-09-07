@@ -1,6 +1,7 @@
 import { GoogleGenAI } from '@posthog/ai/gemini'
 import type { Content } from '@google/genai'
 import { PostHog } from 'posthog-node'
+import * as Sentry from '@sentry/cloudflare'
 import type { GatewayConfig } from './index.js'
 import { getVaultSecret } from './secrets.js'
 import { cookieNames, parseCookies } from './cookies.js'
@@ -87,6 +88,7 @@ async function requireTeamMember(
   const lookup = createMembershipLookup({
     supabaseUrl: config.supabaseUrl,
     supabaseSecretKey: config.supabaseSecretKey,
+    onLookupError: (err) => Sentry.captureException(err),
   })
   const role = await lookup.roleFor(claims.sub, organizationId)
   if (!hasAtLeast(role, required)) {

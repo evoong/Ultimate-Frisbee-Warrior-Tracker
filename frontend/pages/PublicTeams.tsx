@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { pathForTab } from '../lib/nav'
+import { track } from '../lib/analytics'
 
 type PublicTeam = { id: number; name: string; photo_url: string | null }
 
@@ -33,6 +34,7 @@ export default function PublicTeams() {
   // leaving the user staring at the same list.
   function selectTeam(teamId: number) {
     switchTeam(teamId)
+    track('public_team_selected', { team_id: teamId })
     navigate(pathForTab('schedule'))
   }
 

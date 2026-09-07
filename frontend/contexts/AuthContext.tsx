@@ -144,6 +144,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loginAsGuest = useCallback(async () => {
     await authClient.loginAsGuest()
     await refreshSessionState()
+    track('user_logged_in', { via: 'guest' })
   }, [refreshSessionState])
 
   const logout = useCallback(async () => {

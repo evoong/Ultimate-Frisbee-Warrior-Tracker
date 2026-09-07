@@ -109,6 +109,7 @@ async function handleAppRequest(request: Request, env: Env, ctx: ExecutionContex
         const lookup = createMembershipLookup({
           supabaseUrl: env.SUPABASE_URL,
           supabaseSecretKey: env.SUPABASE_SECRET_KEY,
+          onLookupError: (err) => Sentry.captureException(err),
         });
         const teams = await lookup.teamsFor(claims.sub);
         if (teams.length === 0) {
