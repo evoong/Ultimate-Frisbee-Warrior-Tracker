@@ -254,7 +254,7 @@ export default function App() {
           setActiveTab={setActiveTab}
           theme={theme}
           toggleTheme={toggleTheme}
-          userEmail={user.email ?? 'Guest'}
+          userEmail={user.email || 'Guest'}
           logout={logout}
           teams={teams}
           currentTeamId={currentTeamId}
@@ -323,7 +323,7 @@ export default function App() {
               onClick={() => logout()}
               className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground"
               aria-label="Sign out"
-              title={user.email ?? 'Guest'}
+              title={user.email || 'Guest'}
             >
               <LogOut className="w-5 h-5" />
             </button>

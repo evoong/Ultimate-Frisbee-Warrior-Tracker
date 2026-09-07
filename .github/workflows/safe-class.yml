@@ -1,0 +1,117 @@
+name: Safe class
+
+# Gates auto-merge on agent-authored PRs (see .github/workflows/feedback-agent.yml,
+# which opens branches named agent/issue-<n>). Two independent axes decide the
+# outcome:
+#
+#   1. What kind of issue does this PR fix -- bug or feature? Read from the
+#      linked issue's OWN labels via `gh issue view`, never from the PR body.
+#   2. Does the diff touch anything sensitive -- migrations, gateway, server,
+#      or workflow files? Read from `git diff --name-only` against the base
+#      branch, never from the PR's description of itself.
+#
+# Bug PRs auto-merge on green CI regardless of file class, because a bug fix
+# that's small enough for the agent to attempt is assumed low-risk and the
+# whole point of auto-dispatch is fast turnaround. Feature PRs only auto-merge
+# when the diff is safe-class, because a feature PR touching auth, migrations,
+# or CI is exactly the kind of change a fully-hijacked agent would use to
+# smuggle in a persistent backdoor -- and it could get there by fabricating a
+# PR description that lies about what it touched. Reading the actual diff
+# (not the PR's claims about the diff) is the control that closes that hole.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+jobs:
+  classify-and-merge:
+    if: startsWith(github.head_ref, 'agent/issue-')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The classification reads the DIFF, never the agent's description of
+      # the diff. A hijacked agent cannot talk its way past this.
+      - name: Classify the diff
+        id: classify
+        run: |
+          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          echo "$FILES"
+          if echo "$FILES" | grep -Eq '^(supabase/migrations/|supabase-migrations/|gateway/|server/|\.github/workflows/)'; then
+            echo "safe=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "safe=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Which issue this PR fixes decides the policy: bug PRs auto-merge on
+      # green CI regardless of class; feature PRs only when the diff is safe.
+      - name: Determine the linked issue's type
+        id: kind
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ISSUE=$(echo "${{ github.head_ref }}" | grep -oE '^agent/issue-[0-9]+' | grep -oE '[0-9]+$')
+          if [ -z "$ISSUE" ]; then
+            echo "Branch '${{ github.head_ref }}' does not start with agent/issue-<digits>; aborting." >&2
+            exit 1
+          fi
+          echo "issue=$ISSUE" >> "$GITHUB_OUTPUT"
+          IS_BUG=$(gh issue view "$ISSUE" --json labels -q '[.labels[].name] | any(. == "bug")')
+          if [ "$IS_BUG" = "true" ]; then echo "type=bug" >> "$GITHUB_OUTPUT";
+          else echo "type=feature" >> "$GITHUB_OUTPUT"; fi
+
+      # PARTIAL MITIGATION, not full closure -- both fields checked here are
+      # still agent-authored. The branch name is chosen by the same agent
+      # prompt that writes the PR body, so a fully hijacked agent could in
+      # principle set both to reference a bug-labelled issue while actually
+      # implementing something else. What this closes is the *cheaper*
+      # attack: an agent (or a bug in the dispatch prompt) naming the branch
+      # after a different issue than the one it actually worked -- e.g. to
+      # get `type=bug` and skip the safe-class file check on a diff that
+      # touches gateway/server/migrations. Requiring branch and PR body to
+      # independently agree raises the bar from "trust one agent-authored
+      # field" to "two independently-agent-authored fields must agree",
+      # which is not nothing, but full closure would require the dispatching
+      # side (server/index.ts's dispatchAgent, or the agent-approved label
+      # path) to record a cluster->issue mapping this workflow could verify
+      # against an authority outside the PR itself, rather than trusting
+      # anything derived from the PR.
+      - name: Cross-check the branch-derived issue against the PR body
+        id: crosscheck
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          BODY_ISSUE=$(printf '%s' "$PR_BODY" | grep -oE '^Fixes #[0-9]+' | head -1 | grep -oE '[0-9]+')
+          if [ "$BODY_ISSUE" = "${{ steps.kind.outputs.issue }}" ]; then
+            echo "match=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "match=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Enable auto-merge
+        if: steps.crosscheck.outputs.match == 'true' && (steps.kind.outputs.type == 'bug' || steps.classify.outputs.safe == 'true')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr merge --auto --squash "${{ github.event.pull_request.number }}"
+
+      - name: Explain why auto-merge was withheld due to a class mismatch
+        if: steps.crosscheck.outputs.match == 'true' && steps.kind.outputs.type != 'bug' && steps.classify.outputs.safe != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment "${{ github.event.pull_request.number }}" --body \
+            "Auto-merge withheld: this is a feature PR whose diff touches migrations, gateway, server, or workflows. A maintainer must review and merge it."
+
+      - name: Explain why auto-merge was withheld due to an issue-number mismatch
+        if: steps.crosscheck.outputs.match != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment "${{ github.event.pull_request.number }}" --body \
+            "Auto-merge withheld: the issue number implied by the branch name (agent/issue-${{ steps.kind.outputs.issue }}) does not match the issue referenced in the PR body ('Fixes #<n>'). A maintainer must review and merge this by hand."

@@ -17,6 +17,10 @@ import { CHAT_FUNCTION_DECLARATIONS, WRITE_FUNCTIONS, callChatFunction, type Act
 import { createMembershipLookup, hasAtLeast, type TeamRole } from "../gateway/membership.js";
 import { parseCookies, cookieNames } from "../gateway/cookies.js";
 import { verifyAccessToken } from "../gateway/jwt.js";
+import { decideEscalation, DISPATCH_THRESHOLD, CONFLICT_MARGIN, type TriageOutcome, type VariantTally } from "../gateway/feedbackTriage.js";
+import { insertReport, listOpenClusters, attachReportToCluster, createCluster, tallyFor, setClusterStatus } from "../gateway/feedbackStore.js";
+import { judgeReport } from "../gateway/feedbackJudge.js";
+import { sbGet } from "../gateway/supabaseRest.js";
 import { track, trackError, shutdown } from "./lib/posthog.js";
 
 const app = express();
@@ -656,7 +660,244 @@ const FEEDBACK_LABELS: Record<"bug" | "feature", string> = {
   feature: "enhancement",
 };
 
-app.post("/api/feedback", async (req, res) => {
+// Memory storage, not the disk-based `upload` above: this file never needs
+// to be served from our own origin, only re-uploaded to Supabase Storage,
+// and Vercel's /tmp doesn't survive past the request anyway.
+// An explicit allowlist, not `startsWith("image/")` -- that would also
+// accept image/svg+xml, which can embed script content. Confined to the
+// Supabase storage origin either way (not this app's), but excluding it
+// costs nothing.
+const FEEDBACK_ATTACHMENT_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+]);
+
+const feedbackUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (FEEDBACK_ATTACHMENT_MIME_TYPES.has(file.mimetype)) cb(null, true);
+    else cb(new Error("Only PNG, JPEG, WebP, or GIF images are allowed"));
+  },
+});
+
+// A signed URL, not a public one: feedback-attachments is a private bucket
+// (see its migration), so this is the only way the screenshot embedded in
+// the GitHub issue body is ever fetchable -- GitHub's own servers render
+// that markdown with no session of ours to authenticate with. Expiry is
+// long (5 years) because there's no later moment to refresh this URL from;
+// once the issue is filed, this is the only copy of the link that will
+// ever exist.
+const FEEDBACK_ATTACHMENT_URL_TTL_SECONDS = 60 * 60 * 24 * 365 * 5;
+
+// Only an established team member's report can escalate anything. Guests
+// are already rejected with a 403 earlier in the /api/feedback handler
+// (claims.isAnonymous), so this function is never reached for them -- its
+// real job is excluding signed-in users who belong to no team, since three
+// throwaway accounts on zero teams must not be able to dispatch an agent at
+// production code. See the spec's "Abuse surface" section.
+async function reportCountsTowardThreshold(userId: string): Promise<boolean> {
+  try {
+    const teams = await membership.teamsFor(userId);
+    return teams.length > 0;
+  } catch (err) {
+    // Fail closed (a legitimate report just won't count toward escalation
+    // this time), but don't fail silently -- without this, a transient
+    // membership-lookup failure is invisible forever.
+    Sentry.captureException(err);
+    return false;
+  }
+}
+
+async function createGithubIssue(token: string, repo: string, issue: {
+  title: string; body: string; labels: string[];
+}): Promise<{ number: number; html_url: string }> {
+  const res = await fetch(`https://api.github.com/repos/${repo}/issues`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(issue),
+  });
+  if (!res.ok) throw new Error(`GitHub issue creation failed (${res.status}): ${await res.text().catch(() => "")}`);
+  return res.json();
+}
+
+async function addGithubComment(token: string, repo: string, issueNumber: number, body: string): Promise<void> {
+  const res = await fetch(`https://api.github.com/repos/${repo}/issues/${issueNumber}/comments`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ body }),
+  });
+  if (!res.ok) throw new Error(`GitHub comment failed (${res.status}): ${await res.text().catch(() => "")}`);
+}
+
+// The spec requires the issue body to carry a live tally, not just a trail of
+// comments -- "how many people hit this" must be readable at a glance from
+// the issue itself. The line is delimited so it can be rewritten in place on
+// every new report rather than appended to.
+const TALLY_START = "<!-- triage-tally -->";
+const TALLY_END = "<!-- /triage-tally -->";
+
+// A description containing either marker verbatim would make the
+// tally-rewrite regex in updateIssueTally match from the user's injected
+// marker through to the real one, silently corrupting the issue body on the
+// next rewrite. Strip both markers from any user-submitted text before it
+// flows into an issue body or comment -- not a security issue, a
+// content-integrity one.
+function stripTallyMarkers(text: string): string {
+  return text.split(TALLY_START).join("").split(TALLY_END).join("");
+}
+
+async function updateIssueTally(
+  token: string,
+  repo: string,
+  issueNumber: number,
+  tally: VariantTally[]
+): Promise<void> {
+  const total = tally.reduce((sum, t) => sum + t.reporters, 0);
+  const perVariant = tally
+    .filter(t => t.label !== null)
+    .map(t => `\n  - \`${t.label}\`: ${t.reporters}`)
+    .join("");
+  const block = `${TALLY_START}\n**Distinct reporters: ${total}**${perVariant}\n${TALLY_END}`;
+
+  const current = await fetch(`https://api.github.com/repos/${repo}/issues/${issueNumber}`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" },
+  });
+  if (!current.ok) return;
+  const body: string = (await current.json()).body ?? "";
+  const next = body.includes(TALLY_START)
+    ? body.replace(new RegExp(`${TALLY_START}[\\s\\S]*?${TALLY_END}`), block)
+    : `${body}\n\n${block}`;
+
+  await fetch(`https://api.github.com/repos/${repo}/issues/${issueNumber}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ body: next }),
+  });
+}
+
+async function addGithubLabel(token: string, repo: string, issueNumber: number, label: string): Promise<void> {
+  await fetch(`https://api.github.com/repos/${repo}/issues/${issueNumber}/labels`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ labels: [label] }),
+  });
+}
+
+// Translates a TriageOutcome into cluster status, GitHub labels, and (for a
+// bug clearing the threshold) the repository_dispatch that starts an agent
+// (see dispatchAgent below, and .github/workflows/feedback-agent.yml).
+//
+// `currentStatus` is the idempotency guard. decideEscalation is a pure
+// function of (type, tallies) with no status awareness -- by design, it
+// stays that way -- so it recomputes the same non-hold outcome for every
+// subsequent report once a cluster has crossed a threshold (e.g. a bug
+// already at 3 reporters still evaluates to `dispatch` at 4, 5, 6...).
+// Without this guard, applyOutcome would re-run its side effects (comment,
+// label, dispatch/repository_dispatch) on every single one of those later
+// reports: a dispatched bug cluster would fire ANOTHER agent run and
+// another auto-merging PR attempt per new reporter, and a feature cluster
+// sitting in awaiting_approval or decision_needed would get a duplicate
+// "please approve" / "pick a variant" comment each time. Only a cluster
+// still `open` should have this outcome's side effects applied -- once it
+// has moved to any other status (awaiting_approval, decision_needed,
+// dispatched, implemented), the escalation action for this cycle has
+// already happened and must not fire again. New reporters are still
+// recorded and tallied by the caller regardless; only the side-effecting
+// action here is suppressed.
+async function applyOutcome(
+  config: ActionsConfig,
+  githubToken: string,
+  repo: string,
+  clusterId: number,
+  issueNumber: number,
+  outcome: TriageOutcome,
+  currentStatus: string
+): Promise<void> {
+  if (outcome.action === "hold") return;
+  if (currentStatus !== "open") return;
+
+  if (outcome.action === "await_approval") {
+    await setClusterStatus(config, clusterId, "awaiting_approval", outcome.variantLabel);
+    await addGithubLabel(githubToken, repo, issueNumber, "awaiting-approval");
+    await addGithubComment(githubToken, repo, issueNumber,
+      `This has reached ${DISPATCH_THRESHOLD} distinct reporters. It is a feature request, so no agent runs until a maintainer adds the \`agent-approved\` label.`);
+    return;
+  }
+
+  if (outcome.action === "decision_needed") {
+    await setClusterStatus(config, clusterId, "decision_needed");
+    await addGithubLabel(githubToken, repo, issueNumber, "decision-needed");
+    const lines = outcome.tally.map(t => `- \`${t.label}\`: ${t.reporters} reporter(s)`).join("\n");
+    await addGithubComment(githubToken, repo, issueNumber,
+      `Reports here want incompatible outcomes and no option has a decisive lead (a winner needs ${CONFLICT_MARGIN}x the runner-up):\n\n${lines}\n\nAdd \`agent-approved\` to build the leading option, or say which option to build in a comment first.`);
+    return;
+  }
+
+  await setClusterStatus(config, clusterId, "dispatched", outcome.variantLabel);
+  await dispatchAgent(githubToken, repo, issueNumber);
+}
+
+// Starts the feedback-agent workflow for a cluster that cleared the bug
+// threshold (or, via the workflow's human path, was approved by a
+// maintainer). This POSTs a repository_dispatch event; the event_type
+// "feedback-agent" must match the `types` filter on the
+// `repository_dispatch` trigger in .github/workflows/feedback-agent.yml, and
+// client_payload.issue_number must match the field that workflow reads
+// (`github.event.client_payload.issue_number`) -- a mismatch on either side
+// means the dispatch silently does nothing.
+//
+// Failure here must not fail the request that triggered it -- applyOutcome
+// has already marked the cluster "dispatched" by the time this is called, so
+// on failure we report to Sentry (already imported in this file) rather than
+// throw. That covers both failure modes: a non-ok HTTP response from GitHub,
+// and the fetch() promise itself rejecting (DNS failure, network timeout,
+// TLS error, connection abort) -- neither is allowed to propagate out of
+// this function. A maintainer can always re-run the workflow from the issue
+// by hand (adding agent-approved) if the automatic dispatch never landed.
+async function dispatchAgent(token: string, repo: string, issueNumber: number): Promise<void> {
+  try {
+    const res = await fetch(`https://api.github.com/repos/${repo}/dispatches`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        event_type: "feedback-agent",
+        client_payload: { issue_number: issueNumber },
+      }),
+    });
+    if (!res.ok) {
+      Sentry.captureException(
+        new Error(`Agent dispatch failed (${res.status}): ${await res.text().catch(() => "")}`)
+      );
+    }
+  } catch (err) {
+    Sentry.captureException(err);
+  }
+}
+
+app.post("/api/feedback", feedbackUpload.single("photo"), async (req, res) => {
   let distinctId = "unknown";
   try {
     const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
@@ -679,33 +920,188 @@ app.post("/api/feedback", async (req, res) => {
     if (!githubToken) return res.status(500).json({ error: "GitHub integration not configured" });
     const repo = process.env.GITHUB_REPO || "evoong/Ultimate-Frisbee-Warrior-Tracker";
 
-    const ghRes = await fetch(`https://api.github.com/repos/${repo}/issues`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${githubToken}`,
-        Accept: "application/vnd.github+json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        title: title.trim().slice(0, 200),
-        body: `${description.trim()}\n\n---\nReported by ${claims.email ?? claims.sub} via in-app feedback form.`,
-        labels: [FEEDBACK_LABELS[type], "customer-reported"],
-      }),
-    });
-    if (!ghRes.ok) {
-      const detail = await ghRes.text().catch(() => "");
-      throw new Error(`GitHub issue creation failed (${ghRes.status}): ${detail}`);
+    let attachmentMarkdown = "";
+    let attachmentPath: string | null = null;
+    const photo = req.file;
+    if (photo) {
+      const ext = path.extname(photo.originalname).toLowerCase() || ".jpg";
+      const objectPath = `${claims.sub}/${Date.now()}${ext}`;
+      const { error: uploadError } = await supabase.storage
+        .from("feedback-attachments")
+        .upload(objectPath, photo.buffer, { contentType: photo.mimetype });
+      if (uploadError) throw new Error(`Attachment upload failed: ${uploadError.message}`);
+      const { data: signed, error: signError } = await supabase.storage
+        .from("feedback-attachments")
+        .createSignedUrl(objectPath, FEEDBACK_ATTACHMENT_URL_TTL_SECONDS);
+      if (signError || !signed) throw new Error(`Attachment signing failed: ${signError?.message ?? "no URL returned"}`);
+      attachmentMarkdown = `\n\n![screenshot](${signed.signedUrl})`;
+      attachmentPath = objectPath;
     }
-    const issue = await ghRes.json();
 
-    await track(distinctId, "feedback_submitted", { type });
-    res.json({ url: issue.html_url });
+    const actionsConfig: ActionsConfig = {
+      supabaseUrl: process.env.SUPABASE_URL || "",
+      supabaseSecretKey: process.env.SUPABASE_SECRET_KEY || "",
+    };
+
+    // Persist first, decide second. If the judge or GitHub call fails below,
+    // the report survives and the daily reconciliation pass picks it up --
+    // losing a user's bug report to an LLM timeout is the worst outcome
+    // available here.
+    const stored = await insertReport(actionsConfig, {
+      reporterUserId: claims.sub,
+      type,
+      title: title.trim(),
+      description: description.trim(),
+      photoPath: attachmentPath,
+      countsTowardThreshold: await reportCountsTowardThreshold(claims.sub),
+    });
+
+    const geminiApiKey = await getVaultSecret(vaultConfig, "gemini_api_key", process.env.GEMINI_API_KEY);
+    const geminiModel = (await getVaultSecret(vaultConfig, "gemini_model", process.env.GEMINI_MODEL)) ?? DEFAULT_GEMINI_MODEL;
+    if (!geminiApiKey) return res.status(500).json({ error: "Gemini API key not configured" });
+
+    const clusters = await listOpenClusters(actionsConfig);
+    const verdict = await judgeReport(
+      geminiApiKey,
+      geminiModel,
+      { type, title: title.trim(), description: description.trim() },
+      clusters
+    );
+
+    let clusterId: number;
+    let issueNumber: number;
+    let issueUrl: string;
+    let clusterStatus: string;
+    let alreadyTracked = false;
+    const cleanDescription = stripTallyMarkers(description.trim());
+
+    if (verdict.relation === "new") {
+      const issue = await createGithubIssue(githubToken, repo, {
+        title: verdict.suggestedTitle.slice(0, 200),
+        body: `${cleanDescription}${attachmentMarkdown}\n\n---\nReported by ${claims.email ?? claims.sub} via in-app feedback form.`,
+        labels: [FEEDBACK_LABELS[type], "customer-reported"],
+      });
+      issueNumber = issue.number;
+      issueUrl = issue.html_url;
+      clusterId = await createCluster(actionsConfig, {
+        type,
+        title: verdict.suggestedTitle,
+        summary: verdict.suggestedSummary,
+        githubIssueNumber: issueNumber,
+      });
+      // A cluster is always 'open' the instant it's created, so the first
+      // report's own escalation check below runs exactly as it always has.
+      clusterStatus = "open";
+    } else {
+      const matched = clusters.find(c => c.id === verdict.matchClusterId)!;
+      clusterId = matched.id;
+      issueNumber = matched.github_issue_number!;
+      issueUrl = `https://github.com/${repo}/issues/${issueNumber}`;
+      clusterStatus = matched.status;
+      alreadyTracked = true;
+      await addGithubComment(githubToken, repo, issueNumber,
+        `**Another report of this** (${claims.email ?? claims.sub}):\n\n> ${cleanDescription.replace(/\n/g, "\n> ")}${attachmentMarkdown}`);
+    }
+
+    await attachReportToCluster(actionsConfig, stored.id, clusterId, verdict.variantLabel);
+
+    const tally = await tallyFor(actionsConfig, clusterId);
+    const reportCount = tally.reduce((sum, t) => sum + t.reporters, 0);
+    await updateIssueTally(githubToken, repo, issueNumber, tally);
+    const outcome = decideEscalation(type, tally);
+    await applyOutcome(actionsConfig, githubToken, repo, clusterId, issueNumber, outcome, clusterStatus);
+
+    await track(distinctId, "feedback_submitted", { type, hasPhoto: !!photo, alreadyTracked });
+    res.json({ url: issueUrl, alreadyTracked, reportCount });
   } catch (err: unknown) {
     await trackError(distinctId, err);
     Sentry.captureException(err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
+
+// Reports whose judge or GitHub call failed at submit time are stored with a
+// null cluster_id. Nothing else would ever pick them up, so the daily cron
+// retries them through the same path a live submission takes. Bounded at 50
+// per run: this is a cleanup pass, not a batch importer, and an unbounded
+// loop here would be an unbounded Gemini bill.
+async function reconcileOrphanReports(
+  config: ActionsConfig,
+  githubToken: string,
+  repo: string,
+  geminiApiKey: string,
+  geminiModel: string
+): Promise<{ attached: number }> {
+  // Mirror the /api/feedback guard: judgeReport falls back to relation:
+  // 'new' for every orphan when the Gemini key is empty, and each fallback
+  // files a real GitHub issue -- up to 50 duplicate issues in one cron run
+  // if this ran unguarded. Bail out (and say so loudly, since a cron
+  // failure here is otherwise invisible) rather than let that happen.
+  if (!githubToken || !geminiApiKey) {
+    Sentry.captureMessage("reconcileOrphanReports skipped: missing github_token or gemini_api_key", "warning");
+    return { attached: 0 };
+  }
+  const orphans = await sbGet(
+    config,
+    "/feedback_reports?select=id,type,title,description&cluster_id=is.null&order=created_at.asc&limit=50"
+  );
+  let attached = 0;
+  for (const orphan of orphans ?? []) {
+    // Re-fetched every iteration (rather than once up front) so a cluster
+    // created earlier in this same loop -- e.g. two orphans that both turn
+    // out to be the same new bug -- is visible to the next orphan's judge
+    // call instead of spawning a duplicate GitHub issue.
+    const clusters = await listOpenClusters(config);
+    const verdict = await judgeReport(geminiApiKey, geminiModel, orphan, clusters);
+    const cleanDescription = stripTallyMarkers(String(orphan.description ?? ""));
+
+    let clusterId: number;
+    let issueNumber: number;
+    let clusterStatus: string;
+
+    if (verdict.relation === "new") {
+      const issue = await createGithubIssue(githubToken, repo, {
+        title: verdict.suggestedTitle.slice(0, 200),
+        body: `${cleanDescription}\n\n---\nRecovered from a failed submission.`,
+        labels: [FEEDBACK_LABELS[orphan.type as "bug" | "feature"], "customer-reported"],
+      });
+      issueNumber = issue.number;
+      clusterId = await createCluster(config, {
+        type: orphan.type,
+        title: verdict.suggestedTitle,
+        summary: verdict.suggestedSummary,
+        githubIssueNumber: issue.number,
+      });
+      clusterStatus = "open";
+      await attachReportToCluster(config, orphan.id, clusterId, verdict.variantLabel);
+    } else {
+      const matched = clusters.find(c => c.id === verdict.matchClusterId)!;
+      clusterId = matched.id;
+      issueNumber = matched.github_issue_number!;
+      clusterStatus = matched.status;
+      await attachReportToCluster(config, orphan.id, clusterId, verdict.variantLabel);
+      // Mirrors the live-submission "same"/"conflicting_variant" branch: a
+      // recovered report matched to an existing cluster otherwise leaves no
+      // trace anywhere a maintainer or the dispatched agent would see it.
+      // No attachmentMarkdown here -- orphan reconciliation has no photo
+      // data to work with, just the description text.
+      await addGithubComment(githubToken, repo, issueNumber,
+        `**Another report of this** (recovered from a failed submission):\n\n> ${cleanDescription.replace(/\n/g, "\n> ")}`);
+    }
+
+    // Run the same tally/escalate sequence the live submission path runs --
+    // otherwise a cluster that only reaches the dispatch threshold via a
+    // recovered report never dispatches until some unrelated later live
+    // submission happens to arrive.
+    const tally = await tallyFor(config, clusterId);
+    await updateIssueTally(githubToken, repo, issueNumber, tally);
+    const outcome = decideEscalation(orphan.type as "bug" | "feature", tally);
+    await applyOutcome(config, githubToken, repo, clusterId, issueNumber, outcome, clusterStatus);
+
+    attached++;
+  }
+  return { attached };
+}
 
 app.get("/api/cron/sync-jam", async (req, res) => {
   const cronSecret = process.env.CRON_SECRET;
@@ -718,8 +1114,22 @@ app.get("/api/cron/sync-jam", async (req, res) => {
       () => runJamSync(jamSyncConfig()),
       JAM_SYNC_MONITOR_CONFIG
     );
+    // Rides along on the existing daily cron rather than introducing a
+    // second schedule. A failure here must not fail the jam sync it rides
+    // with -- the .catch keeps this isolated and just reports zero attached.
+    const reconciled = await reconcileOrphanReports(
+      { supabaseUrl: process.env.SUPABASE_URL || "", supabaseSecretKey: process.env.SUPABASE_SECRET_KEY || "" },
+      (await getVaultSecret(vaultConfig, "github_token", process.env.GITHUB_TOKEN)) ?? "",
+      process.env.GITHUB_REPO || "evoong/Ultimate-Frisbee-Warrior-Tracker",
+      (await getVaultSecret(vaultConfig, "gemini_api_key", process.env.GEMINI_API_KEY)) ?? "",
+      (await getVaultSecret(vaultConfig, "gemini_model", process.env.GEMINI_MODEL)) ?? DEFAULT_GEMINI_MODEL
+    ).catch(err => {
+      // A failed cleanup pass must not fail the jam sync it rides along with.
+      Sentry.captureException(err);
+      return { attached: 0 };
+    });
     await track("cron", "jam_sync_triggered", { via: "cron" });
-    res.json(result);
+    res.json({ ...result, reconciled });
   } catch (err: unknown) {
     await trackError("cron", err);
     Sentry.captureException(err);

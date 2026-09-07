@@ -31,6 +31,66 @@ jobs:
       - name: Run gateway authorization tests
         run: npm run test:gateway:offline
 
+      # feedbackStore.test.mjs and feedbackJudge.test.mjs need no database --
+      # same as the suites above -- but were previously only wired into
+      # test:triage, which no CI job invoked. This is that hardened suite's
+      # only invocation in CI.
+      - name: Run the feedback triage test suite
+        run: npm run test:triage
+
       # Integration tests are not run in CI. Use npm run db:test for local pgTAP
       # suite testing. A future CI job to stand up the local Supabase stack for
       # testing is out of scope for this fix.
+
+  # The migration + RLS suites the previous CI comment deliberately excluded.
+  # They are no longer optional: docs/superpowers/specs/2026-09-06-feedback-triage-pipeline-design.md
+  # permits agent-authored bug PRs to auto-merge changes to migrations and
+  # gateway auth, and this job is the only thing that inspects those.
+  database-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Generate a local JWT signing key
+        run: node scripts/gen-local-signing-key.mjs
+
+      - name: Start the local Supabase stack
+        run: supabase start
+
+      - name: Apply migrations from the baseline
+        run: supabase db reset --no-seed
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Write .env.local from the running stack
+        run: |
+          {
+            echo "SUPABASE_URL=$(supabase status -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["API_URL"])')"
+            echo "SUPABASE_SECRET_KEY=$(supabase status -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["SERVICE_ROLE_KEY"])')"
+            echo "SUPABASE_PUBLISHABLE_KEY=$(supabase status -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["ANON_KEY"])')"
+          } > .env.local
+
+      - name: Seed test identities and memberships
+        run: npm run db:seed:users
+
+      # Must run after seeding: pgTAP tests using tests.login_as(...) depend
+      # on auth.users rows that only scripts/seed-local-users.mjs creates --
+      # supabase/seed.sql has none, and `db reset --no-seed` above skips it
+      # regardless. Running this before seeding made every such test (17_
+      # feedback_triage.test.sql included) fail for lack of the identity, not
+      # for any real defect -- a permanently red job either blocks all merges
+      # or gets stripped from branch protection, exactly the outcome this job
+      # exists to prevent for agent-authored PRs.
+      - name: Run the pgTAP suite
+        run: supabase test db
+
+      # The full suite, not test:gateway:offline -- membership.test.mjs needs
+      # the live database this job now has.
+      - name: Run the full gateway suite
+        run: npm run test:gateway
