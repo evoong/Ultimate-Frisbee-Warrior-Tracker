@@ -60,6 +60,38 @@ check('thrown fetch yields null', await createAdminLookup(CONFIG).roleFor('u1') 
   check('a reported error still denies', role === null)
 }
 
+// onLookupError fires on a !res.ok response too, and the result still denies.
+{
+  let seen = null
+  stub(() => new Response('nope', { status: 500 }))
+  const lookup = createAdminLookup({ ...CONFIG, onLookupError: e => { seen = e } })
+  const role = await lookup.roleFor('u1')
+  check('onLookupError fires on non-2xx', seen instanceof Error)
+  check('a non-2xx response still denies', role === null)
+}
+
+// A malformed 2xx body (parses but isn't an array) must still report via
+// onLookupError -- silently swallowing this would hide a schema mismatch or
+// backend bug behind an ordinary-looking denial.
+{
+  let seen = null
+  stub(() => ok({}))
+  const lookup = createAdminLookup({ ...CONFIG, onLookupError: e => { seen = e } })
+  const role = await lookup.roleFor('u1')
+  check('onLookupError fires on a non-array 2xx body', seen instanceof Error)
+  check('a non-array 2xx body still denies', role === null)
+}
+
+// ...and unlike the !res.ok/thrown-fetch paths, that malformed-2xx deny IS
+// cached for the full TTL: one fetch covers two calls on the same instance.
+{
+  const calls = stub(() => ok('nope'))
+  const lookup = createAdminLookup(CONFIG)
+  await lookup.roleFor('u1')
+  await lookup.roleFor('u1')
+  check('malformed-2xx deny is cached', calls.length === 1)
+}
+
 // A successful result is cached: one fetch for two calls on the same instance.
 {
   const calls = stub(() => ok([{ role: 'readonly' }]))

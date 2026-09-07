@@ -72,6 +72,14 @@ export function createAdminLookup(config: AdminLookupConfig): AdminLookup {
           return null
         }
         const rows = await res.json()
+        // Unlike the !res.ok and catch paths above, a 2xx response with an
+        // unexpected (non-array) body IS cached for the full TTL. That
+        // asymmetry is intentional -- caching a deny is safe -- not a bug to
+        // "fix" into an uncached path, which would reintroduce a lookup
+        // storm during an outage that keeps returning malformed 2xx bodies.
+        if (!Array.isArray(rows)) {
+          config.onLookupError?.(new Error('platform_admins lookup returned a non-array body'))
+        }
         const role = Array.isArray(rows) && rows.length > 0 ? rows[0]?.role : null
         // An unrecognized role string is not trusted through: a row added by
         // hand with a typo must deny, not crash a rank comparison later.
