@@ -35,20 +35,30 @@
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 217.2 91.2% 59.8%;
 
-    /* Nav accent. The global palette has no accent colour at all -- --accent
-       is a grey and --primary is just black -- which is why the sidebar's
-       active item read as a flat fill with nothing to anchor the eye. This
-       is the same chartreuse the schedule ledger uses for "this row is
+    /* Nav accent -- a deep olive. The global palette has no accent colour at
+       all (--accent is a grey, --primary is just black), which is why the
+       sidebar's active item read as a flat fill with nothing to anchor the
+       eye. This is the same olive the schedule ledger uses for "this row is
        active" (--sch-accent in components/schedule/schedule-theme.css), so
        one colour keeps meaning one thing across the app instead of the nav
-       inventing a second accent.
-       --nav-accent is a *shape* colour (the 3px active rail, the brand
-       tile); --nav-accent-ink is the text/glyph-safe variant, dark enough to
-       read as an icon on a pale ground; --nav-accent-on is what sits on top
-       of a filled chartreuse tile and stays near-black in both themes. */
-    --nav-accent: 74 78% 42%;
-    --nav-accent-ink: 78 88% 25%;
-    --nav-accent-on: 78 88% 12%;
+       inventing a second accent. Change one and change the other.
+
+       Four roles, and they are not interchangeable:
+       --nav-accent       solid shapes -- the 3px active rail, the bottom-nav
+                          bar, a filled monogram tile. 5.3:1 on the sidebar.
+       --nav-accent-ink   glyphs and text on a pale ground (active icon, the
+                          current-team check). Deeper still, 6.8:1 on white.
+       --nav-accent-on    what sits *on* a filled tile. In light the tile is
+                          dark, so this is near-white -- the opposite of the
+                          dark theme, where the tile is a mid olive.
+       --nav-accent-wash  the tint source, used only at low alpha. A dark
+                          olive at 14% goes grey; this is lighter and more
+                          saturated so the wash keeps its colour. Never draw
+                          a solid shape with it. */
+    --nav-accent: 82 42% 31%;
+    --nav-accent-ink: 82 48% 26%;
+    --nav-accent-on: 80 28% 96%;
+    --nav-accent-wash: 84 55% 40%;
   }
 
   .dark {
@@ -82,14 +92,16 @@
     --sidebar-border: 240 3.7% 20%;
     --sidebar-ring: 217.2 91.2% 59.8%;
 
-    /* Dark counterparts. The rail and tile go brighter, and --nav-accent-ink
-       flips from "dark olive on pale" to "bright chartreuse on near-black" --
-       same rule the schedule ledger follows: contrast is the goal, not
-       brightness. --nav-accent-on stays near-black because it always sits on
-       a filled chartreuse tile, which does not invert. */
-    --nav-accent: 72 92% 55%;
-    --nav-accent-ink: 72 92% 62%;
-    --nav-accent-on: 78 88% 12%;
+    /* Dark counterparts. A 31% olive on a 16% ground is invisible, so here
+       the olive lifts to a mid moss and --nav-accent-ink lifts further --
+       the same rule the schedule ledger follows: contrast is the goal, not
+       brightness, and which direction that means depends on the ground.
+       --nav-accent-on inverts with the tile it sits on: the tile is a mid
+       olive here, so its text goes to an olive-black. */
+    --nav-accent: 82 46% 46%;
+    --nav-accent-ink: 82 52% 58%;
+    --nav-accent-on: 84 60% 7%;
+    --nav-accent-wash: 84 50% 50%;
   }
 }
 

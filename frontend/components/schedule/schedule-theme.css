@@ -6,8 +6,10 @@
 
    The neutral ramp is a warm ink (hue ~30, very low saturation), chosen
    specifically so it does NOT read as Tailwind's default cool slate/zinc.
-   A single chartreuse accent — the disc — is reserved for active states and
+   A single deep-olive accent — the disc — is reserved for active states and
    never used as decoration, so when it appears it always means something.
+   It is the same olive as the nav shell's --nav-accent in index.css; the two
+   are one accent expressed in two scopes, so retune them together.
    ──────────────────────────────────────────────────────────────────────── */
 
 .schedule-scope {
@@ -29,10 +31,15 @@
   --sch-rule: 32 15% 88%;
   --sch-rule-strong: 30 12% 78%;
 
-  /* Accent */
-  --sch-accent: 74 78% 42%;
-  --sch-accent-ink: 78 88% 25%;
-  --sch-accent-wash: 74 80% 45%;
+  /* Accent. --sch-accent draws solid shapes (the travelling rail, focus
+     outlines) and clears 5.5:1 on the row; --sch-accent-ink is the glyph and
+     text variant (the caret, the "next" chip's label), deeper again at
+     6.8:1. --sch-accent-wash exists because a dark olive at 6-14% alpha just
+     reads as grey -- the wash is lighter and more saturated so a tint still
+     looks green. Never draw a solid shape with the wash. */
+  --sch-accent: 82 42% 31%;
+  --sch-accent-ink: 82 48% 26%;
+  --sch-accent-wash: 84 55% 40%;
 
   /* Outcome chips keep the same deep field in both themes: a dark green or
      dark oxblood block on warm paper reads as an editorial results table,
@@ -67,9 +74,11 @@
   --sch-rule: 30 7% 19%;
   --sch-rule-strong: 30 7% 27%;
 
-  --sch-accent: 72 92% 55%;
-  --sch-accent-ink: 72 92% 62%;
-  --sch-accent-wash: 72 90% 55%;
+  /* Same inversion as the ink ramp above: a 31% olive vanishes on an 11%
+     row, so the accent lifts to a mid moss and the ink lifts past it. */
+  --sch-accent: 82 46% 46%;
+  --sch-accent-ink: 82 52% 58%;
+  --sch-accent-wash: 84 50% 50%;
 }
 
 /* ── Ledger frame ───────────────────────────────────────────────────────
@@ -277,22 +286,32 @@
   text-transform: uppercase;
 }
 
-.sch-chip--win {
+/* Every outcome modifier is written as `.schedule-scope .sch-chip--*` for
+   specificity, not for scoping -- the `.sch-chip` above is already inside the
+   scope. The chips render through shadcn's <Badge>, whose default variant
+   carries `bg-primary text-primary-foreground`. That is a single utility
+   class, exactly the weight of a bare `.sch-chip--win`, so which one won came
+   down to stylesheet order -- and the utility was winning. Every chip painted
+   `--primary`: one flat black block in light, one flat white block in dark,
+   with win, loss and tie completely indistinguishable from each other. Two
+   classes beats one utility class regardless of order. Drop the extra
+   `.schedule-scope` and the chips silently go blank again. */
+.schedule-scope .sch-chip--win {
   background: hsl(var(--sch-win-bg));
   border-color: hsl(var(--sch-win-edge));
   color: hsl(var(--sch-win-fg));
 }
-.sch-chip--loss {
+.schedule-scope .sch-chip--loss {
   background: hsl(var(--sch-loss-bg));
   border-color: hsl(var(--sch-loss-edge));
   color: hsl(var(--sch-loss-fg));
 }
-.sch-chip--tie {
+.schedule-scope .sch-chip--tie {
   background: hsl(var(--sch-tie-bg));
   border-color: hsl(var(--sch-tie-edge));
   color: hsl(var(--sch-tie-fg));
 }
-.sch-chip--next {
+.schedule-scope .sch-chip--next {
   background: hsl(var(--sch-accent-wash) / 0.14);
   border-color: hsl(var(--sch-accent-wash) / 0.4);
   color: hsl(var(--sch-accent-ink));

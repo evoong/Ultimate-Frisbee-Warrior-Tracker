@@ -49,16 +49,38 @@ lime-on-near-black system that nothing imports. Do not wire it up casually --
 it would restyle every page at once and effectively drop the light theme. Its
 font choices are still treated as this project's design intent (see below).
 
-The one addition to those stock tokens is `--nav-accent` / `--nav-accent-ink` /
-`--nav-accent-on`, defined in both theme blocks of `index.css`. The global
-palette has no accent at all -- `--accent` is a grey -- so the nav had nothing
-to mark "you are here" with. These are deliberately the **same chartreuse** as
-the schedule ledger's `--sch-accent`, so one colour keeps meaning one thing
-across the app. Use them only for state: the active nav item's rail, wash and
-icon, the active bottom-nav cell, and the current team's monogram/check in the
+The one addition to those stock tokens is the `--nav-accent*` family, defined
+in both theme blocks of `index.css`. The global palette has no accent at all --
+`--accent` is a grey -- so the nav had nothing to mark "you are here" with.
+These are deliberately the **same deep olive** as the schedule ledger's
+`--sch-accent`, so one colour keeps meaning one thing across the app; the two
+sets are one accent expressed in two scopes, so **retune them together or not
+at all**. Use them only for state: the active nav item's rail, wash and icon,
+the active bottom-nav cell, and the current team's monogram/check in the
 switcher. Never for a logo, a heading, or decoration -- the brand tile is
 deliberately neutral (`--sidebar-primary`) for exactly this reason. Add a
 second accent and both stop meaning anything.
+
+The four roles are not interchangeable, and the reason each exists is a
+constraint you will re-derive the hard way if you collapse them:
+
+- `--nav-accent` draws **solid shapes** -- the rail, the bottom-nav bar, a
+  filled tile.
+- `--nav-accent-ink` is for **glyphs and text** on a pale ground, one step
+  deeper so a 1.75px stroke still reads.
+- `--nav-accent-on` sits **on** a filled tile and **inverts between themes**:
+  light's tile is a dark olive so its text is near-white, dark's tile is a mid
+  olive so its text is olive-black. Reusing one value for both fails contrast
+  in one of them.
+- `--nav-accent-wash` is the **tint source, low alpha only**. A deep olive at
+  14% loses its hue and reads as plain grey; the wash is lighter and more
+  saturated so the tint still looks green. Never draw a solid shape with it,
+  and never tint with `--nav-accent`.
+
+Every pairing above clears its WCAG target in both themes (shapes >=3:1, text
+and glyphs >=4.5:1) -- the numbers are in the `index.css` comments. Re-check
+them if you touch a value; the previous chartreuse rail sat at 2.1:1 on the
+light sidebar, which is what "the active item looks flat" actually meant.
 
 **Nav shell (`frontend/components/nav/`, `components/AppSidebar.tsx`).** Not a
 scoped system -- it is the global one, plus the tokens above.
@@ -111,9 +133,12 @@ itself:
   low saturation. Inside the scope do not reach for `slate-*`, `gray-*`,
   `zinc-*` or `indigo-*`; use `hsl(var(--sch-ink))`, `--sch-ink-mid`,
   `--sch-ink-faint`.
-- **One accent, reserved for state.** Chartreuse (`--sch-accent`), used only for
-  the travelling rail, the featured-row wash, and the primary icon button. It is
-  never decoration -- when it appears it means "this row is active".
+- **One accent, reserved for state.** A deep olive (`--sch-accent`), used only
+  for the travelling rail, the featured-row wash, and the primary icon button.
+  It is never decoration -- when it appears it means "this row is active". It
+  is the same olive as the nav shell's `--nav-accent`, and `--sch-accent` /
+  `--sch-accent-ink` / `--sch-accent-wash` split by role exactly as the nav
+  tokens do (solid shape / glyph and text / low-alpha tint).
 - **Borders and hairlines, not shadows.** There is no `box-shadow` anywhere in
   the scope and no `rounded-2xl`. The ledger is one 1px frame at radius 5px with
   1px rules between rows; chips are radius 3px, deliberately not pills.

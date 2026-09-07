@@ -52,7 +52,7 @@ export default function WorkspaceSwitcher({
 
   const row = (
     <>
-      {/* The brand mark stays neutral. Chartreuse is the app's one accent and
+      {/* The brand mark stays neutral. The olive is the app's one accent and
           it means "this is the active thing" -- spending it on a logo, which
           is never active or inactive, is exactly the decoration the schedule
           ledger's rules rule out, and it would weaken the active nav rail by

@@ -33,9 +33,14 @@ type AppSidebarProps = {
 }
 
 /**
- * The active item carries a 3px chartreuse rail on its left edge on top of a
- * wash of the same colour, and steps up to weight 600 at full ink. Inactive
- * items sit at 75% ink.
+ * The active item carries a 3px olive rail on its left edge on top of a wash
+ * of the same accent, and steps up to weight 600 at full ink. Inactive items
+ * sit at 75% ink.
+ *
+ * The wash is drawn from --nav-accent-wash rather than from --nav-accent
+ * itself: the solid accent is a deep olive, and a deep olive at low alpha
+ * loses its hue and reads as plain grey. The wash token is lighter and more
+ * saturated for exactly this, and is only ever used at low alpha.
  *
  * 75%, specifically: the point of dimming them is to push them back behind
  * the active item, but they are still the primary navigation and have to stay
@@ -57,11 +62,11 @@ const NAV_ITEM_CLASS = cn(
   "motion-reduce:before:transition-none",
   "[&>svg]:text-sidebar-foreground/60 [&>svg]:transition-colors",
   "hover:bg-sidebar-accent hover:text-sidebar-foreground hover:[&>svg]:text-sidebar-foreground/80",
-  "data-[active=true]:bg-[hsl(var(--nav-accent)/0.11)]",
+  "data-[active=true]:bg-[hsl(var(--nav-accent-wash)/0.14)]",
   "data-[active=true]:font-semibold data-[active=true]:text-sidebar-foreground",
   "data-[active=true]:before:h-5",
   "data-[active=true]:[&>svg]:text-[hsl(var(--nav-accent-ink))]",
-  "data-[active=true]:hover:bg-[hsl(var(--nav-accent)/0.16)]"
+  "data-[active=true]:hover:bg-[hsl(var(--nav-accent-wash)/0.2)]"
 )
 
 export default function AppSidebar({
