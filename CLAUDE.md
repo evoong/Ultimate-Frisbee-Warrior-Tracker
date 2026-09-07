@@ -49,6 +49,55 @@ lime-on-near-black system that nothing imports. Do not wire it up casually --
 it would restyle every page at once and effectively drop the light theme. Its
 font choices are still treated as this project's design intent (see below).
 
+The one addition to those stock tokens is `--nav-accent` / `--nav-accent-ink` /
+`--nav-accent-on`, defined in both theme blocks of `index.css`. The global
+palette has no accent at all -- `--accent` is a grey -- so the nav had nothing
+to mark "you are here" with. These are deliberately the **same chartreuse** as
+the schedule ledger's `--sch-accent`, so one colour keeps meaning one thing
+across the app. Use them only for state: the active nav item's rail, wash and
+icon, the active bottom-nav cell, and the current team's monogram/check in the
+switcher. Never for a logo, a heading, or decoration -- the brand tile is
+deliberately neutral (`--sidebar-primary`) for exactly this reason. Add a
+second accent and both stop meaning anything.
+
+**Nav shell (`frontend/components/nav/`, `components/AppSidebar.tsx`).** Not a
+scoped system -- it is the global one, plus the tokens above.
+
+- **The account card is the only thing in the sidebar footer.** Theme,
+  organization settings, passkeys, feedback and sign-out used to be five
+  sibling rows there, each carrying the same visual weight as Schedule. They
+  live inside `UserMenu`'s popover now. Adding a new sixth footer row is the
+  regression this was written to prevent; put it in the popover.
+- **The theme toggle is an exception and lives in the header**, with the
+  utility icons, in both layouts (`ThemeToggle`). It is flipped often and
+  idly, so burying a one-tap control two clicks deep is worse than a row.
+- **Inactive nav items sit at 75% ink, and that number is a floor, not a
+  taste.** `--sidebar-foreground/75` over `--sidebar-background` is ~4.8:1 in
+  light, just clear of 4.5:1; at `/60` it falls to ~3.2:1, which is a contrast
+  failure dressed up as hierarchy. Dark has ~8:1 of headroom at the same alpha,
+  so one value covers both. Dim further and you are failing WCAG, not designing.
+- **The active rail is drawn inside the button.** `sidebarMenuButtonVariants`
+  carries `overflow-hidden` and `SidebarContent` scrolls with `overflow-auto`,
+  so a `::before` at a negative left offset -- flush to the sidebar's outer
+  edge, which is the obvious thing to reach for -- gets clipped by one or the
+  other and silently disappears.
+- **Mobile mirrors desktop, deliberately.** The mobile header carries the same
+  `WorkspaceSwitcher` and `UserMenu` as the rail (`variant="bar"`), and the
+  bottom nav's active cell gets the same accent bar rotated to its top edge.
+  Changing one shell's chrome without the other is what produced the five
+  loose header icons in the first place.
+- **Tab labels and paths move together**, and old paths must keep working.
+  `lib/nav.ts` owns both, plus `renamedPathFor()`, which App's unknown-path
+  effect consults *before* bouncing to /schedule -- without it every link ever
+  shared under an old name silently lands on the wrong page. `public/robots.txt`
+  lists these paths too. Pages deep-link through `pathForTab()`, not literals.
+- **Account identity comes from the email local part** (`nav/identity.ts`).
+  `auth.users` has an id and an email and nothing else -- no profile row, no
+  link to a `players` record -- so there is no real display name to show
+  without adding a fetch to the app shell. A guest is anonymous and has no
+  email at all, and is also a member of no team, which is why the switcher
+  falls back to the product wordmark for them.
+
 **Schedule ledger (`frontend/components/schedule/`).** A scoped system under
 `.schedule-scope`, defined in `components/schedule/schedule-theme.css`. It
 exists because the global tokens are exactly the generic slate/zinc default the

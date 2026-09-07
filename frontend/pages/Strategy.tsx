@@ -5,6 +5,7 @@ import { useGetPlayers, useGetSeasonRoster, useGetPlayersNotInSeason, useCreateP
 import { useGetGames } from '../hooks/backend/games'
 import { useGetGameAttendance } from '../hooks/backend/attendance'
 import { sortGamesUpcomingFirst } from '../lib/gameOrder'
+import { pathForTab } from '../lib/nav'
 import PlayerCombobox from '../components/PlayerCombobox'
 import {
   useGetStrategyPlays, useCreateStrategyPlay, useUpdateStrategyPlay, useDeleteStrategyPlay,
@@ -81,6 +82,11 @@ type Board = {
   highlights: StrategyHighlight[]
   lines: StrategyLine[]
 }
+
+// This page's own deep links (/playbook/:playId) come from the nav table
+// rather than a string literal, so renaming the tab's path is a one-line
+// change there instead of a grep across the page.
+const PLAYBOOK_PATH = pathForTab('strategy')
 
 export default function Strategy() {
   const { can, currentTeamId } = useAuth()
@@ -178,8 +184,8 @@ export default function Strategy() {
   useEffect(() => {
     if (!plays) return
     if (selectedPlayId === null || !plays.some(p => p.id === selectedPlayId)) {
-      if (plays[0]) navigate(`/plays/${plays[0].id}`, { replace: true })
-      else if (playIdParam) navigate('/plays', { replace: true })
+      if (plays[0]) navigate(`${PLAYBOOK_PATH}/${plays[0].id}`, { replace: true })
+      else if (playIdParam) navigate(PLAYBOOK_PATH, { replace: true })
     }
   }, [plays, playIdParam])
 
@@ -848,7 +854,7 @@ export default function Strategy() {
       setNameInput('')
       setGameInput(NO_GAME)
       await fetchPlays({ organizationId: currentTeamId })
-      navigate(`/plays/${play.id}`)
+      navigate(`${PLAYBOOK_PATH}/${play.id}`)
     }
   }
 
@@ -1036,7 +1042,7 @@ export default function Strategy() {
             <div className="flex items-center gap-2">
               <Select
                 value={selectedPlayId !== null ? String(selectedPlayId) : undefined}
-                onValueChange={v => navigate(`/plays/${v}`)}
+                onValueChange={v => navigate(`${PLAYBOOK_PATH}/${v}`)}
                 onOpenChange={open => { if (open) fetchPlays({ organizationId: currentTeamId }) }}
               >
                 <SelectTrigger className="flex-1 bg-card text-foreground border-border">
