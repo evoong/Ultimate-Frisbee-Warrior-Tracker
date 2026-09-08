@@ -1,5 +1,5 @@
 begin;
-select plan(49);
+select plan(51);
 
 select has_function('public', 'admin_preview_delete_org', array['bigint'],
   'admin_preview_delete_org exists');
@@ -78,16 +78,26 @@ insert into public.game_attendance (game_id, player_id, organization_id)
 values (9101, 9001, 1), (9101, 9002, 1);
 
 -- game_lineups (game_id, player_id, lineup_name)
--- 'O' is a genuine 3-column collision (same game_id, same lineup_name) and
--- must be dropped. 'D' shares game_id with the 'O' pair but has no keeper
--- counterpart in that lineup_name, so it is NOT a collision and must survive
--- the conflict delete, then get repointed to the keeper -- this is what
--- discriminates a real 3-column (game_id, player_id, lineup_name) match from
--- a 2-column match that drops lineup_name (or game_id): a broken match would
--- treat 'D' as colliding with 'O' just because they share a game_id, and
--- wrongly delete it instead of repointing it.
+-- 'O' at game 9101 is a genuine 3-column collision (same game_id, same
+-- lineup_name) and must be dropped. Two more merge-side rows probe the two
+-- ways a broken match could still pass if it silently dropped a column:
+--  - 'D' at game 9101 shares game_id with the 'O' pair but has no keeper
+--    counterpart in that lineup_name, so it is NOT a collision and must
+--    survive the conflict delete, then get repointed to the keeper. This
+--    discriminates a real 3-column match from a match that dropped
+--    lineup_name: dropping lineup_name would treat 'D' as colliding with
+--    'O' just because they share a game_id, and wrongly delete it instead
+--    of repointing it.
+--  - 'O' at game 9102 shares lineup_name with the keeper's 9101 'O' row but
+--    is at a different game entirely, so it is NOT a collision either and
+--    must survive, repointed to the keeper. This discriminates a real
+--    3-column match from a match that dropped game_id: dropping game_id
+--    would treat this row as colliding with the keeper's 9101 'O' row just
+--    because they share a lineup_name, and wrongly delete it instead of
+--    repointing it.
 insert into public.game_lineups (game_id, player_id, lineup_name, organization_id)
-values (9101, 9001, 'O', 1), (9101, 9002, 'O', 1), (9101, 9002, 'D', 1);
+values (9101, 9001, 'O', 1), (9101, 9002, 'O', 1), (9101, 9002, 'D', 1),
+       (9102, 9002, 'O', 1);
 
 -- strategy_positions (step_id, player_id)
 insert into public.strategy_plays (id, name, organization_id) values (9201, 'Admin RPC Test Play', 1);
@@ -156,6 +166,16 @@ select is(
   (select player_id from public.game_lineups where game_id = 9101 and lineup_name = 'D'),
   9001,
   'game_lineups: the surviving ''D'' row was repointed to the keeper, not deleted'
+);
+select is(
+  (select count(*)::int from public.game_lineups where game_id = 9102 and lineup_name = 'O'),
+  1,
+  'game_lineups: the non-colliding game-9102 ''O'' row (same lineup_name, no keeper counterpart at that game) survives -- proves game_id is part of the conflict match'
+);
+select is(
+  (select player_id from public.game_lineups where game_id = 9102 and lineup_name = 'O'),
+  9001,
+  'game_lineups: the surviving game-9102 ''O'' row was repointed to the keeper, not deleted'
 );
 
 select is(
