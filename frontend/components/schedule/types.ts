@@ -35,6 +35,13 @@ export type MatchData = {
   outcomeLabel: string | null
   /** True when outcomeLabel was entered by hand and overrides the score. */
   outcomeOverridden?: boolean
+  /**
+   * Optional crest/logo for the opponent, shown in the row's leading Avatar.
+   * Nothing populates this yet — the monogram fallback renders until
+   * something does — but the slot exists so adding it later is a data
+   * change and not a layout change.
+   */
+  crestUrl?: string | null
   /** Marks a playoff/knockout fixture. */
   highlight?: boolean
   details?: MatchDetail[]

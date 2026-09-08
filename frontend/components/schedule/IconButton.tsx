@@ -1,14 +1,16 @@
 import * as React from 'react'
+import type { IconWeight } from '@phosphor-icons/react'
 import './schedule-theme.css'
 
 // Every utility control in the schedule header goes through here so the
-// cluster stays uniform: one 34px square, one 4px radius, one 16px lucide
-// glyph at strokeWidth 1.75. Icons drawn at different weights are the single
-// loudest tell that a toolbar was assembled rather than designed.
+// cluster stays uniform: one 34px square, one 5px radius, one 16px Phosphor
+// glyph at "regular" weight. Icons drawn at different weights are the single
+// loudest tell that a toolbar was assembled rather than designed, which is
+// why this is a shared object and not four hand-written className strings.
 export const SCHEDULE_ICON_PROPS = {
   className: 'h-4 w-4',
-  strokeWidth: 1.75,
-} as const
+  weight: 'regular',
+} as const satisfies { className: string; weight: IconWeight }
 
 type Props = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   label: string
@@ -19,6 +21,10 @@ type Props = React.ButtonHTMLAttributes<HTMLButtonElement> & {
    * instead, so this deliberately does not set one.)
    */
   active?: boolean
+  /**
+   * "accent" is the cluster's one primary action. It is the same square
+   * inverted, not a coloured button — see .sch-icon-btn--accent.
+   */
   tone?: 'default' | 'accent'
 }
 

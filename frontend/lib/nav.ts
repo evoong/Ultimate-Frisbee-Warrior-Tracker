@@ -1,11 +1,11 @@
 import {
-  Calendar,
-  Users,
-  BarChart3,
+  CalendarBlank,
+  UsersThree,
+  ChartBar,
   BookOpen,
-  MessageCircle,
-  type LucideIcon,
-} from "lucide-react"
+  ChatCircleDots,
+  type Icon,
+} from "@phosphor-icons/react"
 
 export type Tab =
   | "schedule"
@@ -26,12 +26,12 @@ export type Tab =
 // thing actually does for a team. "Playbook" reads as a curated collection
 // rather than a list of rows. Renaming the labels without renaming the paths
 // would have left /plays and /ai as the two URLs nobody could guess.
-export const NAV_ITEMS: { key: Tab; label: string; icon: LucideIcon; path: string }[] = [
-  { key: "schedule", label: "Schedule", icon: Calendar, path: "/schedule" },
-  { key: "roster", label: "Roster", icon: Users, path: "/roster" },
-  { key: "stats", label: "Stats", icon: BarChart3, path: "/stats" },
+export const NAV_ITEMS: { key: Tab; label: string; icon: Icon; path: string }[] = [
+  { key: "schedule", label: "Schedule", icon: CalendarBlank, path: "/schedule" },
+  { key: "roster", label: "Roster", icon: UsersThree, path: "/roster" },
+  { key: "stats", label: "Stats", icon: ChartBar, path: "/stats" },
   { key: "strategy", label: "Playbook", icon: BookOpen, path: "/playbook" },
-  { key: "chat", label: "Coach", icon: MessageCircle, path: "/coach" },
+  { key: "chat", label: "Coach", icon: ChatCircleDots, path: "/coach" },
 ]
 
 // The paths those two tabs used to live at. Anything already bookmarked,

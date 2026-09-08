@@ -278,7 +278,7 @@ export default function App() {
               sidebar's own header (components/nav/PanelToggle): it acts on the
               panel, not on the page. */}
           <header className="sticky top-0 z-10 flex h-14 items-center gap-2 border-b border-border bg-card px-4">
-            <h1 className="text-lg font-bold text-primary">{activeLabel}</h1>
+            <h1 className="text-[15px] font-semibold tracking-[-0.014em] text-foreground">{activeLabel}</h1>
             <ThemeToggle theme={theme} toggleTheme={toggleTheme} className="ml-auto" />
           </header>
           {guestNotice}
@@ -336,10 +336,11 @@ export default function App() {
         {pageContent}
       </main>
 
-      {/* The active cell carries a 3px accent bar on its top edge -- the same
+      {/* The active cell carries a 2px accent bar on its top edge -- the same
           marker the sidebar puts on the left edge of the active item, rotated
-          to the edge the bottom nav actually has. Colour alone was doing all
-          the work here, and 'slightly darker grey' is not a position. */}
+          to the edge the bottom nav actually has, and the same filled glyph.
+          Colour alone was doing all the work here, and 'slightly darker grey'
+          is not a position. */}
       <nav className="fixed bottom-0 left-0 right-0 bg-card border-t border-border">
         <div className="max-w-2xl mx-auto grid" style={{ gridTemplateColumns: `repeat(${visibleNavItems(isGuest).length}, minmax(0, 1fr))` }}>
           {visibleNavItems(isGuest).map(({ key, icon: Icon, label }) => {
@@ -349,13 +350,13 @@ export default function App() {
                 key={key}
                 onClick={() => setActiveTab(key)}
                 aria-current={isActive ? 'page' : undefined}
-                className={`relative flex flex-col items-center gap-1 py-3 transition-colors before:absolute before:inset-x-3 before:top-0 before:h-[3px] before:rounded-b-full before:bg-[hsl(var(--nav-accent))] before:transition-opacity before:content-[''] motion-reduce:before:transition-none ${
+                className={`relative flex flex-col items-center gap-1 py-3 transition-colors before:absolute before:inset-x-4 before:top-0 before:h-[2px] before:rounded-b-full before:bg-[hsl(var(--nav-accent))] before:transition-opacity before:content-[''] motion-reduce:before:transition-none ${
                   isActive
                     ? 'font-semibold text-foreground before:opacity-100 [&>svg]:text-[hsl(var(--nav-accent-ink))]'
                     : 'text-muted-foreground hover:text-foreground before:opacity-0'
                 }`}
               >
-                <Icon className="w-5 h-5" strokeWidth={1.75} />
+                <Icon className="w-5 h-5" weight={isActive ? 'fill' : 'regular'} />
                 <span className="text-[10px] font-medium">{label}</span>
               </button>
             )
