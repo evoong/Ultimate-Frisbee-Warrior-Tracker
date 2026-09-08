@@ -54,6 +54,22 @@
   --sch-tie-fg: 44 86% 67%;
   --sch-tie-edge: 40 38% 25%;
 
+  /* The same three results expressed as ink rather than as a field, because
+     the score carries the outcome too. These are deliberately NOT the chip's
+     --sch-*-fg values: those are bright because they sit on a near-black
+     chip, and 66% L green dropped onto warm paper is exactly the highlighter
+     effect this ledger avoids. Deep and desaturated instead -- forest, brick,
+     bronze -- each past 6:1 on the row and on its hover state. The `-soft`
+     pair is the opponent's number: same hue, pulled back to roughly
+     --sch-ink-mid's weight so the pair reads as one tinted score with ours
+     clearly on top rather than as two competing colours. */
+  --sch-out-win: 152 44% 22%;
+  --sch-out-win-soft: 152 15% 42%;
+  --sch-out-loss: 4 54% 35%;
+  --sch-out-loss-soft: 6 18% 44%;
+  --sch-out-tie: 36 58% 26%;
+  --sch-out-tie-soft: 34 18% 42%;
+
   --sch-mono: 'Space Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
 
   color: hsl(var(--sch-ink));
@@ -79,6 +95,17 @@
   --sch-accent: 82 46% 46%;
   --sch-accent-ink: 82 52% 58%;
   --sch-accent-wash: 84 50% 50%;
+
+  /* Same inversion again: a 22% forest green is invisible on an 11% row, so
+     the result inks lift into muted sage / clay / wheat. Saturation stays
+     low on purpose -- a fully saturated red and green facing each other down
+     a dark list is a scoreboard, not a ledger. Both weights clear 4.5:1. */
+  --sch-out-win: 146 34% 60%;
+  --sch-out-win-soft: 148 12% 55%;
+  --sch-out-loss: 6 48% 65%;
+  --sch-out-loss-soft: 8 16% 58%;
+  --sch-out-tie: 40 46% 60%;
+  --sch-out-tie-soft: 38 14% 56%;
 }
 
 /* ── Ledger frame ───────────────────────────────────────────────────────
@@ -245,18 +272,36 @@
   color: hsl(var(--sch-ink));
 }
 
+/* Result tint. Each modifier only rebinds two local variables, so the three
+   parts of the score below stay one rule each and a fourth outcome is two
+   lines, not six. The fallbacks are the neutral ramp, which is what an
+   untinted score (no outcome recorded) still renders as. */
+.schedule-scope .sch-score--win {
+  --sch-out: var(--sch-out-win);
+  --sch-out-soft: var(--sch-out-win-soft);
+}
+.schedule-scope .sch-score--loss {
+  --sch-out: var(--sch-out-loss);
+  --sch-out-soft: var(--sch-out-loss-soft);
+}
+.schedule-scope .sch-score--tie {
+  --sch-out: var(--sch-out-tie);
+  --sch-out-soft: var(--sch-out-tie-soft);
+}
+
 .sch-score-our {
   text-align: right;
+  color: hsl(var(--sch-out, var(--sch-ink)));
 }
 
 .sch-score-them {
   text-align: left;
-  color: hsl(var(--sch-ink-mid));
+  color: hsl(var(--sch-out-soft, var(--sch-ink-mid)));
 }
 
 .sch-score-dash {
   text-align: center;
-  color: hsl(var(--sch-ink-faint));
+  color: hsl(var(--sch-out-soft, var(--sch-ink-faint)) / 0.65);
   font-weight: 400;
 }
 
@@ -284,6 +329,31 @@
   line-height: 1;
   letter-spacing: 0.02em;
   text-transform: uppercase;
+}
+
+/* The result chip is the one piece of the row people actually scan for, so
+   it is set two steps up from the 10px metadata size and given a fixed
+   min-width: WIN / LOSS / TIE then stamp the same tile down the column
+   instead of a ragged left edge. It grows sideways and not downwards on
+   purpose -- at 15px over 6px of padding the chip is 29px tall against the
+   ~34px the name-plus-date block already claims, so the row height is still
+   set by the name and nothing reflows. Check that sum before adding padding
+   here. The `--next` chip deliberately does NOT inherit this: "In 6 days" at
+   this size would not fit the column that keeps every team name aligned. */
+.schedule-scope .sch-chip--outcome {
+  justify-content: center;
+  min-width: 4rem;
+  padding: 0.3125rem 0.5rem;
+  font-size: 0.875rem;
+  letter-spacing: 0.05em;
+}
+
+@media (min-width: 768px) {
+  .schedule-scope .sch-chip--outcome {
+    min-width: 4.25rem;
+    padding: 0.375rem 0.5625rem;
+    font-size: 0.9375rem;
+  }
 }
 
 /* Every outcome modifier is written as `.schedule-scope .sch-chip--*` for

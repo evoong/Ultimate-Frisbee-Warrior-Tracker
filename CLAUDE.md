@@ -149,6 +149,20 @@ itself:
 - **Outcome chips keep a dark field in both themes** (deep green / oxblood with
   bright text, ~9.2:1 and ~5.7:1). Holding them steady across the theme toggle
   is what keeps win/loss instantly readable; do not invert them for light mode.
+- **The result is a second colour family, and it is semantic, not decorative.**
+  Win / loss / tie own two token sets that the olive accent never touches: the
+  chip's field (`--sch-win-bg` / `-fg` / `-edge`) and the score's ink
+  (`--sch-out-win` and its `-soft` partner, one pair per outcome). They are not
+  interchangeable. The chip's `-fg` is bright because it sits on a near-black
+  block; painting a score with it puts 66% L green on warm paper, which is the
+  highlighter look this ledger exists to avoid. In light the score inks go
+  *deep* -- forest 22%, brick 35%, bronze 26% L, all past 8:1 -- and in dark
+  they lift to a muted sage / clay / wheat at ~7:1, saturation held down so a
+  long list does not read as a scoreboard. `-soft` is the opponent's number:
+  same hue at roughly `--sch-ink-mid`'s weight, so the pair reads as one tinted
+  score with ours on top. `.sch-score--win|loss|tie` only rebinds `--sch-out`
+  and `--sch-out-soft`, so a fourth outcome is two lines and the three
+  `.sch-score-*` colour rules never change.
 - **Type.** Team names use the inherited sans at weight 650 with `-0.021em`
   tracking. Every number and every piece of metadata uses **Space Mono**
   (`--sch-mono`, loaded in `frontend/index.html`, two weights, `display=swap`) --
@@ -159,6 +173,17 @@ itself:
 - **Scores align on the dash.** `.sch-score` is a `2ch 1.75ch 2ch` grid so the
   dash forms a spine down the list regardless of digit count. Any new
   score-like column should do the same.
+
+- **The result chip leads the row and is sized to be scanned.** It is the first
+  grid track, not the last -- a result parked at the far end of a wide row is a
+  result you read twice -- and `.sch-chip--outcome` sets a fixed `min-width`
+  with centred text so WIN / LOSS / TIE stamp the same tile down a left-edge
+  spine. Its type is 14-15px, well above the 10px metadata size, and it grows
+  **sideways only**: the row's height comes from the name-plus-date block
+  (~36px desktop, ~31px mobile), and the chip must stay under that or every row
+  in the list gets taller. Verify with a measured row height, not by eye. The
+  `--next` chip ("In 6 days") deliberately keeps the small size -- at 15px it
+  would outgrow the fixed leading track that keeps the team names aligned.
 
 Structure and behaviour:
 
