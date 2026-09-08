@@ -1,0 +1,909 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   Stats — a design system scoped to the Stats page.
+
+   Same architecture as the schedule ledger (components/schedule/
+   schedule-theme.css), and deliberately so: everything lives under
+   `.stats-scope`, everything is namespaced `--st-*` / `.st-*`, and nothing
+   leaks into Roster / Strategy. Read that file first — the rules here are
+   the same rules, applied to a page whose subject is numbers instead of
+   fixtures.
+
+   Three colour families, and they do not overlap:
+
+   1. A genuinely neutral ink ramp (hue 0, saturation 0). No Tailwind
+      slate/zinc/gray inside this scope — those carry a hue, and a hue in
+      the neutrals is what makes an interface read as a template.
+   2. One accent, the same sharp azure cyan as --nav-accent and --sch-accent,
+      reserved for state: the active page tab's rail, focus rings, the
+      leader crest. Never for a data series, never for decoration.
+   3. A series family — goals / assists / turnovers — which is semantic data,
+      not state, and never borrows the accent. This is the exact same split
+      the ledger draws between its accent and its win/loss/tie tokens.
+   ──────────────────────────────────────────────────────────────────────── */
+
+.stats-scope {
+  /* Surfaces. --st-raise is the one step above a panel: the active segment
+     of a segmented control, a hovered KPI. It is a surface, not a border. */
+  --st-page: 0 0% 97.5%;
+  --st-panel: 0 0% 100%;
+  --st-raise: 0 0% 100%;
+
+  /* Hover is an overlay, not a second surface colour — one token pair so a
+     KPI card lands on the same value whether it sits on the page ground or
+     on a tinted leader card. */
+  --st-overlay: 0 0% 0%;
+  --st-overlay-a: 0.035;
+
+  /* Ink. --st-ink-mid is ~9:1 on the panel in both themes. In light that
+     meant going darker (32% L), in dark it meant going brighter (72% L):
+     the requirement is contrast, not brightness. */
+  --st-ink: 0 0% 9%;
+  --st-ink-mid: 0 0% 32%;
+  --st-ink-faint: 0 0% 46%;
+
+  /* Structure. Hairlines carry the hierarchy; the alpha is inline, so never
+     add a second one at the call site. Panels get a 1px frame at 6px radius
+     and no shadow. The single exception is a floating layer — the chart
+     tooltip and the filter popovers — which has nothing behind it to seam
+     against and so takes one soft shadow. Nothing in the document flow does. */
+  --st-rule: 0 0% 0% / 0.07;
+  --st-rule-strong: 0 0% 0% / 0.12;
+  --st-lift: 0 8px 24px -12px hsl(0 0% 0% / 0.28);
+
+  /* Accent — state only. Same values as --nav-accent / --sch-accent; retune
+     all three together or none. */
+  --st-accent: 193 95% 30%;
+  --st-accent-ink: 193 95% 26%;
+  --st-accent-wash: 193 92% 44%;
+
+  /* Series. One token per stat, used four ways: the chart bar, the figure's
+     ink, the chip's text, and that chip's field at 10% with a 22% edge —
+     the same one-token-many-roles recipe the ledger uses for win/loss/tie,
+     and what keeps a legend swatch and the number beside it obviously the
+     same statement.
+
+     Light takes the deep end of every hue and dark takes the bright end.
+     All three clear 4.5:1 on their own theme's panel, so each doubles as
+     text without a second "ink" variant.
+
+     Assists is violet, not the cyan an athletic palette reaches for first:
+     cyan is this app's state accent, and a chart full of cyan bars beside a
+     cyan "you are here" rail makes the accent stop meaning anything. Violet
+     sits 65° clear of it, clear of the green, and clear of the amber.
+     Turnovers is amber rather than red because red is the ledger's loss
+     colour and a turnover is a caution, not a result. */
+  --st-goals: 152 65% 32%;
+  --st-assists: 258 62% 48%;
+  --st-turnovers: 28 88% 38%;
+
+  /* Point differential. Signed, so it needs the ledger's own win/loss hues
+     rather than a series colour — a positive differential and a win are the
+     same claim. */
+  --st-up: 142 72% 29%;
+  --st-down: 0 74% 42%;
+  --st-tie: 26 90% 37%;
+
+  --st-mono: 'Geist Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  --st-sans: Geist, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  color: hsl(var(--st-ink));
+}
+
+.dark .stats-scope {
+  --st-page: 0 0% 4%;
+  --st-panel: 0 0% 6.5%;
+  --st-raise: 0 0% 11%;
+
+  --st-overlay: 0 0% 100%;
+  --st-overlay-a: 0.045;
+
+  --st-ink: 0 0% 97%;
+  --st-ink-mid: 0 0% 72%;
+  --st-ink-faint: 0 0% 55%;
+
+  --st-rule: 0 0% 100% / 0.07;
+  --st-rule-strong: 0 0% 100% / 0.13;
+  --st-lift: 0 8px 24px -12px hsl(0 0% 0% / 0.7);
+
+  --st-accent: 193 92% 56%;
+  --st-accent-ink: 193 92% 64%;
+  --st-accent-wash: 193 90% 52%;
+
+  --st-goals: 152 62% 46%;
+  --st-assists: 258 88% 72%;
+  --st-turnovers: 28 88% 54%;
+
+  --st-up: 142 71% 45%;
+  --st-down: 0 84% 60%;
+  --st-tie: 38 92% 50%;
+}
+
+/* ── Page header ────────────────────────────────────────────────────────
+   Title and scope controls on one line, tabs on the next, one hairline
+   under the whole thing. The filters used to be a titled Card below this
+   with a "Filter By" <Label> over a full-width <Select> — three rows of
+   chrome to say "this season". A filter is not content; it belongs in the
+   header beside the thing it scopes, at the size of a control. */
+.st-title {
+  font-size: 1.5rem;
+  font-weight: 660;
+  line-height: 1.1;
+  letter-spacing: -0.028em;
+  color: hsl(var(--st-ink));
+}
+
+.st-tabs {
+  display: flex;
+  gap: 1.25rem;
+  border-bottom: 1px solid hsl(var(--st-rule));
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.st-tabs::-webkit-scrollbar { display: none; }
+
+/* The active tab is a 2px rail plus weight and ink, and no fill — the same
+   statement the sidebar's active item makes, for the same reason: one bit
+   of state said three ways reads as noise, and a low-alpha tint of a deep
+   accent lands as a muddy grey rather than as "selected".
+
+   The rail is drawn as a border on the button itself, overlapping the
+   track's own hairline. Inactive sits at 75% ink, which is ~5.9:1 in light
+   — that number is a floor, not a taste. */
+.st-tab {
+  position: relative;
+  flex: none;
+  padding: 0.375rem 0 0.6875rem;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  font-size: 0.875rem;
+  font-weight: 500;
+  letter-spacing: -0.008em;
+  white-space: nowrap;
+  color: hsl(var(--st-ink) / 0.62);
+  background: transparent;
+  transition: color 160ms ease, border-color 160ms ease;
+}
+.st-tab:hover { color: hsl(var(--st-ink)); }
+.st-tab:focus-visible {
+  outline: 2px solid hsl(var(--st-accent));
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+.st-tab[data-active='true'] {
+  color: hsl(var(--st-ink));
+  font-weight: 620;
+  border-bottom-color: hsl(var(--st-accent));
+}
+
+/* ── Segmented control ──────────────────────────────────────────────────
+   The scope switch: all-time / season / games. The active segment is a
+   raised neutral surface, deliberately NOT the accent. A filter says which
+   slice of data you are looking at; the accent says where you are in the
+   app. Spending it here would leave "you are here" and "you are filtered"
+   wearing the same colour in the same header. */
+.st-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+  padding: 0.1875rem;
+  border: 1px solid hsl(var(--st-rule-strong));
+  border-radius: 7px;
+  background: hsl(var(--st-panel));
+}
+
+.st-seg-btn {
+  padding: 0.3125rem 0.625rem;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  font-family: var(--st-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: hsl(var(--st-ink-mid));
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease;
+}
+.st-seg-btn:hover { color: hsl(var(--st-ink)); }
+.st-seg-btn:focus-visible {
+  outline: 2px solid hsl(var(--st-accent));
+  outline-offset: 1px;
+}
+.st-seg-btn[data-active='true'] {
+  color: hsl(var(--st-ink));
+  font-weight: 600;
+  background: hsl(var(--st-raise));
+  border-color: hsl(var(--st-rule-strong));
+}
+.dark .st-seg-btn[data-active='true'] { border-color: transparent; }
+
+/* ── Buttons ────────────────────────────────────────────────────────────
+   One shape, one height, one glyph weight for every control in a panel
+   header: the same 34px square the schedule ledger's toolbar uses, plus a
+   labelled variant for the two places a glyph alone would be a guess
+   ("Columns", "Manage"). Matching the picker trigger's height and hairline
+   is what keeps a header reading as one instrument. */
+.st-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  height: 2.125rem;
+  padding: 0 0.625rem;
+  flex: none;
+  border: 1px solid hsl(var(--st-rule-strong));
+  border-radius: 6px;
+  background: hsl(var(--st-panel));
+  font-family: var(--st-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: hsl(var(--st-ink-mid));
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease;
+}
+.st-btn:hover:not(:disabled) {
+  color: hsl(var(--st-ink));
+  background: hsl(var(--st-overlay) / var(--st-overlay-a));
+}
+.st-btn:disabled { opacity: 0.45; }
+.st-btn:focus-visible {
+  outline: 2px solid hsl(var(--st-accent));
+  outline-offset: 1px;
+}
+.st-btn[data-active='true'] { color: hsl(var(--st-ink)); }
+
+.st-btn--icon { width: 2.125rem; padding: 0; }
+
+/* The one primary action per surface. Same button, ink inverted -- not a
+   coloured button: a lone tinted control on the end of a row of hairlined
+   ones reads as a stray chip rather than as the end of the row. */
+.st-btn--accent {
+  color: hsl(var(--st-panel));
+  background: hsl(var(--st-ink));
+  border-color: hsl(var(--st-ink));
+}
+.st-btn--accent:hover:not(:disabled) {
+  color: hsl(var(--st-panel));
+  background: hsl(var(--st-ink-mid));
+  border-color: hsl(var(--st-ink-mid));
+}
+
+/* ── Field ──────────────────────────────────────────────────────────────
+   Text and number inputs inside the scope. Same 34px, same hairline. */
+.st-field {
+  height: 2.125rem;
+  width: 100%;
+  min-width: 0;
+  padding: 0 0.5625rem;
+  border: 1px solid hsl(var(--st-rule-strong));
+  border-radius: 6px;
+  background: transparent;
+  font-size: 0.8125rem;
+  color: hsl(var(--st-ink));
+  transition: border-color 160ms ease;
+}
+.st-field::placeholder { color: hsl(var(--st-ink-faint)); }
+.st-field:focus-visible {
+  outline: 2px solid hsl(var(--st-accent));
+  outline-offset: -1px;
+}
+textarea.st-field {
+  height: auto;
+  padding: 0.5rem 0.5625rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+/* ── Picker trigger ─────────────────────────────────────────────────────
+   The season / game chooser. Same 34px height and 1px hairline as the
+   segmented control beside it, so the header reads as one instrument
+   rather than a control panel assembled from three kits. */
+.st-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4375rem;
+  height: 2.125rem;
+  max-width: 15rem;
+  padding: 0 0.5625rem;
+  border: 1px solid hsl(var(--st-rule-strong));
+  border-radius: 6px;
+  background: hsl(var(--st-panel));
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: -0.008em;
+  color: hsl(var(--st-ink));
+  transition: background-color 160ms ease, border-color 160ms ease;
+}
+.st-picker:hover { background: hsl(var(--st-overlay) / var(--st-overlay-a)); }
+.st-picker:focus-visible {
+  outline: 2px solid hsl(var(--st-accent));
+  outline-offset: 1px;
+}
+.st-picker-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.st-picker-count {
+  font-family: var(--st-mono);
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0.1875rem 0.3125rem;
+  border-radius: 4px;
+  background: hsl(var(--st-accent-wash) / 0.14);
+  color: hsl(var(--st-accent-ink));
+}
+
+/* The popover's "Select all". Radix moves focus into the panel on open, so
+   this button is reached by keyboard immediately and cannot fall back to the
+   UA's default outline. */
+.st-link {
+  font-family: var(--st-mono);
+  font-size: 0.6875rem;
+  line-height: 1.2;
+  letter-spacing: -0.005em;
+  color: hsl(var(--st-ink-mid));
+  border-radius: 4px;
+  padding: 0.125rem 0.25rem;
+  margin: -0.125rem -0.25rem;
+  transition: color 160ms ease, background-color 160ms ease;
+}
+.st-link:hover {
+  color: hsl(var(--st-accent-ink));
+  background: hsl(var(--st-overlay) / var(--st-overlay-a));
+}
+.st-link:focus-visible {
+  outline: 2px solid hsl(var(--st-accent));
+  outline-offset: 1px;
+}
+
+.st-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5625rem;
+  width: 100%;
+  padding: 0.4375rem 0.625rem;
+  border-radius: 5px;
+  text-align: left;
+  font-size: 0.8125rem;
+  color: hsl(var(--st-ink));
+  transition: background-color 140ms ease;
+}
+.st-option:hover { background: hsl(var(--st-overlay) / var(--st-overlay-a)); }
+.st-option:focus-visible {
+  outline: 2px solid hsl(var(--st-accent));
+  outline-offset: -2px;
+}
+.st-option-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 4px;
+  border: 1px solid hsl(var(--st-rule-strong));
+  color: transparent;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+.st-option[data-checked='true'] .st-option-box {
+  background: hsl(var(--st-accent));
+  border-color: hsl(var(--st-accent));
+  color: hsl(var(--st-panel));
+}
+.dark .st-option[data-checked='true'] .st-option-box { color: hsl(0 0% 4%); }
+
+/* ── Panel ──────────────────────────────────────────────────────────────
+   One 1px frame at 6px radius. No shadow, no radius above 6px, no second
+   surface colour — exactly the ledger's frame. */
+.st-panel {
+  background: hsl(var(--st-panel));
+  border: 1px solid hsl(var(--st-rule-strong));
+  border-radius: 6px;
+}
+
+.st-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.6875rem 0.9375rem;
+  border-bottom: 1px solid hsl(var(--st-rule));
+}
+
+/* KPI cards are panels that respond to the pointer. The whole treatment is
+   one translucent wash lifting off the surface underneath — no border
+   change, no shadow, no scale. */
+.st-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.875rem 0.9375rem 0.75rem;
+  transition: background-color 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.st-kpi:hover { background: hsl(var(--st-overlay) / var(--st-overlay-a)); }
+
+/* ── Type ───────────────────────────────────────────────────────────────
+   Every number and every piece of metadata is Geist Mono, so a figure sits
+   on the same skeleton as the label under it. Secondary text always sets an
+   explicit line-height rather than inheriting the loose default. */
+.st-overline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-family: var(--st-mono);
+  font-size: 0.625rem;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: hsl(var(--st-ink-faint));
+}
+
+/* display:block is load-bearing, not cosmetic: the ellipsis below needs a
+   block box to clip against, and it is what lets a name sit inside a mono
+   table cell and keep its own face. Flex children are blockified anyway, so
+   this changes nothing at the call sites that are already flex items. */
+.st-name {
+  display: block;
+  font-family: var(--st-sans);
+  font-weight: 620;
+  font-size: 0.9375rem;
+  line-height: 1.15;
+  letter-spacing: -0.014em;
+  color: hsl(var(--st-ink));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.st-meta {
+  font-family: var(--st-mono);
+  font-size: 0.6875rem;
+  line-height: 1.2;
+  letter-spacing: -0.005em;
+  color: hsl(var(--st-ink-mid));
+  font-variant-numeric: tabular-nums;
+}
+
+/* The hero number. Optically tightened hard, because a 2rem mono figure at
+   default tracking reads as a serial number rather than as a score. */
+.st-figure {
+  font-family: var(--st-mono);
+  font-weight: 700;
+  font-size: 2rem;
+  line-height: 0.95;
+  letter-spacing: -0.05em;
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--st-series, var(--st-ink)));
+}
+
+.st-figure--sm {
+  font-size: 1.125rem;
+  line-height: 1;
+  letter-spacing: -0.035em;
+}
+
+.st-unit {
+  font-family: var(--st-mono);
+  font-size: 0.625rem;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: hsl(var(--st-ink-faint));
+}
+
+/* Series binding. Each modifier rebinds one variable, so the rules above
+   stay one rule each and a fourth series is two lines, not six. */
+.stats-scope .st-goals { --st-series: var(--st-goals); }
+.stats-scope .st-assists { --st-series: var(--st-assists); }
+.stats-scope .st-turnovers { --st-series: var(--st-turnovers); }
+.stats-scope .st-up { --st-series: var(--st-up); }
+.stats-scope .st-down { --st-series: var(--st-down); }
+.stats-scope .st-tie { --st-series: var(--st-tie); }
+
+/* Anything that should take the card's bound series colour — the overline's
+   glyph, a bare number in the footer strip. */
+.st-series-ink { color: hsl(var(--st-series, var(--st-ink-mid))); }
+
+/* ── Chip ───────────────────────────────────────────────────────────────
+   A tinted field, not a block: the series colour at 10% behind it, a 22%
+   edge, the full-strength colour as text. Square-ish on purpose — 4px, not
+   a pill. Saturated fills turn a dense page into a set of warning lights. */
+.st-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1875rem 0.375rem;
+  border: 1px solid hsl(var(--st-series, var(--st-ink-faint)) / 0.22);
+  border-radius: 4px;
+  background: hsl(var(--st-series, var(--st-ink-faint)) / 0.1);
+  font-family: var(--st-mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--st-series, var(--st-ink-mid)));
+}
+
+/* ── Crest ──────────────────────────────────────────────────────────────
+   A player, so a circle — the roster's own convention (PlayerAvatar), not
+   the squircle the product uses for teams and organizations. The monogram
+   is an <Avatar> fallback so the day a photo exists it drops in and the
+   layout does not move. */
+.st-crest {
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 1px solid hsl(var(--st-rule-strong));
+  background: hsl(var(--st-ink) / 0.055);
+}
+.dark .st-crest { background: hsl(var(--st-ink) / 0.07); }
+
+/* List rows and picker options need the same tile at two smaller sizes. The
+   font scales with it so a monogram never sets the row height. */
+.st-crest--sm { width: 1.75rem; height: 1.75rem; }
+.st-crest--sm .st-crest-text { font-size: 0.5625rem; }
+.st-crest--xs { width: 1.25rem; height: 1.25rem; }
+.st-crest--xs .st-crest-text { font-size: 0.5rem; }
+
+/* Two crests overlapped, passer over scorer. The ring is the panel's own
+   colour so the pair reads as one object with a seam rather than as two
+   tiles that happen to collide; the first tile takes the z-index because
+   source order would otherwise put the scorer on top. */
+.st-duo { display: inline-flex; flex: none; align-items: center; }
+.st-duo > * {
+  position: relative;
+  box-shadow: 0 0 0 2px hsl(var(--st-panel));
+}
+.st-duo > *:first-child { z-index: 1; }
+.st-duo > * + * { margin-left: -0.5rem; }
+
+.st-crest-text {
+  font-family: var(--st-mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: hsl(var(--st-ink-mid));
+  background: transparent;
+}
+
+/* ── Footer stat strip ────────────────────────────────────────────────
+   The four small figures that close the team card. Hairline-separated cells
+   rather than boxed ones: the card already has a frame, and a frame inside a
+   frame is how a dashboard starts looking like a spreadsheet.
+
+   Two columns, at every width. Four across fits only if "ALLOWED" is allowed
+   to sit ~2px inside its cell on a third-width card, which it does not
+   survive a font fallback — and shrinking the label to buy the room trades a
+   legible 10px for an unreadable 9px. Two rows costs ~35px of card height
+   and reads at any size. */
+.st-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid hsl(var(--st-rule));
+  margin: auto -0.9375rem -0.75rem;
+}
+.st-strip-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3125rem;
+  padding: 0.5625rem 0.9375rem 0.625rem;
+  min-width: 0;
+}
+/* Strip figures are neutral unless a cell asks otherwise. Without this the
+   card's own series binding leaks down and paints every footer number — the
+   team card's "Allowed 142" in the same green as a positive differential,
+   which says the opposite of what it means. */
+.st-strip-cell { --st-series: var(--st-ink); }
+.st-strip-cell:nth-child(even) { border-left: 1px solid hsl(var(--st-rule)); }
+.st-strip-cell:nth-child(n + 3) { border-top: 1px solid hsl(var(--st-rule)); }
+
+/* ── List row ───────────────────────────────────────────────────────────
+   The one row shape shared by the chemistry list and both matrix columns.
+   Hairlines between rows, no per-row border and no card — a list of cards is
+   how a page stops having a hierarchy. Hover is the same overlay everything
+   else uses. */
+.st-list > * + * { border-top: 1px solid hsl(var(--st-rule)); }
+
+.st-row {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  width: 100%;
+  padding: 0.5rem 0.9375rem;
+  text-align: left;
+  transition: background-color 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.st-row:hover { background: hsl(var(--st-overlay) / var(--st-overlay-a)); }
+
+/* The meter gets its own fixed track between the name and the number,
+   rather than sitting under the name inside the flexible cell.
+
+   Two things go wrong when it lives in the flexible cell. It stretches to
+   whatever the panel is wide -- 740px on the chemistry list -- so it stops
+   reading as "this one is a third of that one" and starts reading as a
+   loading bar. And the name cell is the row's only `1fr`, so it absorbs all
+   the slack and strands the count 700px away from the name it belongs to.
+   Fixed track, right-aligned number, single-line row -- the same reasoning
+   as the schedule ledger's fixed verdict track. */
+.st-track {
+  flex: none;
+  width: 3.25rem;
+}
+@media (min-width: 640px) {
+  .st-track { width: 5.5rem; }
+}
+
+/* The chemistry row carries two names where every other row carries one, so
+   it runs out of horizontal room first: at 360px each name was being shrunk
+   to ~31px, which ellipsises "Marisol O." down to "Ma…". Below sm the meter
+   goes rather than the names — the number already says which pairing is
+   biggest, and a name cut to two characters says nothing at all. */
+.st-track--optional { display: none; }
+@media (min-width: 640px) {
+  .st-track--optional { display: block; }
+}
+
+/* The rank gutter. Tabular so 1 and 12 occupy the same box and the crests
+   below them stay in a column. */
+.st-rank {
+  flex: none;
+  width: 1.125rem;
+  font-family: var(--st-mono);
+  font-size: 0.625rem;
+  line-height: 1;
+  text-align: right;
+  color: hsl(var(--st-ink-faint));
+  font-variant-numeric: tabular-nums;
+}
+
+/* A column head inside a panel: the label for one half of the matrix, with
+   its own total. Not a second panel header — one rule, no background. */
+.st-col-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5625rem 0.9375rem;
+  border-bottom: 1px solid hsl(var(--st-rule));
+}
+
+/* The matrix's two halves. A single hairline between them at md and up; the
+   columns stack below that, where the divider becomes the row rule the
+   second column already starts with. */
+.st-matrix {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+.st-matrix > * + * { border-top: 1px solid hsl(var(--st-rule)); }
+@media (min-width: 768px) {
+  .st-matrix { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .st-matrix > * + * {
+    border-top: none;
+    border-left: 1px solid hsl(var(--st-rule));
+  }
+}
+
+/* ── Table ──────────────────────────────────────────────────────────────
+   Rankings and standings. Hairlines between rows, no zebra striping, no
+   vertical rules: a grid of boxes is what makes a table look like a
+   spreadsheet, and the numbers already line up because every one of them is
+   Geist Mono at tabular-nums.
+
+   Both tables scroll horizontally inside the panel rather than making the
+   page scroll -- the panel is the thing that is too narrow, not the page. */
+.st-scroll {
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.st-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.st-th {
+  padding: 0.5rem 0.5rem 0.5625rem;
+  font-family: var(--st-mono);
+  font-size: 0.625rem;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  text-align: right;
+  white-space: nowrap;
+  color: hsl(var(--st-ink-faint));
+  border-bottom: 1px solid hsl(var(--st-rule-strong));
+}
+.st-th:first-child { padding-left: 0.9375rem; }
+.st-th--left { text-align: left; }
+.st-th:last-child { padding-right: 0.9375rem; }
+
+/* The header is a button so the whole cell is the hit target. The sort glyph
+   is always present -- an inert double caret on the inactive columns -- so a
+   column does not change width the moment it becomes the sorted one. */
+.st-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1875rem;
+  color: inherit;
+  transition: color 160ms ease;
+}
+.st-sort:hover { color: hsl(var(--st-ink)); }
+.st-sort:focus-visible {
+  outline: 2px solid hsl(var(--st-accent));
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+.st-sort[data-active='true'] { color: hsl(var(--st-ink)); }
+.st-sort-idle { opacity: 0.3; }
+
+.st-td {
+  padding: 0.5rem;
+  font-family: var(--st-mono);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--st-series, var(--st-ink)));
+}
+.st-td:first-child { padding-left: 0.9375rem; }
+.st-td--left { text-align: left; }
+.st-td:last-child { padding-right: 0.9375rem; }
+
+.st-tr { transition: background-color 180ms cubic-bezier(0.22, 1, 0.36, 1); }
+.st-tr + .st-tr > .st-td { border-top: 1px solid hsl(var(--st-rule)); }
+.st-tr:hover { background: hsl(var(--st-overlay) / var(--st-overlay-a)); }
+.st-tr[data-us='true'] { background: hsl(var(--st-accent-wash) / 0.07); }
+.st-tr[data-us='true']:hover { background: hsl(var(--st-accent-wash) / 0.13); }
+
+/* The drag edge on a resizable header. 8px of hit area hanging off the
+   cell's right edge, invisible until it is under the pointer. */
+.st-resize {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.st-resize::after {
+  content: '';
+  position: absolute;
+  inset: 0.25rem 3px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background-color 160ms ease;
+}
+.st-resize:hover::after { background: hsl(var(--st-accent) / 0.5); }
+
+/* ── Form guide ─────────────────────────────────────────────────────────
+   One dot per decided game, oldest first. Squares at 2px, not circles: the
+   product has no other circular indicator and a row of dots reads as a
+   loading spinner mid-animation. */
+.st-dot {
+  display: inline-block;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 2px;
+  background: hsl(var(--st-series, var(--st-ink-faint)));
+}
+
+/* ── Share meter ────────────────────────────────────────────────────────
+   How much of the team's output this player is. A 3px track, not a
+   progress bar with a radius and a gradient. */
+.st-meter {
+  height: 3px;
+  border-radius: 2px;
+  background: hsl(var(--st-ink) / 0.08);
+  overflow: hidden;
+}
+.dark .st-meter { background: hsl(var(--st-ink) / 0.12); }
+.st-meter-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: hsl(var(--st-series, var(--st-ink-mid)));
+  transform-origin: left center;
+  transition: width 520ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ── Chart ──────────────────────────────────────────────────────────────
+   The tooltip is a floating layer, so it is the one surface in the scope
+   that carries a shadow — it has no seam to sit in. */
+.st-tip {
+  min-width: 10rem;
+  padding: 0.625rem 0.6875rem;
+  border: 1px solid hsl(var(--st-rule-strong));
+  border-radius: 6px;
+  background: hsl(var(--st-panel) / 0.92);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--st-lift);
+}
+
+.st-tip-row {
+  display: grid;
+  grid-template-columns: 0.5rem 1fr auto;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--st-mono);
+  font-size: 0.6875rem;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--st-ink-mid));
+}
+.st-tip-swatch {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 2px;
+  background: hsl(var(--st-series, var(--st-ink-faint)));
+}
+.st-tip-value {
+  font-weight: 700;
+  color: hsl(var(--st-series, var(--st-ink)));
+}
+
+/* Legend swatches double as the series filter, so they are buttons. A
+   deselected series drops to the neutral ramp rather than disappearing —
+   it still has to read as "this exists, it is off". */
+.st-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.4375rem;
+  border-radius: 5px;
+  font-family: var(--st-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: hsl(var(--st-ink-mid));
+  transition: color 160ms ease, background-color 160ms ease;
+}
+.st-legend:hover { background: hsl(var(--st-overlay) / var(--st-overlay-a)); }
+.st-legend:focus-visible {
+  outline: 2px solid hsl(var(--st-accent));
+  outline-offset: 1px;
+}
+.st-legend[data-active='true'] {
+  color: hsl(var(--st-ink));
+  font-weight: 600;
+}
+.st-legend-swatch {
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 3px;
+  background: hsl(var(--st-ink-faint) / 0.35);
+  transition: background-color 160ms ease;
+}
+.st-legend[data-active='true'] .st-legend-swatch {
+  background: hsl(var(--st-series, var(--st-ink-mid)));
+}
+
+/* Recharts paints its own focus/active outlines on every <Bar>; without
+   this a click leaves a stock blue-black rectangle behind the bar. */
+.stats-scope .recharts-wrapper:focus,
+.stats-scope .recharts-surface:focus,
+.stats-scope .recharts-layer:focus { outline: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .st-kpi,
+  .st-picker,
+  .st-seg-btn,
+  .st-tab,
+  .st-legend,
+  .st-link,
+  .st-option,
+  .st-meter-fill {
+    transition-duration: 1ms;
+  }
+}

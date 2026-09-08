@@ -37,10 +37,10 @@
 
 ## Design system
 
-The app ships **two** visual systems. Know which one you are in before styling
-anything.
+The app ships **three** visual systems. Know which one you are in before
+styling anything.
 
-**Global (everything except the schedule list).** shadcn tokens in
+**Global (everything except the schedule list and the Stats page).** shadcn tokens in
 `frontend/index.css`, retuned away from stock. Three things about them are
 load-bearing:
 
@@ -78,8 +78,9 @@ product. `font-mono` in Tailwind still maps to the generic system stack, so
 mono has to go through `.nav-mono` or `var(--sch-mono)`.
 
 **Icons: `@phosphor-icons/react`, never `lucide-react`,** in the nav shell
-(`components/nav/`, `AppSidebar.tsx`, `lib/nav.ts`, `App.tsx`) and everywhere
-in the schedule (`components/schedule/`, `pages/Schedule.tsx`). Phosphor takes
+(`components/nav/`, `AppSidebar.tsx`, `lib/nav.ts`, `App.tsx`), everywhere in
+the schedule (`components/schedule/`, `pages/Schedule.tsx`), and everywhere in
+Stats (`components/stats/`, `pages/Stats.tsx`). Phosphor takes
 a `weight` prop (`regular` / `bold` / `fill`), **not** `strokeWidth` -- a
 `strokeWidth` passed to a Phosphor icon lands on the `<svg>` and does nothing.
 Active nav items use `weight="fill"`, small glyphs that need to survive at
@@ -87,6 +88,11 @@ Active nav items use `weight="fill"`, small glyphs that need to survive at
 Stats, Strategy, Login, dialogs, and the shadcn primitives in `lib/shadcn/`)
 is **still on lucide** -- that is a known, deliberate boundary, not an
 oversight; porting a page means porting all of its icons at once.
+`pages/Stats.tsx` imports no lucide at all any more, and neither does
+anything under `components/stats/`. The two shared components it still calls
+(`PlayerCombobox`, and `SeasonMultiSelect` via Schedule and Roster) are
+lucide-based and shared with pages that have not been ported, which is why
+they were left alone -- porting one means porting every page that renders it.
 
 The one addition to the shadcn tokens is the `--nav-accent*` family, defined
 in both theme blocks of `index.css`. The global palette has no accent at all
@@ -296,6 +302,212 @@ Structure and behaviour:
   and there is no `components.json`, so `npx shadcn add` will not work -- add the
   file by hand. Unused primitives are normal there (`separator`, `sheet` and
   `tooltip` currently have no importers).
+
+**Stats (`frontend/components/stats/`).** A scoped system under
+`.stats-scope`, defined in `components/stats/stats-theme.css`, covering the
+whole page -- every tab, every panel, both tables and the standings dialog.
+There is no shadcn `Card` left on Stats and no `lucide` import. Same
+architecture as the schedule ledger and deliberately so -- namespaced
+`--st-*` / `.st-*`, pure neutrals, hairlines not shadows, no radius above
+6px, Geist Mono for every number. Read the ledger's rules first; the ones
+below are the ones that are specific to a page whose subject is numbers.
+
+- **Three colour families, and the third one is what is new.** The neutral
+  ramp and the one cyan accent are the same as everywhere else. On top of
+  them sit `--st-goals` / `--st-assists` / `--st-turnovers`: semantic data,
+  used four ways each (the chart bar, the figure's ink, a chip's text, and
+  that chip's field at 10% with a 22% edge), exactly the way the ledger uses
+  win/loss/tie. Light takes the deep end of each hue and dark the bright
+  end; all three clear 4.5:1 on their own theme's panel, so each doubles as
+  text without needing a second "ink" variant.
+- **Assists is violet, not cyan, and that is not a taste.** Cyan is the
+  app's state accent. A chart full of cyan bars sitting under a cyan "you
+  are here" tab rail is the same collision the olive accent had with the
+  win/loss colours -- the accent stops meaning anything. Violet sits ~65
+  degrees clear of the cyan, of the green and of the amber. Turnovers is
+  amber rather than red because red is the ledger's *loss* colour and a
+  turnover is a caution, not a result.
+- **The accent is spent on exactly two things: the active tab's rail and the
+  checked state in a filter popover.** Not on the leader's crest -- "top
+  scorer" is a fact about the data, not a state, and a ring there was
+  decoration. Not on the active filter segment either: a filter says which
+  slice you are looking at, the accent says where you are in the app, and
+  spending it on both leaves them wearing one colour in one header. The
+  active segment is a raised neutral surface instead.
+- **A card binds one series and everything inside reads it.** `--st-series`
+  is set once by `.st-goals` on the card; the figure, the overline's glyph,
+  the chip and the meter fill all resolve from it, so a card cannot end up
+  with a green number over an amber bar. `.st-strip-cell` deliberately
+  **resets** it to `--st-ink` -- without that reset the binding leaks into
+  the footer and paints the team card's "Allowed" the same green as a
+  positive point differential, which says the opposite of what it means.
+- **All three KPI cards have one anatomy**: overline, identity, hero figure,
+  hairline-separated footer strip. That is why the leader cards carry the
+  player's *other* two numbers -- it fills the card, it is genuinely useful,
+  and it is what keeps the three the same object rather than two designs.
+  The strip is two columns at every width: four across fits only if
+  "ALLOWED" sits ~2px inside its cell on a third-width card, which does not
+  survive a font fallback.
+- **The strip pins itself with `margin-top: auto` in the stylesheet, not
+  with a `mt-auto` utility.** Both are one class of specificity, so which
+  one won came down to whether Vite injected the scoped stylesheet before or
+  after Tailwind's utilities layer.
+- **`PerformanceChart` takes `players` and nothing else** -- no query, no
+  filter state -- the same boundary `GameRow` keeps against `games`.
+  `pages/Stats.tsx` is the only place that knows what a `player_stats` row
+  is; `PlayerLine` is what crosses.
+- **The chart has no x-axis on purpose.** A numeric axis under a ranked list
+  is a ruler nobody reads, so the value is printed at the tip of its own bar
+  (`LabelList`) instead. `<XAxis hide />` still has to be present to
+  establish the numeric domain, and its domain carries 12% headroom so the
+  printed value stays inside the plot.
+- **Recharts offsets a custom axis tick by `tickSize + tickMargin`.** The
+  YAxis sets both to 0 so the tick's `x` is the axis's own right edge and
+  `NameTick`'s offsets are measured from something real. Left at the
+  defaults you get `width - 8`, the rank column lands at -6, single-digit
+  ranks are clipped away entirely and double-digit ones lose their leading
+  digit -- which looks exactly like a data bug and is not one.
+- **Series colours reach Recharts as `hsl(var(--st-goals))`,** not as hex.
+  SVG resolves custom properties from the element's own context and the
+  chart renders inside `.stats-scope`, so the bars re-theme on the dark
+  toggle for free. Hardcode a hex and one theme is wrong.
+- **Radix popovers portal to `<body>`, outside the scope.** Any
+  `PopoverContent` in this system has to carry `stats-scope` in its own
+  className or every `--st-*` inside it resolves to nothing. The Recharts
+  tooltip does not -- it renders inside the chart wrapper.
+- **Floating layers are the one place a shadow is allowed.** The tooltip and
+  the filter popovers have no surface to seam against, so they take
+  `--st-lift`. Nothing in the document flow does.
+- **The filter lives in the page header and its state lives in `Stats()`.**
+  It was a titled "Filters" Card with a `<Label>` over a full-width
+  `<Select>` -- roughly a third of the first screen spent saying "this
+  season" before a number appeared. `PlayerStatsView` now takes
+  `filterType` / `selectedSeasonIds` / `selectedGameIds` / `games` /
+  `allSeasons` as props; do not re-fetch games or seasons down there.
+- **The season default applies exactly once, guarded by a ref.** The old
+  guard was "filterType is still `all` and nothing is selected", which is
+  also true the moment someone deliberately switches back to All-time -- so
+  any later refetch of games or seasons dragged them back into a season.
+
+The lower half -- chemistry, the assist matrix, the progression chart -- adds
+these:
+
+- **One dropdown idiom for the whole page** (`components/stats/Picker.tsx`,
+  `MultiPicker` / `SinglePicker`). It replaced three separate controls doing
+  the same job: a shadcn `<Select>` under a `<Label>`, and two hand-rolled
+  click-outside popovers (`SeasonMultiSelect`, `PlayerMultiSelect`) with their
+  own trigger styling and their own lucide chevrons. `PlayerMultiSelect` was
+  deleted with its last caller; `SeasonMultiSelect` stays because Schedule and
+  Roster still use it. Add a fourth dropdown here and it goes through Picker.
+- **The circular assist graph is gone and should not come back.** It was two
+  320px rings -- every player on the circumference, every pairing a curved
+  line across the middle with a count floating on it -- and at a real roster
+  size that is a hairball: the lines cross each other and the labels, and the
+  node positions carried no information at all (they came out of a greedy
+  farthest-point placement whose only job was stopping the busiest nodes from
+  overlapping). The only question it could answer was the one you got by
+  tapping a node to dim everything else, and that question -- "who does this
+  player connect with" -- is a list. `spreadOrder`, `circleLayout`,
+  `mergeBidirectionalEdges` and `DirectedNetworkGraph` went with it, ~225
+  lines.
+- **The two rings were also the same data twice.** "Assists" and "Goals" drew
+  identical edges and differed only in which end of an edge counted as the
+  selected player's own. That is what the matrix's two columns are, which is
+  why they take *different* series colours: "assisted by" counts goals the
+  selected player scored (green), "assisted to" counts assists they threw
+  (violet). One shared "connection" colour would lose that.
+- **A meter gets its own fixed track (`.st-track`), never the flexible cell.**
+  Inside the name cell it stretches to whatever the panel is wide -- 740px on
+  the chemistry list, at which point it reads as a loading bar rather than as
+  a comparison -- and because the name cell is the row's only `1fr` it also
+  strands the count 700px from the name it belongs to. Same reasoning as the
+  ledger's fixed verdict track; verify it the same way, by measuring.
+- **The chemistry row drops its meter below `sm` (`.st-track--optional`).** It
+  carries two names where every other row carries one, so it runs out of width
+  first: at 360px each name was being shrunk to ~31px, which ellipsises
+  "Marisol O." to "Ma…". The number already says which pairing is biggest; a
+  name cut to two characters says nothing.
+- **Progression lines are keyed by player id, not display name.** `point[
+  String(p.id)]`, with `name` only for the legend and tooltip. Keyed by name,
+  two players called "Sam" collapse onto one line and silently sum.
+- **Focus + dim, and the focused line is the accent.** Eight lines in eight
+  unrelated hues is spaghetti -- no line is readable because every line
+  competes -- and the twelve-colour palette it drew from meant a player
+  changed colour whenever the selection did. Now every line is
+  `--st-ink / 0.16` and one is `--st-accent`. That is a correct use of the
+  accent: "the line you are looking at" is state. The dimmed lines still
+  carry the shape of the pack, which is the context that makes one line worth
+  following.
+- **Dimmed lines are painted before the focused one.** SVG has no `z-index`;
+  paint order is the only stacking there is, so the `<Line>` array is sorted
+  by `id === focusId` before it renders.
+- **Focus is derived, never stored in an effect.** A pinned player who drops
+  out of range -- a filter change, subs toggled off -- simply stops matching
+  and the focus falls back to the leader. The assist matrix's selected player
+  works the same way. An effect resetting either would fight the click that
+  caused the change.
+- **The progression chart keeps a horizontal-only hairline grid** at
+  `--st-rule`, which is not Recharts' stock dashed grey grid but is also not
+  nothing: a cumulative chart with no reference lines is a shape you cannot
+  read a value off.
+- **The season picker is numeric, with `ALL_SEASONS` (-1) as the sentinel.**
+  It used to be a string that was either an id or the literal `'__all__'`,
+  which every call site had to know about. `null` is a third state and means
+  "not resolved yet" -- it is what stops the fetch firing an all-time query on
+  mount and then immediately refiring for the default season.
+
+The two tables -- Player Rankings and League Standings -- add these:
+
+- **Numbers right, text left, and the rule cannot hang off `:first-child`.**
+  It used to, and it was true right up until both tables grew a rank gutter
+  and the name became the *second* cell -- at which point every player and
+  team name silently right-aligned and drifted away from the form dots
+  underneath it. `.st-th--left` / `.st-td--left` mark the text columns
+  explicitly.
+- **`.st-name` sets its own font-family, and that is load-bearing.** In a
+  list row it inherits Geist and looks right; inside a `.st-td` it would
+  inherit Geist Mono, so the same player rendered in two typefaces on two
+  tabs of the same page. It is also `display: block`, because the ellipsis
+  needs a block box to clip against.
+- **A rank gutter shows row position, not a stored rank.** Sort the rankings
+  by turnovers and "1" has to mean the top of what is on screen, or the
+  column is lying about the order you just chose. Standings is the opposite
+  and shows the real rank, because there the sort is a way to *read* a table
+  whose ordering is defined by the league.
+- **Both tables scroll inside their own panel (`.st-scroll`), never the
+  page.** Eight columns of `white-space: nowrap` do not fit a 360px phone and
+  never will; the panel is the thing that is too narrow, not the document.
+- **The column system lives in `components/stats/columns.ts` and reads
+  `PlayerLine`,** not `PlayerStat`. It used to read the raw SQL row, whose
+  fields are the strings Postgres returns from a `SUM()`, so every column
+  evaluation ran its own `parseInt`. The parsing happens once now, where the
+  rest of the page already does it.
+- **`RankingsTable` owns its own display preferences.** Visible columns,
+  widths, sort, and any formula columns are per-device viewing state in
+  localStorage that nobody else ever sees, so they live in the component
+  rather than in `PlayerStatsView` -- which took ~120 lines of state and
+  handlers out of a component that is about stats, not about a table's
+  chrome.
+- **The formula builder uses segmented controls, not `<Select>`s.** With
+  three or four options apiece, a dropdown hides the whole choice behind a
+  click and saves no space at all.
+- **Sort sentinels are -100 / -101, deliberately not -1.**
+  `allColumns.findIndex` returns -1 for a column that no longer exists, and a
+  sentinel colliding with that would make a stale sort read back as "no sort"
+  while the table stayed sorted.
+- **`StandingsTable` takes rows, not a league.** It never sees a
+  `league_teams` row, a stage, or an `eff_home_score`; `StandingsRow` is what
+  crosses. Same boundary `GameRow` keeps against `games`, and the reason the
+  form guide is computed on the page side where the league's own rules
+  already live.
+- **The form guide is squares, not circles.** Nothing else in the product is
+  a circular indicator, and a row of coloured dots reads as a loading spinner
+  caught mid-animation. They bind `--st-up` / `--st-down` / `--st-tie`, the
+  same three tokens the point differential and the head-to-head strip use, so
+  a win is one colour everywhere on the page.
+- **Radix Dialogs portal to `<body>` exactly as popovers do.** The manage-
+  standings `DialogContent` carries `stats-scope` itself; without it every
+  `--st-*` inside resolves to nothing.
 
 Verifying a visual change: there is no test harness checked in. Render the
 component against mock data from a throwaway Vite entry at the `frontend/` root
