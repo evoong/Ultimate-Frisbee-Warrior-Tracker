@@ -1,4 +1,4 @@
-import { Moon, Sun } from "lucide-react"
+import { Moon, Sun } from "@phosphor-icons/react"
 import { cn } from "../../lib/shadcn/utils"
 
 type ThemeToggleProps = {
@@ -32,9 +32,9 @@ export default function ThemeToggle({ theme, toggleTheme, className }: ThemeTogg
       )}
     >
       {theme === "dark" ? (
-        <Sun className="size-[18px]" strokeWidth={1.75} />
+        <Sun className="size-[18px]" weight="regular" />
       ) : (
-        <Moon className="size-[18px]" strokeWidth={1.75} />
+        <Moon className="size-[18px]" weight="regular" />
       )}
     </button>
   )

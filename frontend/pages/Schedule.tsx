@@ -33,7 +33,7 @@ import GameLedger from '../components/schedule/GameLedger'
 import IconButton, { SCHEDULE_ICON_PROPS } from '../components/schedule/IconButton'
 import type { MatchData, MatchDetail, MatchOutcome } from '../components/schedule/types'
 import { useAuth } from '../contexts/AuthContext'
-import { Calendar, Plus, Minus, Trophy, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Target, TrendingUp, PlusCircle, Trash2, Edit2, Save, X, Users, LayoutList, CalendarDays, StickyNote, AlertTriangle, RefreshCw, ArrowLeftRight, Undo2, Check, ChevronsUpDown, GripVertical, Table2 } from 'lucide-react'
+import { ArrowClockwise, ArrowCounterClockwise, ArrowsLeftRight, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, CaretUp, CaretUpDown, Check, DotsSixVertical, FloppyDisk, ListBullets, Minus, NoteBlank, PencilSimple, Plus, PlusCircle, Table, Target, Trash, TrendUp, Trophy, Users, Warning, X } from '@phosphor-icons/react'
 
 // A game counts as "imminent" from 30 minutes before its start time to 30
 // minutes after, the window where you're about to score it or already are.
@@ -1342,7 +1342,7 @@ export default function Schedule() {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <button onClick={handleBack} className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors">
-            <ChevronLeft className="w-5 h-5" />
+            <CaretLeft className="w-5 h-5" />
             <span className="text-sm font-medium">Back to Schedule</span>
           </button>
           {can.record && (
@@ -1351,14 +1351,14 @@ export default function Schedule() {
                 onClick={handleOpenEditGame}
                 className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
               >
-                <Edit2 className="w-4 h-4" />
+                <PencilSimple className="w-4 h-4" />
                 Edit
               </button>
               <button
                 onClick={() => setDeleteConfirmId(selectedGame.id)}
                 className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-destructive transition-colors"
               >
-                <Trash2 className="w-4 h-4" />
+                <Trash className="w-4 h-4" />
                 Delete
               </button>
             </div>
@@ -1372,7 +1372,7 @@ export default function Schedule() {
             <div className="text-center">
               <div className="text-lg font-bold text-foreground leading-snug break-words">vs {selectedGame.opponent}</div>
               <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground mt-1">
-                <Calendar className="w-3 h-3 flex-shrink-0" />
+                <CalendarBlank className="w-3 h-3 flex-shrink-0" />
                 <span>
                   {formatDate(selectedGame.game_date)} · {formatTime(selectedGame.game_time)}
                   {selectedGame.season_id && getSeasonLabel(selectedGame.season_id) ? ` · ${getSeasonLabel(selectedGame.season_id)}` : ''}
@@ -1405,7 +1405,7 @@ export default function Schedule() {
                       {OUTCOME_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
                     </SelectContent>
                   </Select>
-                  <button onClick={handleSaveOutcome} className="text-green-600 hover:text-green-700"><Save className="w-4 h-4" /></button>
+                  <button onClick={handleSaveOutcome} className="text-green-600 hover:text-green-700"><FloppyDisk className="w-4 h-4" /></button>
                   <button onClick={() => setEditingOutcome(false)} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
                 </div>
               ) : (
@@ -1418,7 +1418,7 @@ export default function Schedule() {
                   )}
                   {can.record && (
                     <button onClick={() => { setEditingOutcome(true); setOutcomeValue(selectedGame.outcome_override ?? '') }} className="text-muted-foreground hover:text-foreground">
-                      <Edit2 className="w-3.5 h-3.5" />
+                      <PencilSimple className="w-3.5 h-3.5" />
                     </button>
                   )}
                 </div>
@@ -1431,10 +1431,10 @@ export default function Schedule() {
         {/* Tab bar */}
         <div className="flex gap-1 bg-muted rounded-lg p-1">
           {[
-            { key: 'events' as const, icon: LayoutList, label: 'Events' },
-            { key: 'boxscore' as const, icon: Table2, label: 'Box Score' },
+            { key: 'events' as const, icon: ListBullets, label: 'Events' },
+            { key: 'boxscore' as const, icon: Table, label: 'Box Score' },
             { key: 'lineups' as const, icon: Users, label: 'Lineups' },
-            { key: 'notes' as const, icon: StickyNote, label: 'Notes' },
+            { key: 'notes' as const, icon: NoteBlank, label: 'Notes' },
           ].map(({ key, icon: Icon, label }) => (
             <button key={key} onClick={() => setActiveTab(key)}
               className={`flex-1 flex items-center justify-center gap-1.5 text-xs py-2 px-2 rounded-md font-medium transition-colors ${activeTab === key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
@@ -1452,7 +1452,7 @@ export default function Schedule() {
               onClick={() => setShowAddEvent(v => !v)}
             >
               <span className="text-base font-semibold flex items-center gap-2"><PlusCircle className="w-4 h-4" />Add Event</span>
-              {showAddEvent ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+              {showAddEvent ? <CaretUp className="w-4 h-4 text-muted-foreground" /> : <CaretDown className="w-4 h-4 text-muted-foreground" />}
             </button>
             {showAddEvent && (
               <CardContent className="pt-0 space-y-3">
@@ -1492,7 +1492,7 @@ export default function Schedule() {
                         aria-label="Swap scorer and assister"
                         className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-0.5 rounded hover:bg-accent"
                       >
-                        <ArrowLeftRight className="w-3 h-3" />
+                        <ArrowsLeftRight className="w-3 h-3" />
                         <span>swap</span>
                       </button>
                     </div>
@@ -1548,7 +1548,7 @@ export default function Schedule() {
                   variant="outline"
                   className="w-full h-8 text-xs font-medium text-muted-foreground hover:text-foreground flex items-center justify-center gap-1.5 disabled:opacity-40"
                 >
-                  <Undo2 className="w-3.5 h-3.5" />
+                  <ArrowCounterClockwise className="w-3.5 h-3.5" />
                   Undo last event
                 </Button>
               </CardContent>
@@ -1592,7 +1592,7 @@ export default function Schedule() {
                               <PlayerCombobox players={playerOptions} value={editAssisterId || '__none__'} onValueChange={setEditAssisterId} placeholder="Select player..." className="w-full bg-card border-border" />
                             </div>
                             <div className="flex gap-2">
-                              <Button size="sm" onClick={handleSaveEventEdit} className="flex-1 bg-primary text-primary-foreground h-8 text-xs"><Save className="w-3 h-3 mr-1" />Save</Button>
+                              <Button size="sm" onClick={handleSaveEventEdit} className="flex-1 bg-primary text-primary-foreground h-8 text-xs"><FloppyDisk className="w-3 h-3 mr-1" />Save</Button>
                               <Button size="sm" variant="outline" onClick={() => setEditingEventId(null)} className="h-8 text-xs"><X className="w-3 h-3" /></Button>
                             </div>
                           </div>
@@ -1617,7 +1617,7 @@ export default function Schedule() {
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${isGoal ? 'bg-green-100 dark:bg-green-950' : isOpponentGoal ? 'bg-red-100 dark:bg-red-950' : 'bg-orange-100 dark:bg-orange-950'}`}>
                           {isGoal && <Target className="w-5 h-5 text-green-600 dark:text-green-400" />}
                           {isOpponentGoal && <Target className="w-5 h-5 text-red-600 dark:text-red-400" />}
-                          {isTurnover && <TrendingUp className="w-5 h-5 text-orange-600 dark:text-orange-400" />}
+                          {isTurnover && <TrendUp className="w-5 h-5 text-orange-600 dark:text-orange-400" />}
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="font-medium text-foreground text-sm">
@@ -1635,13 +1635,13 @@ export default function Schedule() {
                               className="p-1.5 rounded hover:bg-accent transition-colors cursor-grab touch-none"
                               aria-label="Drag to reorder event"
                             >
-                              <GripVertical className="w-4 h-4 text-muted-foreground hover:text-foreground" />
+                              <DotsSixVertical className="w-4 h-4 text-muted-foreground hover:text-foreground" />
                             </button>
                             <button onClick={() => handleEditEvent(event)} className="p-1.5 rounded hover:bg-accent transition-colors" aria-label="Edit event">
-                              <Edit2 className="w-4 h-4 text-muted-foreground hover:text-foreground" />
+                              <PencilSimple className="w-4 h-4 text-muted-foreground hover:text-foreground" />
                             </button>
                             <button onClick={() => handleDeleteEvent(event.id)} className="p-1.5 rounded hover:bg-destructive/10 transition-colors" aria-label="Delete event">
-                              <Trash2 className="w-4 h-4 text-muted-foreground hover:text-destructive" />
+                              <Trash className="w-4 h-4 text-muted-foreground hover:text-destructive" />
                             </button>
                           </div>
                         )}
@@ -1759,7 +1759,7 @@ export default function Schedule() {
                         className="w-full h-8 justify-between font-normal text-sm bg-card border-border"
                       >
                         <span className="truncate">Select players...</span>
-                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        <CaretUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                       </Button>
                     </PopoverTrigger>
                     {/* Matches the trigger's own width via Radix's exposed
@@ -1851,7 +1851,7 @@ export default function Schedule() {
                           aria-label="Delete this saved lineup"
                           className="text-muted-foreground hover:text-destructive transition-colors shrink-0"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash className="w-4 h-4" />
                         </button>
                       )}
                     </div>
@@ -1970,7 +1970,7 @@ export default function Schedule() {
                             className="p-1 -ml-1 shrink-0 cursor-grab active:cursor-grabbing touch-none"
                             aria-label={`Drag to reorder ${g.lineup_name}`}
                           >
-                            <GripVertical className="w-3.5 h-3.5 text-muted-foreground" />
+                            <DotsSixVertical className="w-3.5 h-3.5 text-muted-foreground" />
                           </button>
                         )}
                         {editingGroupId === g.id ? (
@@ -1994,7 +1994,7 @@ export default function Schedule() {
                             className="p-1 rounded hover:bg-accent"
                             aria-label={`Rename ${g.lineup_name}`}
                           >
-                            <Edit2 className="w-3 h-3 text-muted-foreground" />
+                            <PencilSimple className="w-3 h-3 text-muted-foreground" />
                           </button>
                         )}
                         <span className="text-xs text-muted-foreground">{entries.length} players</span>
@@ -2004,7 +2004,7 @@ export default function Schedule() {
                         <GenderRatio entries={entries} className="ml-auto" />
                         {can.record && (
                           <button onClick={() => setDeleteGroupConfirm(g)} className="p-1 rounded hover:bg-destructive/10" aria-label={`Delete ${g.lineup_name}`}>
-                            <Trash2 className="w-3.5 h-3.5 text-muted-foreground hover:text-destructive" />
+                            <Trash className="w-3.5 h-3.5 text-muted-foreground hover:text-destructive" />
                           </button>
                         )}
                       </div>
@@ -2028,7 +2028,7 @@ export default function Schedule() {
                                   className="p-1 -ml-1 mt-0.5 shrink-0 cursor-grab active:cursor-grabbing touch-none"
                                   aria-label={`Drag to reorder ${e.display_name}`}
                                 >
-                                  <GripVertical className="w-3.5 h-3.5 text-muted-foreground" />
+                                  <DotsSixVertical className="w-3.5 h-3.5 text-muted-foreground" />
                                 </button>
                               )}
                               <PlayerAvatar photoUrl={e.photo_url} name={e.display_name} genderMatch={e.gender_match} size="sm" />
@@ -2084,10 +2084,10 @@ export default function Schedule() {
           <Card className="bg-card text-card-foreground border-border">
             <CardHeader>
               <CardTitle className="text-base flex items-center justify-between">
-                <span className="flex items-center gap-2"><StickyNote className="w-4 h-4" />Game Notes</span>
+                <span className="flex items-center gap-2"><NoteBlank className="w-4 h-4" />Game Notes</span>
                 {can.record && !editingNotes && (
                   <button onClick={() => { setEditingNotes(true); setNotesValue(selectedGame.notes ?? '') }} className="text-muted-foreground hover:text-foreground">
-                    <Edit2 className="w-4 h-4" />
+                    <PencilSimple className="w-4 h-4" />
                   </button>
                 )}
               </CardTitle>
@@ -2104,7 +2104,7 @@ export default function Schedule() {
                   />
                   <div className="flex gap-2">
                     <Button onClick={handleSaveNotes} size="sm" className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90 h-9">
-                      <Save className="w-3.5 h-3.5 mr-1.5" />Save Notes
+                      <FloppyDisk className="w-3.5 h-3.5 mr-1.5" />Save Notes
                     </Button>
                     <Button onClick={() => setEditingNotes(false)} size="sm" variant="outline" className="h-9"><X className="w-3.5 h-3.5" /></Button>
                   </div>
@@ -2115,12 +2115,12 @@ export default function Schedule() {
                     <p className="text-sm text-foreground whitespace-pre-wrap">{selectedGame.notes}</p>
                   ) : can.record ? (
                     <button onClick={() => setEditingNotes(true)} className="w-full text-center py-8 text-muted-foreground text-sm hover:text-foreground transition-colors">
-                      <StickyNote className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                      <NoteBlank className="w-10 h-10 mx-auto mb-2 opacity-40" />
                       No notes yet, tap to add
                     </button>
                   ) : (
                     <div className="w-full text-center py-8 text-muted-foreground text-sm">
-                      <StickyNote className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                      <NoteBlank className="w-10 h-10 mx-auto mb-2 opacity-40" />
                       No notes yet
                     </div>
                   )}
@@ -2331,18 +2331,20 @@ export default function Schedule() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-foreground">Schedule</h1>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-[1.375rem] font-semibold tracking-[-0.022em] text-foreground">Schedule</h1>
         {/* Utility cluster. Every control here is the same 34px square with a
-            16px lucide glyph at strokeWidth 1.75 (see IconButton) so the row
-            reads as one instrument panel rather than four borrowed buttons. */}
+            16px Phosphor glyph at "regular" weight (see IconButton) so the row
+            reads as one instrument panel rather than four borrowed buttons.
+            The one primary action -- add a game -- is that same square with
+            its ink inverted, not a coloured chip parked on the end. */}
         <div className="schedule-scope flex items-center gap-1.5">
           <div className="sch-icon-group">
             <IconButton label="List view" active={viewMode === 'list'} onClick={() => setViewMode('list')}>
-              <LayoutList {...SCHEDULE_ICON_PROPS} />
+              <ListBullets {...SCHEDULE_ICON_PROPS} />
             </IconButton>
             <IconButton label="Calendar view" active={viewMode === 'calendar'} onClick={() => setViewMode('calendar')}>
-              <CalendarDays {...SCHEDULE_ICON_PROPS} />
+              <CalendarDots {...SCHEDULE_ICON_PROPS} />
             </IconButton>
           </div>
           {can.record && (
@@ -2351,12 +2353,12 @@ export default function Schedule() {
               onClick={handleSyncJamNow}
               disabled={syncingJam}
             >
-              <RefreshCw {...SCHEDULE_ICON_PROPS} className={`h-4 w-4 ${syncingJam ? 'animate-spin' : ''}`} />
+              <ArrowClockwise {...SCHEDULE_ICON_PROPS} className={`h-4 w-4 ${syncingJam ? 'animate-spin' : ''}`} />
             </IconButton>
           )}
           {can.record && (seasons as Season[] | undefined)?.length ? (
             <IconButton label="Edit season details" onClick={() => handleOpenEditSeason()}>
-              <Edit2 {...SCHEDULE_ICON_PROPS} />
+              <PencilSimple {...SCHEDULE_ICON_PROPS} />
             </IconButton>
           ) : null}
           {can.record && (
@@ -2519,7 +2521,7 @@ export default function Schedule() {
         <Card className="bg-card border-amber-500/30">
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-500" />
+              <Warning className="w-4 h-4 text-amber-500" />
               Calendar Sync — {jamConflicts.length} {jamConflicts.length === 1 ? 'game needs' : 'games need'} review
             </CardTitle>
           </CardHeader>
@@ -2575,13 +2577,13 @@ export default function Schedule() {
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
               <button onClick={() => setCalendarDate(new Date(calYear, calMonth - 1, 1))} className="p-1.5 rounded hover:bg-accent">
-                <ChevronLeft className="w-4 h-4 text-muted-foreground" />
+                <CaretLeft className="w-4 h-4 text-muted-foreground" />
               </button>
               <CardTitle className="text-base">
                 {calendarDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
               </CardTitle>
               <button onClick={() => setCalendarDate(new Date(calYear, calMonth + 1, 1))} className="p-1.5 rounded hover:bg-accent">
-                <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                <CaretRight className="w-4 h-4 text-muted-foreground" />
               </button>
             </div>
           </CardHeader>
@@ -2643,7 +2645,7 @@ export default function Schedule() {
           ) : sortedGames.length === 0 ? (
             <Card className="bg-card text-card-foreground border-border">
               <CardContent className="py-12 text-center">
-                <Calendar className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
+                <CalendarBlank className="w-16 h-16 text-muted-foreground mx-auto mb-4 opacity-50" />
                 <p className="text-muted-foreground">No games found</p>
               </CardContent>
             </Card>
@@ -2660,7 +2662,9 @@ export default function Schedule() {
                     {/* The rule runs to the fold: it is the section divider,
                         so the heading does not also need a box around it. */}
                     <span aria-hidden className="h-px flex-1" style={{ background: 'hsl(var(--sch-rule-strong))' }} />
-                    {showUpcoming ? <ChevronUp {...SCHEDULE_ICON_PROPS} /> : <ChevronDown {...SCHEDULE_ICON_PROPS} />}
+                    {showUpcoming
+                      ? <CaretUp className="h-3.5 w-3.5" weight="bold" />
+                      : <CaretDown className="h-3.5 w-3.5" weight="bold" />}
                   </button>
                   {showUpcoming && (
                     <GameLedger parkIndex={0}>
@@ -2678,7 +2682,9 @@ export default function Schedule() {
                     <span>Played</span>
                     <span className="tabular-nums opacity-60">{pastGames.length}</span>
                     <span aria-hidden className="h-px flex-1" style={{ background: 'hsl(var(--sch-rule-strong))' }} />
-                    {showPlayed ? <ChevronUp {...SCHEDULE_ICON_PROPS} /> : <ChevronDown {...SCHEDULE_ICON_PROPS} />}
+                    {showPlayed
+                      ? <CaretUp className="h-3.5 w-3.5" weight="bold" />
+                      : <CaretDown className="h-3.5 w-3.5" weight="bold" />}
                   </button>
                   {showPlayed && (
                     <GameLedger>

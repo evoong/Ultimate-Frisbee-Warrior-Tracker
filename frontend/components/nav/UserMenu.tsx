@@ -1,5 +1,5 @@
 import { useState, type ComponentType } from "react"
-import { ChevronsUpDown, KeyRound, LogOut, Megaphone, Settings } from "lucide-react"
+import { CaretUpDown, GearSix, Key, Megaphone, SignOut } from "@phosphor-icons/react"
 import type { TeamRole } from "../../lib/authClient"
 import { Avatar, AvatarFallback } from "../../lib/shadcn/avatar"
 import { Popover, PopoverContent, PopoverTrigger } from "../../lib/shadcn/popover"
@@ -23,7 +23,7 @@ type UserMenuProps = {
   variant?: "sidebar" | "bar"
 }
 
-type MenuAction = { icon: ComponentType<{ className?: string; strokeWidth?: number }>; label: string; onSelect: () => void }
+type MenuAction = { icon: ComponentType<{ className?: string; weight?: "regular" | "bold" }>; label: string; onSelect: () => void }
 
 /**
  * Everything that used to be a separate row in the sidebar footer -- the raw
@@ -58,8 +58,8 @@ export default function UserMenu({
     // A guest holds no membership on the team they are browsing, so the
     // settings dialog would open in its own view-only state and offer them
     // nothing. Hiding it is what the database would do anyway.
-    ...(isGuest ? [] : [{ icon: Settings, label: "Team settings", onSelect: openSettings }]),
-    ...(openPasskeys ? [{ icon: KeyRound, label: "Passkeys", onSelect: openPasskeys }] : []),
+    ...(isGuest ? [] : [{ icon: GearSix, label: "Team settings", onSelect: openSettings }]),
+    ...(openPasskeys ? [{ icon: Key, label: "Passkeys", onSelect: openPasskeys }] : []),
     { icon: Megaphone, label: "Feedback", onSelect: openFeedback },
   ]
 
@@ -97,9 +97,9 @@ export default function UserMenu({
                   {subtitle}
                 </span>
               </span>
-              <ChevronsUpDown
+              <CaretUpDown
                 className="size-3.5 shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden"
-                strokeWidth={2}
+                weight="bold"
               />
             </>
           )}
@@ -145,7 +145,7 @@ export default function UserMenu({
               onClick={run(onSelect)}
               className="flex w-full items-center gap-2.5 rounded-[5px] px-2 py-[7px] text-left text-[13px] text-foreground/85 transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:outline-none"
             >
-              <Icon className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
+              <Icon className="size-4 shrink-0 text-muted-foreground" weight="regular" />
               {label}
             </button>
           ))}
@@ -158,7 +158,7 @@ export default function UserMenu({
           onClick={run(logout)}
           className="flex w-full items-center gap-2.5 rounded-[5px] px-2 py-[7px] text-left text-[13px] text-destructive transition-colors hover:bg-destructive/10 focus-visible:bg-destructive/10 focus-visible:outline-none"
         >
-          <LogOut className="size-4 shrink-0" strokeWidth={1.75} />
+          <SignOut className="size-4 shrink-0" weight="regular" />
           Sign out
         </button>
       </PopoverContent>

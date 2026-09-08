@@ -23,19 +23,28 @@
     -->
     <meta name="robots" content="index, follow" />
     <meta name="googlebot" content="index, follow, max-image-preview:large, max-snippet:-1" />
-    <meta name="theme-color" content="#18181b" />
+    <meta name="theme-color" content="#0a0a0a" />
     <link rel="canonical" href="https://your-domain.example/" />
     <!--
-      Space Mono carries every number and every piece of metadata in the
-      schedule ledger (see components/schedule/schedule-theme.css). It is
-      already this project's declared --font-mono in orgTheme.css, so this
-      is honouring existing design intent rather than introducing a new face.
-      Two weights only, display=swap, so nothing here blocks first paint.
+      Geist and Geist Mono, the two faces the whole app is set in.
+
+      Geist is a geometric grotesk drawn for interfaces: closed apertures, a
+      tall x-height and flat terminals, which is what keeps a 15px team name
+      legible at the density this ledger runs at. The mono is its companion,
+      so numbers and metadata sit on the same skeleton as the text beside
+      them rather than reading as a second design. Space Mono was here before
+      and was the wrong instrument -- a wide, quirky typewriter face with
+      slab serifs, which is exactly the retro texture this UI was asked to
+      shed.
+
+      Weight ranges rather than a fixed list: both ship as variable fonts, so
+      300-800 is one file, and the ledger genuinely uses the stops in between
+      (team names sit at 620, not 600). display=swap so nothing blocks paint.
     -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@300..800&family=Geist+Mono:wght@400..700&display=swap"
       rel="stylesheet"
     />
     <link

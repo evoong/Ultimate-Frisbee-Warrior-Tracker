@@ -34,40 +34,51 @@ type AppSidebarProps = {
 }
 
 /**
- * The active item carries a 3px olive rail on its left edge on top of a wash
- * of the same accent, and steps up to weight 600 at full ink. Inactive items
- * sit at 75% ink.
+ * The active item is a 2px accent bar on the left edge, full ink and weight
+ * 600 -- and nothing else. No fill.
  *
- * The wash is drawn from --nav-accent-wash rather than from --nav-accent
- * itself: the solid accent is a deep olive, and a deep olive at low alpha
- * loses its hue and reads as plain grey. The wash token is lighter and more
- * saturated for exactly this, and is only ever used at low alpha.
+ * The wash that used to sit behind it was doing the same job twice: a tinted
+ * block *and* a rail *and* a weight change, three signals for one bit of
+ * state. Worse, a low-alpha tint of a deep accent is a muddy grey by the time
+ * it lands, so the item read as "faintly shaded" rather than "selected", and
+ * every nav item ended up wearing a slightly different background. One
+ * high-contrast bar against a clean panel is louder than a fill and costs the
+ * panel none of its calm -- it is why Linear and Vercel both mark the current
+ * page this way.
  *
- * 75%, specifically: the point of dimming them is to push them back behind
- * the active item, but they are still the primary navigation and have to stay
- * readable. In light mode --sidebar-foreground at 0.75 over --sidebar-background
- * lands at ~4.8:1, just clear of the 4.5:1 floor; at 0.6 it falls to ~3.2:1,
- * which is a contrast failure dressed up as hierarchy. Dark mode has far more
- * headroom (~8:1 at the same alpha), so one value works for both.
+ * The glyph takes --nav-accent-ink and the label goes to full ink at weight
+ * 600. Between them the row reads as active from three feet away without a
+ * single pixel of background changing.
  *
- * The rail is drawn as a ::before *inside* the button rather than flush to the
- * sidebar's outer edge on purpose: the button carries `overflow-hidden` from
- * sidebarMenuButtonVariants and SidebarContent scrolls with `overflow-auto`,
- * so anything at a negative offset gets clipped by one or the other.
+ * Inactive items sit at 75% ink. The point of dimming them is to push them
+ * back behind the active item, but they are still the primary navigation and
+ * have to stay readable. In light mode --sidebar-foreground at 0.75 over
+ * --sidebar-background lands at ~5.9:1; at 0.6 it falls under 4.5:1, which is
+ * a contrast failure dressed up as hierarchy. Dark has far more headroom
+ * (~8:1 at the same alpha), so one value covers both.
+ *
+ * The rail is drawn as a ::before *inside* the button rather than flush to
+ * the sidebar's outer edge on purpose: the button carries `overflow-hidden`
+ * from sidebarMenuButtonVariants and SidebarContent scrolls with
+ * `overflow-auto`, so anything at a negative offset gets clipped by one or
+ * the other and silently disappears.
+ *
+ * The `data-[active=true]` overrides below are not belt-and-braces --
+ * sidebarMenuButtonVariants ships its own active fill, weight and colour, and
+ * these are what tailwind-merge collapses them into.
  */
 const NAV_ITEM_CLASS = cn(
-  "relative h-9 rounded-md text-sidebar-foreground/75 transition-colors",
-  "before:absolute before:left-0 before:top-1/2 before:h-0 before:w-[3px]",
+  "relative h-9 rounded-md text-[13.5px] text-sidebar-foreground/75 transition-colors",
+  "before:absolute before:left-0 before:top-1/2 before:h-0 before:w-[2px]",
   "before:-translate-y-1/2 before:rounded-r-full before:bg-[hsl(var(--nav-accent))]",
   "before:transition-[height] before:duration-200 before:ease-out before:content-['']",
   "motion-reduce:before:transition-none",
-  "[&>svg]:text-sidebar-foreground/60 [&>svg]:transition-colors",
+  "[&>svg]:text-sidebar-foreground/55 [&>svg]:transition-colors",
   "hover:bg-sidebar-accent hover:text-sidebar-foreground hover:[&>svg]:text-sidebar-foreground/80",
-  "data-[active=true]:bg-[hsl(var(--nav-accent-wash)/0.14)]",
+  "data-[active=true]:bg-transparent data-[active=true]:hover:bg-sidebar-accent",
   "data-[active=true]:font-semibold data-[active=true]:text-sidebar-foreground",
-  "data-[active=true]:before:h-5",
-  "data-[active=true]:[&>svg]:text-[hsl(var(--nav-accent-ink))]",
-  "data-[active=true]:hover:bg-[hsl(var(--nav-accent-wash)/0.2)]"
+  "data-[active=true]:before:h-[1.125rem]",
+  "data-[active=true]:[&>svg]:text-[hsl(var(--nav-accent-ink))]"
 )
 
 export default function AppSidebar({
@@ -117,7 +128,7 @@ export default function AppSidebar({
                     tooltip={label}
                     className={NAV_ITEM_CLASS}
                   >
-                    <Icon strokeWidth={1.75} />
+                    <Icon weight={activeTab === key ? "fill" : "regular"} />
                     <span>{label}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

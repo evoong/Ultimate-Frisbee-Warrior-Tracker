@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Check, ChevronsUpDown, Disc } from "lucide-react"
+import { CaretUpDown, Check, Disc } from "@phosphor-icons/react"
 import type { TeamMembership } from "../../lib/authClient"
 import { Popover, PopoverContent, PopoverTrigger } from "../../lib/shadcn/popover"
 import { cn } from "../../lib/shadcn/utils"
@@ -52,13 +52,13 @@ export default function WorkspaceSwitcher({
 
   const row = (
     <>
-      {/* The brand mark stays neutral. The olive is the app's one accent and
+      {/* The brand mark stays neutral. The cyan is the app's one accent and
           it means "this is the active thing" -- spending it on a logo, which
           is never active or inactive, is exactly the decoration the schedule
           ledger's rules rule out, and it would weaken the active nav rail by
           putting the same colour 30px above it. */}
       <span className="grid size-8 shrink-0 place-items-center rounded-[6px] bg-sidebar-primary text-sidebar-primary-foreground">
-        <Disc className="size-[17px]" strokeWidth={2.25} />
+        <Disc className="size-[17px]" weight="bold" />
       </span>
       <span
         className={cn(
@@ -85,12 +85,12 @@ export default function WorkspaceSwitcher({
         </span>
       </span>
       {switchable && (
-        <ChevronsUpDown
+        <CaretUpDown
           className={cn(
             "size-3.5 shrink-0 text-muted-foreground",
             collapsible && "group-data-[collapsible=icon]:hidden"
           )}
-          strokeWidth={2}
+          weight="bold"
         />
       )}
     </>
@@ -168,7 +168,7 @@ export default function WorkspaceSwitcher({
                   {isCurrent && (
                     <Check
                       className="size-3.5 shrink-0 text-[hsl(var(--nav-accent-ink))]"
-                      strokeWidth={2.5}
+                      weight="bold"
                     />
                   )}
                 </button>

@@ -1,4 +1,4 @@
-import { PanelLeft } from "lucide-react"
+import { SidebarSimple } from "@phosphor-icons/react"
 import { useSidebar } from "../../lib/shadcn/sidebar"
 import { cn } from "../../lib/shadcn/utils"
 
@@ -40,7 +40,7 @@ export default function PanelToggle({ className }: { className?: string }) {
         className
       )}
     >
-      <PanelLeft className="size-[17px]" strokeWidth={1.75} />
+      <SidebarSimple className="size-[17px]" weight="regular" />
     </button>
   )
 }
