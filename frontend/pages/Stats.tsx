@@ -13,26 +13,29 @@ import { useMyPlayerLink, useClaimPlayer, useGetTeamPlayerLinks } from '../hooks
 import { getLatestJamSeasonWithPlayedGame, getDefaultJamSeasonId } from '../lib/seasonUtils'
 import { isPastGame } from '../lib/gameOrder'
 import { track } from '../lib/analytics'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../lib/shadcn/card'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
-import { Label } from '../lib/shadcn/label'
-import { Button } from '../lib/shadcn/button'
-import { Input } from '../lib/shadcn/input'
-import { Popover, PopoverContent, PopoverTrigger } from '../lib/shadcn/popover'
-import SeasonMultiSelect from '../components/SeasonMultiSelect'
-import PlayerMultiSelect from '../components/PlayerMultiSelect'
 import PlayerCombobox from '../components/PlayerCombobox'
 import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
+import StatsHeader from '../components/stats/StatsHeader'
+import FilterBar from '../components/stats/FilterBar'
+import { LeaderCard, TeamCard, MetricCard } from '../components/stats/KpiBento'
+import PerformanceChart from '../components/stats/PerformanceChart'
+import RankingsTable from '../components/stats/RankingsTable'
+import StandingsTable, { type StandingsRow, type StandingsSortKey } from '../components/stats/StandingsTable'
+import { SinglePicker } from '../components/stats/Picker'
+import ChemistryHub from '../components/stats/ChemistryHub'
+import AssistMatrix from '../components/stats/AssistMatrix'
+import ProgressionChart from '../components/stats/ProgressionChart'
 import {
-  BarChart3, TrendingUp, LineChart as LineChartIcon, Settings2, ChevronUp, ChevronDown,
-  ChevronsUpDown, ChevronLeft, Plus, Trash2, Award, Target, Pencil, Check, X, Share2,
-} from 'lucide-react'
+  ALL_SEASONS, shortName,
+  type ChemistryPair, type FilterMode, type MatrixEdge, type PlayerLine,
+  type ProgressionPoint, type ProgressionStat, type TeamLine,
+} from '../components/stats/types'
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
-  LineChart, Line,
-} from 'recharts'
+  CaretLeft, Check as CheckIcon, Gear, Handshake, NotePencil, PencilSimple,
+  Plus as PlusIcon, Scales, Trash, Trophy, X as XIcon,
+} from '@phosphor-icons/react'
 
 type PlayerStat = {
   player_id: number; player_name: string; goals: string; assists: string
@@ -44,94 +47,24 @@ type CumulativeRow = {
 }
 type Season = { id: number; name: string; year: number; organizer: string | null; start_date: string | null; end_date: string | null }
 type StatsSeasonRow = { id: number; name: string; year: number; organizer: string | null; game_count: string }
-type Game = { id: number; opponent: string; game_date: string; game_time: string | null; season_id: number | null }
-
-// Summary Table column system: every non-name column (built-in or
-// user-added) is a combination of the raw per-player stats (goals/assists/
-// turnovers), optionally divided by games_played for a per-game rate. This
-// is what makes "G+A", "G-TO/gm", etc. possible from a small picker instead
-// of a full formula language. `terms` is omitted for the one column (GP)
-// that's a raw field rather than a combination.
-type StatKey = 'goals' | 'assists' | 'turnovers'
-type ColumnTerm = { stat: StatKey; sign: 1 | -1 }
-type ColumnConfig = {
-  id: string
-  label: string
-  color: string
-  builtin?: boolean
-  terms?: ColumnTerm[]
-  perGame?: boolean
-}
-const STAT_LABELS: Record<StatKey, string> = { goals: 'G', assists: 'A', turnovers: 'TO' }
-const DEFAULT_COLUMNS: ColumnConfig[] = [
-  { id: 'goals', label: 'G', color: 'text-green-600 dark:text-green-400', builtin: true, terms: [{ stat: 'goals', sign: 1 }] },
-  { id: 'assists', label: 'A', color: 'text-blue-600 dark:text-blue-400', builtin: true, terms: [{ stat: 'assists', sign: 1 }] },
-  { id: 'turnovers', label: 'TO', color: 'text-orange-600 dark:text-orange-400', builtin: true, terms: [{ stat: 'turnovers', sign: 1 }] },
-  { id: 'games_played', label: 'GP', color: 'text-muted-foreground', builtin: true },
-  { id: 'avgG', label: 'G/gm', color: 'text-green-600 dark:text-green-400', builtin: true, terms: [{ stat: 'goals', sign: 1 }], perGame: true },
-  { id: 'avgA', label: 'A/gm', color: 'text-blue-600 dark:text-blue-400', builtin: true, terms: [{ stat: 'assists', sign: 1 }], perGame: true },
-]
-const CUSTOM_COLUMNS_KEY = 'ufwt_stats_custom_columns'
-const HIDDEN_COLUMNS_KEY = 'ufwt_stats_hidden_columns'
-const COLUMN_WIDTHS_KEY = 'ufwt_stats_column_widths'
-const DEFAULT_PLAYER_COLUMN_WIDTH = 140
-const DEFAULT_STAT_COLUMN_WIDTH = 40
-const MIN_PLAYER_COLUMN_WIDTH = 60
-const MIN_STAT_COLUMN_WIDTH = 28
-
-function getColumnValue(col: ColumnConfig, p: PlayerStat): number | null {
-  if (col.id === 'games_played') return parseInt(p.games_played)
-  const gp = parseInt(p.games_played)
-  if (col.perGame && gp === 0) return null
-  const raw = (col.terms ?? []).reduce((sum, t) => sum + t.sign * parseInt(p[t.stat]), 0)
-  return col.perGame ? raw / gp : raw
+// The columns of `games` this page reads. Scores are derived live from
+// game_events by useGetGames, not stored; `result` is a stored column no
+// write path populates, which is why the team card treats the live score as
+// the source of truth and lets only an explicit override outrank it.
+type Game = {
+  id: number; opponent: string; game_date: string; game_time: string | null; season_id: number | null
+  our_score?: number | null; their_score?: number | null
+  result?: string | null; outcome_override?: string | null
 }
 
-// Shared by both the header-click quick-sort and the popover's explicit
-// primary/secondary pickers, so "Player" (alphabetical) and every stat/
-// formula column (numeric, via getColumnValue) compare the same way
-// regardless of which UI triggered the sort.
-function compareByColumn(colId: string, dir: 'asc' | 'desc', columns: ColumnConfig[], a: PlayerStat, b: PlayerStat): number {
-  let cmp: number
-  if (colId === 'player_name') {
-    cmp = a.player_name.localeCompare(b.player_name)
-  } else {
-    const col = columns.find(c => c.id === colId)
-    if (!col) return 0
-    const va = getColumnValue(col, a) ?? -Infinity
-    const vb = getColumnValue(col, b) ?? -Infinity
-    cmp = va - vb
-  }
-  return dir === 'asc' ? cmp : -cmp
+// "0.9 / gm" under a raw total. Returns undefined rather than "0.0 / gm"
+// when there are no games, so the hint disappears instead of asserting a
+// rate nothing supports.
+function perGame(total: string | number, gamesPlayed: string | number): string | undefined {
+  const g = Number(gamesPlayed)
+  if (!Number.isFinite(g) || g <= 0) return undefined
+  return `${(Number(total) / g).toFixed(1)} / gm`
 }
-
-function formatColumnValue(col: ColumnConfig, value: number | null): string {
-  if (value == null) return '-'
-  return col.perGame ? value.toFixed(1) : String(value)
-}
-
-type ChartTab = 'combined' | 'goals' | 'assists' | 'turnovers'
-type CumulativeStat = 'ga' | 'goals' | 'assists' | 'turnovers'
-
-const CHART_TABS: { key: ChartTab; label: string }[] = [
-  { key: 'combined', label: 'All Stats' },
-  { key: 'goals', label: 'Goals' },
-  { key: 'assists', label: 'Assists' },
-  { key: 'turnovers', label: 'Turnovers' },
-]
-
-const CUMULATIVE_TABS: { key: CumulativeStat; label: string }[] = [
-  { key: 'ga', label: 'G+A' },
-  { key: 'goals', label: 'Goals' },
-  { key: 'assists', label: 'Assists' },
-  { key: 'turnovers', label: 'Turnovers' },
-]
-
-const LINE_COLORS = [
-  '#16a34a', '#2563eb', '#dc2626', '#d97706',
-  '#7c3aed', '#0891b2', '#be185d', '#65a30d',
-  '#0ea5e9', '#f97316', '#8b5cf6', '#10b981',
-]
 
 function seasonLabel(s: { name: string; year: number; organizer: string | null }) {
   return [s.organizer, s.name, s.year].filter(Boolean).join(' ')
@@ -139,31 +72,6 @@ function seasonLabel(s: { name: string; year: number; organizer: string | null }
 
 type PageTab = 'me' | 'overview' | 'table' | 'standings'
 
-type StandingsSortKey = 'rank' | 'team' | 'games_played' | 'wins' | 'points_for' | 'points_against' | 'point_diff' | 'points'
-
-// Shared sortable-header button for the League Standings table: shows a
-// sort-direction chevron only on the active column, an inert double-chevron
-// otherwise (same visual language as the Player Rankings Summary Table).
-function StandingsSortHeader({ label, sortKey, activeKey, dir, onClick, align }: {
-  label: string
-  sortKey: StandingsSortKey
-  activeKey: StandingsSortKey
-  dir: 'asc' | 'desc'
-  onClick: (key: StandingsSortKey) => void
-  align: 'left' | 'center'
-}) {
-  const active = activeKey === sortKey
-  return (
-    <button
-      type="button"
-      onClick={() => onClick(sortKey)}
-      className={`flex items-center gap-0.5 hover:text-foreground transition-colors ${align === 'center' ? 'mx-auto' : ''}`}
-    >
-      {label}
-      {active ? (dir === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />) : <ChevronsUpDown className="w-3 h-3 opacity-30" />}
-    </button>
-  )
-}
 // URL words for each tab, readable rather than the internal PageTab keys
 // ("table" predates the "Player Rankings" label — see the PageTab comment
 // above and doesn't belong in a URL a person actually reads).
@@ -180,7 +88,7 @@ function pageTabForSlug(slug: string | undefined, tabs: { key: PageTab; slug: st
 
 export default function Stats() {
   const navigate = useNavigate()
-  const { isGuest } = useAuth()
+  const { isGuest, currentTeamId } = useAuth()
   // The active sub-tab mirrors this URL segment, so a reload, browser
   // back/forward, or a bookmarked/shared link lands on the right sub-tab
   // instead of always resetting to Overview.
@@ -191,255 +99,97 @@ export default function Stats() {
   const visibleTabs = useMemo(() => PAGE_TABS.filter(t => t.key !== 'me' || !isGuest), [isGuest])
   const pageTab = pageTabForSlug(subtab, visibleTabs)
 
+  // The scope filter lives up here, not in PlayerStatsView, because it now
+  // renders inline in the page header beside the title -- and the header is
+  // the one thing every sub-tab shares. Games and seasons come with it: the
+  // picker needs both lists, and fetching them again one level down would be
+  // the same two queries twice.
+  const { data: games, trigger: fetchGames } = useGetGames()
+  const { data: seasons, trigger: fetchSeasons } = useGetSeasons()
+  const { data: allSeasons, trigger: fetchAllSeasons } = useGetAllSeasons()
+
+  const [filterType, setFilterType] = useState<'all' | 'season' | 'games'>('all')
+  const [selectedSeasonIds, setSelectedSeasonIds] = useState<number[]>([])
+  const [selectedGameIds, setSelectedGameIds] = useState<number[]>([])
+  const [defaultSeasonId, setDefaultSeasonId] = useState<number | null>(null)
+
   useEffect(() => {
     if (subtab && !visibleTabs.some(t => t.slug === subtab)) navigate('/stats', { replace: true })
   }, [subtab, visibleTabs])
 
-  return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-bold text-foreground">Stats</h1>
+  useEffect(() => {
+    if (currentTeamId == null) return
+    fetchGames({ organizationId: currentTeamId })
+    fetchSeasons({ organizationId: currentTeamId })
+    fetchAllSeasons({ organizationId: currentTeamId })
+  }, [currentTeamId])
 
-      <div className={`grid gap-1 p-1 rounded-lg bg-accent ${visibleTabs.length === 4 ? 'grid-cols-4' : 'grid-cols-3'}`}>
-        {visibleTabs.map(t => (
-          <button
-            key={t.key}
-            onClick={() => navigate(t.key === 'overview' ? '/stats' : `/stats/${t.slug}`)}
-            className={`py-1.5 rounded-md text-sm font-medium transition-colors ${
-              pageTab === t.key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+  // Land on the latest Jam season that has actually been played, rather than
+  // on every game ever recorded. Exactly once: the guard used to be
+  // "filterType is still all and nothing is selected", which is also true
+  // the moment someone deliberately switches back to All-time, so any later
+  // refetch of games/seasons would quietly drag them back into a season.
+  const defaultAppliedRef = useRef(false)
+  useEffect(() => {
+    if (defaultAppliedRef.current) return
+    const s = seasons as StatsSeasonRow[] | undefined
+    const allS = allSeasons as Season[] | undefined
+    const g = games as Game[] | undefined
+    if (!s || s.length === 0 || !allS || allS.length === 0 || !g) return
+    defaultAppliedRef.current = true
+    const id = getLatestJamSeasonWithPlayedGame(allS, g, s[0]!.id)
+    setDefaultSeasonId(id)
+    setFilterType('season')
+    setSelectedSeasonIds([id])
+  }, [seasons, allSeasons, games])
 
-      {pageTab === 'standings' ? <Standings /> : <PlayerStatsView tab={pageTab as 'me' | 'overview' | 'table'} />}
-    </div>
-  )
-}
-
-type NetworkNode = { id: number; name: string; fullName: string; goals: number; assists: number; genderMatch: string | null }
-// Generic directed edge: fromId -> toId, weighted by count. Both the
-// Assists and Goals graphs render the exact same assister -> scorer pairs
-// (from useGetAssistPairings) — they differ only in which side of the edge
-// counts as "the selected player's own stat" and what a node's size means,
-// not in the underlying data.
-type DirectedEdge = { fromId: number; toId: number; count: number }
-
-// Greedy farthest-point placement: given items already ranked most- to
-// least-connected, assigns slot 0 to the top item, then repeatedly gives
-// the next item whichever remaining slot is farthest (circularly) from
-// every slot already claimed. The 2nd-ranked item lands opposite the 1st,
-// the 3rd near a quarter-turn from both, and so on — so the handful of
-// heavily-connected nodes end up spread around the circle instead of
-// clustered together, which is what actually clutters a small area with
-// crossing edges. O(n^2), fine for a 12-node roster.
-function spreadOrder<T>(rankedDesc: T[]): T[] {
-  const n = rankedDesc.length
-  if (n === 0) return []
-  const claimedSlots: number[] = [0]
-  for (let k = 1; k < n; k++) {
-    let bestSlot = -1
-    let bestMinDist = -1
-    for (let s = 0; s < n; s++) {
-      if (claimedSlots.includes(s)) continue
-      const minDist = Math.min(...claimedSlots.map(u => Math.min(Math.abs(s - u), n - Math.abs(s - u))))
-      if (minDist > bestMinDist) { bestMinDist = minDist; bestSlot = s }
-    }
-    claimedSlots.push(bestSlot)
+  const handleModeChange = (mode: FilterMode) => {
+    setFilterType(mode)
+    setSelectedGameIds([])
+    // Switching back into Season mode with nothing selected reads as "all
+    // seasons", which is the same view as All-time and makes the segment
+    // that was just clicked look inert. Reinstate the season the page
+    // opened on instead.
+    setSelectedSeasonIds(mode === 'season' && defaultSeasonId != null ? [defaultSeasonId] : [])
   }
-  const result: T[] = new Array(n)
-  claimedSlots.forEach((slot, i) => { result[slot] = rankedDesc[i]! })
-  return result
-}
 
-// Circular layout shared by BOTH network graphs — computed once by the
-// caller (from combined Assists + Goals degree) and passed to both, so a
-// player sits in the same spot in both graphs rather than jumping between
-// them. Deterministic and simple (no force-simulation), matching this
-// file's existing chart patterns; node order is ranked by `degree` and run
-// through spreadOrder so the busiest nodes land apart from each other.
-function circleLayout(nodes: NetworkNode[], size: number, degree: Map<number, number>): Map<number, { x: number; y: number }> {
-  const center = size / 2
-  const radius = center - 56
-  const rankedDesc = [...nodes].sort((a, b) => (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0))
-  const ordered = spreadOrder(rankedDesc)
-  const positions = new Map<number, { x: number; y: number }>()
-  ordered.forEach((n, i) => {
-    const angle = (i / ordered.length) * 2 * Math.PI - Math.PI / 2
-    positions.set(n.id, { x: center + radius * Math.cos(angle), y: center + radius * Math.sin(angle) })
-  })
-  return positions
-}
-
-// A directed edge and its reverse (A->B, B->A) are two real, distinct facts
-// (e.g. Eric scored right before Jackson in one game, and right after him
-// in another), but drawing both makes it look like two separate
-// connections between the same two players. Collapse each unordered pair
-// into a single edge for display: keep whichever direction had the larger
-// count, with the combined total so no data is silently dropped.
-function mergeBidirectionalEdges(edges: DirectedEdge[]): DirectedEdge[] {
-  const merged = new Map<string, DirectedEdge>()
-  edges.forEach(e => {
-    const key = e.fromId < e.toId ? `${e.fromId}:${e.toId}` : `${e.toId}:${e.fromId}`
-    const existing = merged.get(key)
-    if (!existing) {
-      merged.set(key, { ...e })
-    } else {
-      const total = existing.count + e.count
-      merged.set(key, e.count > existing.count ? { fromId: e.fromId, toId: e.toId, count: total } : { ...existing, count: total })
-    }
-  })
-  return [...merged.values()]
-}
-
-// Selected player's own Goals/Assists total, floated over a graph's top
-// right corner — replaces an always-visible whole-team list with just the
-// one number relevant once you've actually picked someone.
-function SelectedPlayerBadge({ node }: { node: NetworkNode | undefined }) {
-  if (!node) return null
   return (
-    <div className="absolute top-2 right-2 bg-card border border-border rounded-lg shadow-sm px-2.5 py-1.5 text-sm pointer-events-none">
-      <div className="font-medium text-foreground truncate max-w-[140px]">{node.fullName}</div>
-      <div className="flex items-center gap-2 font-mono text-xs mt-0.5">
-        <span className="text-green-600 dark:text-green-400">{node.goals}G</span>
-        <span className="text-blue-600 dark:text-blue-400">{node.assists}A</span>
-      </div>
+    <div className="stats-scope space-y-5">
+      <StatsHeader
+        title="Stats"
+        tabs={visibleTabs}
+        activeKey={pageTab}
+        onSelect={key => {
+          const t = visibleTabs.find(v => v.key === key)!
+          navigate(t.key === 'overview' ? '/stats' : `/stats/${t.slug}`)
+        }}
+      >
+        {pageTab !== 'standings' && (
+          <FilterBar
+            mode={filterType}
+            onModeChange={handleModeChange}
+            seasons={(allSeasons as Season[] | undefined) ?? []}
+            selectedSeasonIds={selectedSeasonIds}
+            onSeasonsChange={setSelectedSeasonIds}
+            games={(games as Game[] | undefined) ?? []}
+            selectedGameIds={selectedGameIds}
+            onGamesChange={setSelectedGameIds}
+          />
+        )}
+      </StatsHeader>
+
+      {pageTab === 'standings' ? <Standings /> : (
+        <PlayerStatsView
+          tab={pageTab as 'me' | 'overview' | 'table'}
+          games={(games as Game[] | undefined)}
+          allSeasons={(allSeasons as Season[] | undefined)}
+          filterType={filterType}
+          selectedSeasonIds={selectedSeasonIds}
+          selectedGameIds={selectedGameIds}
+          defaultSeasonId={defaultSeasonId}
+        />
+      )}
     </div>
-  )
-}
-
-// A directed network graph: nodes at fixed shared `positions`, edges as
-// curved lines each labeled with their count. Clicking a node highlights
-// only its own edges; clicking again or clicking empty space clears the
-// highlight. Reused for both the Assists graph (own side: assister/from,
-// sized by assists) and the Goals graph (own side: scorer/to, sized by
-// goals) — both render the exact same assister->scorer edges, differing
-// only in ownEdgeSide and weightOf.
-function DirectedNetworkGraph({ nodes, edges, positions, color, weightOf, selectedId, onSelect, ownEdgeSide }: {
-  nodes: NetworkNode[]
-  // Raw, per-direction edges — NOT pre-merged. Merging A->B and B->A into
-  // one visual line happens inside this component (see renderEdges below),
-  // but attribution (isOwnEdge, highlightIds) must run against the real
-  // per-direction counts: collapsing them first would let a real edge in
-  // the smaller direction vanish from its owner's own-side total whenever
-  // the reverse direction happened to be larger.
-  edges: DirectedEdge[]
-  positions: Map<number, { x: number; y: number }>
-  color: string
-  weightOf: (n: NetworkNode) => number
-  // Selection is lifted to the caller so selecting a player in one graph
-  // (Assists or Goals) highlights that same player in the other.
-  selectedId: number | null
-  onSelect: (id: number | null) => void
-  // Which end of an edge counts as "this is the selected player's own
-  // stat" when deciding what to highlight: 'from' for Assists (they gave
-  // the assist), 'to' for Goals (the sequence edge lands on their goal).
-  // The other direction — an assist they received, or being the
-  // predecessor to someone else's goal — still involves them but isn't
-  // their own number, so it stays dimmed even though it touches their node.
-  ownEdgeSide: 'from' | 'to'
-}) {
-  const size = 320
-  const isOwnEdge = (e: DirectedEdge, id: number) => (ownEdgeSide === 'from' ? e.fromId === id : e.toId === id)
-  const highlightIds = useMemo(() => {
-    if (selectedId == null) return null
-    const s = new Set<number>([selectedId])
-    edges.forEach(e => {
-      if (isOwnEdge(e, selectedId)) s.add(ownEdgeSide === 'from' ? e.toId : e.fromId)
-    })
-    return s
-  }, [selectedId, edges, ownEdgeSide])
-
-  // One drawn line per unordered pair (see mergeBidirectionalEdges): the
-  // label/thickness reflect the combined count, direction follows whichever
-  // side is larger, but this is display-only — highlightIds/isOwnEdge above
-  // already used the real per-direction edges.
-  const renderEdges = useMemo(() => mergeBidirectionalEdges(edges), [edges])
-  const maxCount = Math.max(1, ...renderEdges.map(e => e.count))
-  const maxWeight = Math.max(1, ...nodes.map(weightOf))
-  // A merged line is "own" if either direction between this pair belonged
-  // to the selected player — otherwise a real edge of theirs (now folded
-  // into a line drawn in the other direction) would incorrectly dim out.
-  const pairIsOwn = (e: DirectedEdge, id: number) =>
-    edges.some(raw => ((raw.fromId === e.fromId && raw.toId === e.toId) || (raw.fromId === e.toId && raw.toId === e.fromId)) && isOwnEdge(raw, id))
-  // The merged line's count is the combined total of both directions —
-  // right for the unselected, whole-team view, but overstates a selected
-  // player's own number if their partner also has edges the other way
-  // (e.g. Jackson fed Eric 3 times, Eric fed Jackson 1 time: the merged
-  // line reads "4", but Eric's own contribution is 1). Once someone's
-  // selected, show only their own-direction count on lines that are theirs.
-  const ownCountFor = (e: DirectedEdge, id: number) =>
-    edges.filter(raw => ((raw.fromId === e.fromId && raw.toId === e.toId) || (raw.fromId === e.toId && raw.toId === e.fromId)) && isOwnEdge(raw, id))
-      .reduce((sum, raw) => sum + raw.count, 0)
-
-  return (
-    <svg
-      viewBox={`0 0 ${size} ${size}`}
-      className="w-full touch-none"
-      style={{ maxHeight: 440 }}
-      onClick={() => onSelect(null)}
-    >
-      {renderEdges.map(e => {
-        const from = positions.get(e.fromId)
-        const to = positions.get(e.toId)
-        if (!from || !to) return null
-        const isOwn = selectedId != null && pairIsOwn(e, selectedId)
-        const dimmed = selectedId != null && !isOwn
-        const displayCount = isOwn ? ownCountFor(e, selectedId!) : e.count
-        // Curve each edge away from the straight line (perpendicular offset
-        // from the midpoint) so edges sharing an endpoint don't overlap.
-        const mx = (from.x + to.x) / 2
-        const my = (from.y + to.y) / 2
-        const dx = to.x - from.x
-        const dy = to.y - from.y
-        const dist = Math.hypot(dx, dy) || 1
-        const curveOffset = 18
-        const cx = mx + (-dy / dist) * curveOffset
-        const cy = my + (dx / dist) * curveOffset
-        const strokeWidth = 1.5 + (displayCount / maxCount) * 4
-        // Point on the quadratic curve at t=0.5 (not the control point
-        // itself), for placing the count label on the visible line.
-        const labelX = 0.25 * from.x + 0.5 * cx + 0.25 * to.x
-        const labelY = 0.25 * from.y + 0.5 * cy + 0.25 * to.y
-        return (
-          <g key={`${e.fromId}-${e.toId}`} opacity={dimmed ? 0.12 : 1}>
-            <path
-              d={`M ${from.x} ${from.y} Q ${cx} ${cy} ${to.x} ${to.y}`}
-              stroke={color}
-              strokeWidth={strokeWidth}
-              fill="none"
-              opacity={0.8}
-            />
-            <circle cx={labelX} cy={labelY} r={7} fill="hsl(var(--card))" stroke="hsl(var(--border))" strokeWidth={0.75} />
-            <text x={labelX} y={labelY} textAnchor="middle" dominantBaseline="central" fontSize={8} fill="hsl(var(--foreground))">
-              {displayCount}
-            </text>
-          </g>
-        )
-      })}
-      {nodes.map(n => {
-        const pos = positions.get(n.id)
-        if (!pos) return null
-        const dimmed = highlightIds != null && !highlightIds.has(n.id)
-        const r = 11 + (weightOf(n) / maxWeight) * 8
-        const outline = n.genderMatch === 'Man' ? 'hsl(var(--gender-man))' : n.genderMatch === 'Woman' ? 'hsl(var(--gender-woman))' : 'hsl(var(--border))'
-        return (
-          <g
-            key={n.id}
-            transform={`translate(${pos.x}, ${pos.y})`}
-            opacity={dimmed ? 0.3 : 1}
-            style={{ cursor: 'pointer' }}
-            onClick={e => { e.stopPropagation(); onSelect(selectedId === n.id ? null : n.id) }}
-          >
-            <circle r={r} fill="hsl(var(--card))" stroke={outline} strokeWidth={2} />
-            <text textAnchor="middle" dominantBaseline="central" fontSize={9} fill="hsl(var(--foreground))">
-              {n.name}
-            </text>
-          </g>
-        )
-      })}
-    </svg>
   )
 }
 
@@ -447,14 +197,23 @@ function DirectedNetworkGraph({ nodes, edges, positions, color, weightOf, select
 // fetch (previously split across the Stats and Ranking pages, which
 // duplicated the same filter UI and query); only the content below the
 // filters differs by tab.
-function PlayerStatsView({ tab }: { tab: 'me' | 'overview' | 'table' }) {
+function PlayerStatsView({
+  tab, games, allSeasons, filterType, selectedSeasonIds, selectedGameIds, defaultSeasonId,
+}: {
+  tab: 'me' | 'overview' | 'table'
+  /** Hoisted to Stats() along with the filter below -- see the comment there. */
+  games: Game[] | undefined
+  allSeasons: Season[] | undefined
+  filterType: FilterMode
+  selectedSeasonIds: number[]
+  selectedGameIds: number[]
+  /** The season the page opened on; seeds the progression chart's own picker. */
+  defaultSeasonId: number | null
+}) {
   const { currentTeamId, user } = useAuth()
   const link = useMyPlayerLink()
   const claim = useClaimPlayer()
   const teamLinks = useGetTeamPlayerLinks()
-  const { data: games, trigger: fetchGames } = useGetGames()
-  const { data: seasons, trigger: fetchSeasons } = useGetSeasons()
-  const { data: allSeasons, trigger: fetchAllSeasons } = useGetAllSeasons()
   const { data: stats, loading, error, trigger: fetchStats } = useGetPlayerStats()
   const { data: cumulativeRaw, loading: cumulativeLoading, trigger: fetchCumulative } = useGetCumulativeStats()
   const { data: progressionRoster, trigger: fetchProgressionRoster } = useGetPlayers()
@@ -463,140 +222,28 @@ function PlayerStatsView({ tab }: { tab: 'me' | 'overview' | 'table' }) {
   // gender_match lookup for the Assist Network's node outlines.
   const { data: orgPlayers, error: orgPlayersError, trigger: fetchOrgPlayers } = useGetPlayers()
 
-  const [filterType, setFilterType] = useState<'all' | 'season' | 'games'>('all')
-  const [selectedSeasonIds, setSelectedSeasonIds] = useState<number[]>([])
-  const [selectedGameIds, setSelectedGameIds] = useState<number[]>([])
-  const [chartTab, setChartTab] = useState<ChartTab>('combined')
   // Shared between the Assists and Goals network graphs, so selecting a
   // player in one highlights them in the other too.
   const [networkSelectedId, setNetworkSelectedId] = useState<number | null>(null)
   const [includeSubsInNetwork, setIncludeSubsInNetwork] = useState(true)
 
-  // Summary Table column visibility/formulas/sort are a per-device viewing
-  // preference (same convention as Strategy's transition-speed setting),
-  // not app state — stored in localStorage, not the DB.
-  const [customColumns, setCustomColumns] = useState<ColumnConfig[]>(() => {
-    try { return JSON.parse(localStorage.getItem(CUSTOM_COLUMNS_KEY) ?? '[]') } catch { return [] }
-  })
-  const [hiddenColumnIds, setHiddenColumnIds] = useState<Set<string>>(() => {
-    try { return new Set(JSON.parse(localStorage.getItem(HIDDEN_COLUMNS_KEY) ?? '[]')) } catch { return new Set() }
-  })
-  // Primary sort also drives the header-click quick-sort; secondary is a
-  // tiebreaker only, picked explicitly in the Columns popover (clicking a
-  // header always targets primary, never secondary).
-  const [sortColumnId, setSortColumnId] = useState<string | null>(null)
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
-  const [sortColumnId2, setSortColumnId2] = useState<string | null>(null)
-  const [sortDir2, setSortDir2] = useState<'asc' | 'desc'>('desc')
-  const [columnWidths, setColumnWidths] = useState<Record<string, number>>(() => {
-    try { return JSON.parse(localStorage.getItem(COLUMN_WIDTHS_KEY) ?? '{}') } catch { return {} }
-  })
-  const [columnsPopoverOpen, setColumnsPopoverOpen] = useState(false)
-  const [newColStatA, setNewColStatA] = useState<StatKey>('goals')
-  const [newColOp, setNewColOp] = useState<'+' | '-'>('+')
-  const [newColStatB, setNewColStatB] = useState<StatKey | '__none__'>('__none__')
-  const [newColPerGame, setNewColPerGame] = useState(false)
-
-  useEffect(() => { localStorage.setItem(CUSTOM_COLUMNS_KEY, JSON.stringify(customColumns)) }, [customColumns])
-  useEffect(() => { localStorage.setItem(HIDDEN_COLUMNS_KEY, JSON.stringify([...hiddenColumnIds])) }, [hiddenColumnIds])
-  useEffect(() => { localStorage.setItem(COLUMN_WIDTHS_KEY, JSON.stringify(columnWidths)) }, [columnWidths])
-
-  const allColumns = useMemo(() => [...DEFAULT_COLUMNS, ...customColumns], [customColumns])
-  const visibleColumns = allColumns.filter(c => !hiddenColumnIds.has(c.id))
-
-  // Formula columns can have longer labels than the 2-3 char built-ins
-  // (e.g. "G+A/gm"); size their default width to fit the label instead of
-  // the flat stat-column default, so a long label doesn't overlap its
-  // right-aligned neighbor before the user has resized anything.
-  const getColumnWidth = (id: string) => {
-    if (columnWidths[id] != null) return columnWidths[id]
-    if (id === 'player_name') return DEFAULT_PLAYER_COLUMN_WIDTH
-    const label = allColumns.find(c => c.id === id)?.label ?? ''
-    return Math.max(DEFAULT_STAT_COLUMN_WIDTH, label.length * 9 + 24)
-  }
-
-  const toggleColumnVisibility = (id: string) => {
-    setHiddenColumnIds(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id); else next.add(id)
-      return next
-    })
-  }
-
-  const handleAddCustomColumn = () => {
-    const terms: ColumnTerm[] = [{ stat: newColStatA, sign: 1 }]
-    if (newColStatB !== '__none__') terms.push({ stat: newColStatB, sign: newColOp === '+' ? 1 : -1 })
-    const label = terms.map((t, i) => (i > 0 ? (t.sign > 0 ? '+' : '-') : '') + STAT_LABELS[t.stat]).join('') + (newColPerGame ? '/gm' : '')
-    const id = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-    setCustomColumns(cols => [...cols, { id, label, color: 'text-foreground', terms, perGame: newColPerGame }])
-    setNewColStatB('__none__')
-    setNewColPerGame(false)
-  }
-
-  const handleRemoveCustomColumn = (id: string) => {
-    setCustomColumns(cols => cols.filter(c => c.id !== id))
-    if (sortColumnId === id) setSortColumnId(null)
-    if (sortColumnId2 === id) setSortColumnId2(null)
-  }
-
-  const handleSortClick = (colId: string) => {
-    if (sortColumnId === colId) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
-    else { setSortColumnId(colId); setSortDir('desc') }
-  }
-
-  // Column resize: a drag handle on each header cell's right edge. Mirrors
-  // the window-pointer-listener drag pattern used for lineup/event
-  // reordering elsewhere (see Schedule.tsx) — start/end fixed relative to
-  // the pointer's original position, not accumulated per-move, so there's
-  // no drift.
-  const resizingRef = useRef<{ id: string; startX: number; startWidth: number } | null>(null)
-  const handleResizeMove = useCallback((e: PointerEvent) => {
-    const r = resizingRef.current
-    if (!r) return
-    const min = r.id === 'player_name' ? MIN_PLAYER_COLUMN_WIDTH : MIN_STAT_COLUMN_WIDTH
-    const next = Math.max(min, r.startWidth + (e.clientX - r.startX))
-    setColumnWidths(w => ({ ...w, [r.id]: next }))
-  }, [])
-  const handleResizeEnd = useCallback(() => {
-    resizingRef.current = null
-    window.removeEventListener('pointermove', handleResizeMove)
-    window.removeEventListener('pointerup', handleResizeEnd)
-  }, [handleResizeMove])
-  const handleResizeStart = (id: string, e: React.PointerEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    resizingRef.current = { id, startX: e.clientX, startWidth: getColumnWidth(id) }
-    window.addEventListener('pointermove', handleResizeMove)
-    window.addEventListener('pointerup', handleResizeEnd)
-  }
-
-  const [cumulativeSeasonId, setCumulativeSeasonId] = useState<string>('')
-  const [cumulativeStat, setCumulativeStat] = useState<CumulativeStat>('ga')
+  // ALL_SEASONS (-1) means "every game"; null means "not resolved yet", which
+  // is what keeps the fetch below from firing an all-time query on mount and
+  // then immediately refiring for the default season.
+  const [cumulativeSeasonId, setCumulativeSeasonId] = useState<number | null>(null)
+  const [cumulativeStat, setCumulativeStat] = useState<ProgressionStat>('ga')
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<number[]>([])
 
   useEffect(() => {
     if (currentTeamId == null) return
-    fetchGames({ organizationId: currentTeamId })
-    fetchSeasons({ organizationId: currentTeamId })
-    fetchAllSeasons({ organizationId: currentTeamId })
     fetchOrgPlayers({ organizationId: currentTeamId })
   }, [currentTeamId])
 
-  // Default both filters to the latest Jam season that's actually been played
+  // The progression chart has its own season picker, independent of the page
+  // filter; it just opens on the same season the page did.
   useEffect(() => {
-    const s = seasons as StatsSeasonRow[] | undefined
-    const allS = allSeasons as Season[] | undefined
-    const g = games as Game[] | undefined
-    if (!s || s.length === 0 || !allS || allS.length === 0 || !g) return
-    const defaultId = getLatestJamSeasonWithPlayedGame(allS, g, s[0]!.id)
-    if (filterType === 'all' && selectedSeasonIds.length === 0) {
-      setFilterType('season')
-      setSelectedSeasonIds([defaultId])
-    }
-    if (!cumulativeSeasonId) {
-      setCumulativeSeasonId(String(defaultId))
-    }
-  }, [seasons, allSeasons, games])
+    if (defaultSeasonId != null && cumulativeSeasonId == null) setCumulativeSeasonId(defaultSeasonId)
+  }, [defaultSeasonId])
 
   useEffect(() => {
     if (currentTeamId == null) return
@@ -622,10 +269,10 @@ function PlayerStatsView({ tab }: { tab: 'me' | 'overview' | 'table' }) {
   }, [filterType, selectedSeasonIds, selectedGameIds, currentTeamId])
 
   useEffect(() => {
-    if (currentTeamId == null) return
-    if (cumulativeSeasonId && cumulativeSeasonId !== '__all__') {
-      fetchCumulative({ seasonId: parseInt(cumulativeSeasonId), organizationId: currentTeamId })
-      fetchProgressionRoster({ seasonIds: [parseInt(cumulativeSeasonId)], organizationId: currentTeamId })
+    if (currentTeamId == null || cumulativeSeasonId == null) return
+    if (cumulativeSeasonId !== ALL_SEASONS) {
+      fetchCumulative({ seasonId: cumulativeSeasonId, organizationId: currentTeamId })
+      fetchProgressionRoster({ seasonIds: [cumulativeSeasonId], organizationId: currentTeamId })
     } else {
       fetchCumulative({ organizationId: currentTeamId })
       fetchProgressionRoster({ organizationId: currentTeamId })
@@ -643,20 +290,7 @@ function PlayerStatsView({ tab }: { tab: 'me' | 'overview' | 'table' }) {
     teamLinks.trigger({ teamId: currentTeamId })
   }, [tab, currentTeamId, user])
 
-  const handleGameToggle = (gameId: number) => {
-    setSelectedGameIds(prev => prev.includes(gameId) ? prev.filter(id => id !== gameId) : [...prev, gameId])
-  }
-
-  const handleSelectAllGames = () => {
-    const allIds = (games as Game[] | undefined)?.map(g => g.id) ?? []
-    setSelectedGameIds(allIds)
-  }
-
-  const handleUnselectAllGames = () => setSelectedGameIds([])
-
   const statsArr = stats as PlayerStat[] | undefined
-  const topScorer = statsArr ? [...statsArr].sort((a, b) => parseInt(b.goals) - parseInt(a.goals))[0] : null
-  const topAssister = statsArr ? [...statsArr].sort((a, b) => parseInt(b.assists) - parseInt(a.assists))[0] : null
 
   // "Me" tab: the claimed player's own row from the exact same `stats`
   // query the Table tab renders (same Filters card, same fetch) -- so
@@ -673,37 +307,40 @@ function PlayerStatsView({ tab }: { tab: 'me' | 'overview' | 'table' }) {
     .filter(p => !linkedPlayerIds.has(p.id))
     .map(p => ({ id: String(p.id), label: p.display_name }))
 
-  // ── Bar chart data ──────────────────────────────────────────────────────────
-  const chartData = stats
-    ? [...(stats as PlayerStat[])]
-        .sort((a, b) => parseInt(b.goals) + parseInt(b.assists) - (parseInt(a.goals) + parseInt(a.assists)))
-        .slice(0, 12)
-        .map(p => ({
-          name: p.player_name.split(' ')[0],
-          fullName: p.player_name,
-          Goals: parseInt(p.goals),
-          Assists: parseInt(p.assists),
-          Turnovers: parseInt(p.turnovers),
-          GamesPlayed: parseInt(p.games_played),
-        }))
-    : []
+  // ── Presentation lines ──────────────────────────────────────────────────
+  // One parse of the string-typed SQL aggregates, shared by the KPI cards and
+  // the leaderboard so the two can never disagree about who is top. Photos
+  // come off the org roster, not off `stats`: player_stats is an aggregate
+  // over game events and carries no profile columns at all.
+  const playerLines: PlayerLine[] = useMemo(() => {
+    const photoById = new Map(
+      ((orgPlayers as { id: number; photo_url: string | null }[] | undefined) ?? [])
+        .map(p => [p.id, p.photo_url] as const),
+    )
+    return (statsArr ?? []).map(p => ({
+      playerId: p.player_id,
+      name: p.player_name,
+      shortName: shortName(p.player_name),
+      photoUrl: photoById.get(p.player_id) ?? null,
+      goals: parseInt(p.goals),
+      assists: parseInt(p.assists),
+      turnovers: parseInt(p.turnovers),
+      gamesPlayed: parseInt(p.games_played),
+    }))
+  }, [statsArr, orgPlayers])
 
-  // ── Summary table sort ───────────────────────────────────────────────────────
-  // No sort selected keeps the hook's own order (ranked by G+A descending,
-  // ties broken by goals descending, then by (G+A)/game descending).
-  // A tied primary comparison falls through to the secondary column, if one
-  // is set (e.g. sort by GP, then by G to break ties among equal-GP players).
-  const sortedStats = useMemo(() => {
-    const arr = [...((stats as PlayerStat[] | undefined) ?? [])]
-    if (!sortColumnId) return arr
-    arr.sort((a, b) => {
-      const primary = compareByColumn(sortColumnId, sortDir, allColumns, a, b)
-      if (primary !== 0) return primary
-      if (sortColumnId2 && sortColumnId2 !== sortColumnId) return compareByColumn(sortColumnId2, sortDir2, allColumns, a, b)
-      return 0
-    })
-    return arr
-  }, [stats, sortColumnId, sortDir, sortColumnId2, sortDir2, allColumns])
+  const topFinisher = [...playerLines].sort((a, b) => b.goals - a.goals)[0] ?? null
+  const topPlaymaker = [...playerLines].sort((a, b) => b.assists - a.assists)[0] ?? null
+  const teamGoals = playerLines.reduce((sum, p) => sum + p.goals, 0)
+  const teamAssists = playerLines.reduce((sum, p) => sum + p.assists, 0)
+
+  // The leaderboard is capped at 12 rows -- past that the bars are too short
+  // to compare against each other and the panel outruns the viewport. Ranked
+  // by G+A, the same order the summary table opens in.
+  const chartLines = useMemo(
+    () => [...playerLines].sort((a, b) => (b.goals + b.assists) - (a.goals + a.assists)).slice(0, 12),
+    [playerLines],
+  )
 
   // ── Cumulative line chart data ───────────────────────────────────────────────
   const { lineData, allPlayersForSelection, topPlayers } = useMemo(() => {
@@ -713,7 +350,7 @@ function PlayerStatsView({ tab }: { tab: 'me' | 'overview' | 'table' }) {
     // Build game order from ALL games in the season (not just games with events),
     // so the chart shows a flat segment for games where a player had zero contributions.
     const allGamesForSeason = ((games as Game[] | undefined) ?? [])
-      .filter(g => cumulativeSeasonId === '__all__' || g.season_id === parseInt(cumulativeSeasonId))
+      .filter(g => cumulativeSeasonId === ALL_SEASONS || g.season_id === cumulativeSeasonId)
       .slice() // date-desc from hook, so reverse for chronological order
       .reverse()
     const gameOrder: { game_id: number; opponent: string; game_date: string }[] = allGamesForSeason.map(g => ({
@@ -774,7 +411,7 @@ function PlayerStatsView({ tab }: { tab: 'me' | 'overview' | 'table' }) {
           : cumulativeStat === 'turnovers' ? gs.turnovers
           : gs.goals + gs.assists
         cumulative[p.id] += v
-        point[p.name] = cumulative[p.id]
+        point[String(p.id)] = cumulative[p.id]
       }
       return point
     })
@@ -782,170 +419,99 @@ function PlayerStatsView({ tab }: { tab: 'me' | 'overview' | 'table' }) {
     return { lineData, allPlayersForSelection, topPlayers: displayPlayers }
   }, [cumulativeRaw, cumulativeStat, selectedPlayerIds, games, cumulativeSeasonId, progressionRoster])
 
-  const BarTooltip = ({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string }) => {
-    if (!active || !payload?.length) return null
-    const full = chartData.find(d => d.name === label)
-    return (
-      <div className="bg-card border border-border rounded-lg shadow-md p-3 text-sm">
-        <p className="font-semibold text-foreground mb-1">{full?.fullName ?? label}</p>
-        {payload.map(entry => <p key={entry.name} style={{ color: entry.color }} className="font-medium">{entry.name}: {entry.value}</p>)}
-      </div>
-    )
-  }
-
-  const PairTooltip = ({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string }) => {
-    if (!active || !payload?.length) return null
-    const full = pairChartData.find(d => d.pairLabel === label)
-    return (
-      <div className="bg-card border border-border rounded-lg shadow-md p-3 text-sm">
-        <p className="font-semibold text-foreground mb-1">{full?.fullPairLabel ?? label}</p>
-        {payload.map(entry => <p key={entry.name} style={{ color: entry.color }} className="font-medium">{entry.name}: {entry.value}</p>)}
-      </div>
-    )
-  }
-
-  const LineTooltip = ({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string }) => {
-    if (!active || !payload?.length) return null
-    const point = lineData.find(d => d.label === label)
-    return (
-      <div className="bg-card border border-border rounded-lg shadow-md p-3 text-sm max-w-[200px]">
-        <p className="font-semibold text-foreground mb-1 text-xs">{String(point?.fullLabel ?? label)}</p>
-        {payload.filter(e => e.value > 0).sort((a, b) => b.value - a.value).map(entry => (
-          <p key={entry.name} style={{ color: entry.color }} className="font-medium text-xs">{entry.name}: {entry.value}</p>
-        ))}
-      </div>
-    )
-  }
-
-  // Averages are team totals per game, so divide by the number of games in the
-  // current filter that have been played — not the sum of every player's games_played
-  const gamesInFilter = ((games as Game[] | undefined) ?? []).filter(g => {
+  // ── Team line ───────────────────────────────────────────────────────────
+  // The games the current filter actually covers. This is the denominator for
+  // every per-game rate on the page: the sum of each player's games_played
+  // would count one game once per player who appeared in it, so a 12-player
+  // roster over 5 games would divide the team's goals by sixty.
+  const filteredGames = ((games as Game[] | undefined) ?? []).filter(g => {
     if (!isPastGame(g)) return false
     if (filterType === 'season' && selectedSeasonIds.length > 0) return g.season_id != null && selectedSeasonIds.includes(g.season_id)
     if (filterType === 'games' && selectedGameIds.length > 0) return selectedGameIds.includes(g.id)
     return true
-  }).length
-  const avgGoals = statsArr && statsArr.length > 0 && gamesInFilter > 0
-    ? (statsArr.reduce((s, p) => s + parseInt(p.goals), 0) / gamesInFilter).toFixed(2)
-    : null
-  const avgAssists = statsArr && statsArr.length > 0 && gamesInFilter > 0
-    ? (statsArr.reduce((s, p) => s + parseInt(p.assists), 0) / gamesInFilter).toFixed(2)
-    : null
-  // pairingRows is the full fetched set (already sorted by count desc, see
-  // useGetAssistPairings), shared by the Top Pairings bar chart (top 10) and
-  // the Assist Network graph (edges among its own top-12-node roster) below.
-  const pairingRows = (pairings as PairingRow[] | undefined) ?? []
-  const topPairingRows = pairingRows.slice(0, 10)
-  const pairChartData = topPairingRows.map(r => ({
-    pairLabel: `${r.scorerName.split(' ')[0]} ← ${r.assisterName.split(' ')[0]}`,
-    fullPairLabel: `${r.scorerName} ← ${r.assisterName}`,
-    Assists: r.count,
-  }))
-  // Assist Network's node set: essentially the whole roster (see the 30-cap
-  // below), ranked by goals+assists like the Performance Chart's chartData,
-  // optionally excluding subs first via includeSubsInNetwork — plus
-  // player_id and gender_match, which chartData doesn't carry.
-  const orgPlayerMap = new Map(
-    ((orgPlayers as { id: number; gender_match: string | null; is_sub: boolean }[] | undefined) ?? []).map(p => [p.id, p])
-  )
-  const networkNodes: NetworkNode[] = statsArr
-    ? [...statsArr]
-        .filter(p => includeSubsInNetwork || orgPlayerMap.get(p.player_id)?.is_sub !== true)
-        .sort((a, b) => parseInt(b.goals) + parseInt(b.assists) - (parseInt(a.goals) + parseInt(a.assists)))
-        // 30 is well above any real roster size, so nobody with a real
-        // connection gets silently dropped (unlike the Performance Chart's
-        // top-12 cap above, which exists purely to keep that bar chart
-        // short — this cap exists only as a sanity ceiling).
-        .slice(0, 30)
-        .map(p => ({
-          id: p.player_id,
-          name: p.player_name.split(' ')[0],
-          fullName: p.player_name,
-          goals: parseInt(p.goals),
-          assists: parseInt(p.assists),
-          genderMatch: orgPlayerMap.get(p.player_id)?.gender_match ?? null,
-        }))
-    : []
-  const networkNodeIds = new Set(networkNodes.map(n => n.id))
-  // Raw, per-direction edges — NOT merged here. DirectedNetworkGraph merges
-  // A<->B into one visual line itself, but needs the real per-direction
-  // counts intact to correctly attribute "own" edges when a player is
-  // selected (see that component's comments).
-  const assistEdges: DirectedEdge[] = pairingRows
-    .filter(r => networkNodeIds.has(r.scorerId) && networkNodeIds.has(r.assisterId))
-    .map(r => ({ fromId: r.assisterId, toId: r.scorerId, count: r.count }))
-  // Shared node layout for both graphs (so a player sits in the same spot
-  // in each — see circleLayout). Both graphs render assistEdges, so one
-  // degree map serves both.
-  const networkDegree = new Map<number, number>()
-  assistEdges.forEach(e => {
-    networkDegree.set(e.fromId, (networkDegree.get(e.fromId) ?? 0) + e.count)
-    networkDegree.set(e.toId, (networkDegree.get(e.toId) ?? 0) + e.count)
   })
-  const networkPositions = circleLayout(networkNodes, 320, networkDegree)
-  const selectedNetworkNode = networkNodes.find(n => n.id === networkSelectedId)
+  const gamesInFilter = filteredGames.length
+
+  const teamLine: TeamLine = useMemo(() => {
+    let wins = 0, losses = 0, ties = 0, pointsFor = 0, pointsAgainst = 0
+    for (const g of filteredGames) {
+      const our = g.our_score ?? 0
+      const their = g.their_score ?? 0
+      pointsFor += our
+      pointsAgainst += their
+      // Same precedence the schedule ledger and Standings use: an explicit
+      // outcome_override outranks the score (a forfeit has a result but no
+      // goals), and otherwise the live score decides. `games.result` is never
+      // written, so it is deliberately not consulted here.
+      const override = g.outcome_override
+      const won = override
+        ? override.startsWith('Win') || override === 'Default Win'
+        : our > their
+      const tied = override ? override === 'Tie' : our === their
+      if (tied) ties++
+      else if (won) wins++
+      else losses++
+    }
+    return {
+      wins, losses, ties, pointsFor, pointsAgainst,
+      gamesPlayed: filteredGames.length,
+      avgGoals: gamesInFilter > 0 ? teamGoals / gamesInFilter : null,
+      avgAssists: gamesInFilter > 0 ? teamAssists / gamesInFilter : null,
+    }
+  }, [filteredGames, gamesInFilter, teamGoals, teamAssists])
+  // ── Chemistry and matrix ────────────────────────────────────────────────
+  // pairingRows is the full fetched set, already sorted by count descending
+  // (see useGetAssistPairings). The chemistry list takes the top slice; the
+  // matrix takes all of them, because it filters by one player at a time and
+  // a pairing outside the top ten is exactly the one a mid-roster player
+  // needs to see.
+  const pairingRows = (pairings as PairingRow[] | undefined) ?? []
+
+  const orgPlayerMap = useMemo(() => new Map(
+    ((orgPlayers as { id: number; photo_url: string | null; is_sub: boolean }[] | undefined) ?? [])
+      .map(p => [p.id, p] as const),
+  ), [orgPlayers])
+
+  const chemistryPairs: ChemistryPair[] = useMemo(
+    () => pairingRows.slice(0, 8).map(r => ({
+      assisterId: r.assisterId,
+      assisterName: r.assisterName,
+      assisterPhotoUrl: orgPlayerMap.get(r.assisterId)?.photo_url ?? null,
+      scorerId: r.scorerId,
+      scorerName: r.scorerName,
+      scorerPhotoUrl: orgPlayerMap.get(r.scorerId)?.photo_url ?? null,
+      count: r.count,
+    })),
+    [pairingRows, orgPlayerMap],
+  )
+
+  // The matrix's roster: everyone with stats in range, ranked by assists
+  // (the picker's default lands on the top assister), optionally minus subs.
+  // No cap — the old graph capped at 30 because that many nodes on a ring is
+  // already a hairball; a list has no such ceiling.
+  const matrixPlayers = useMemo(
+    () => [...playerLines]
+      .filter(p => includeSubsInNetwork || orgPlayerMap.get(p.playerId)?.is_sub !== true)
+      .sort((a, b) => b.assists - a.assists || b.goals - a.goals || a.name.localeCompare(b.name)),
+    [playerLines, includeSubsInNetwork, orgPlayerMap],
+  )
+
+  const matrixEdges: MatrixEdge[] = useMemo(() => {
+    const ids = new Set(matrixPlayers.map(p => p.playerId))
+    return pairingRows
+      .filter(r => ids.has(r.scorerId) && ids.has(r.assisterId))
+      .map(r => ({ assisterId: r.assisterId, scorerId: r.scorerId, count: r.count }))
+  }, [pairingRows, matrixPlayers])
+
+  // Focus follows the data rather than an effect: a pinned player who drops
+  // out of range (a filter change, subs toggled off) simply stops matching
+  // and the matrix falls back to the top assister.
+  const matrixSelectedId = networkSelectedId != null && matrixPlayers.some(p => p.playerId === networkSelectedId)
+    ? networkSelectedId
+    : matrixPlayers[0]?.playerId ?? null
 
   return (
     <div className="space-y-4">
-      {/* Filters (shared by Overview and Table) */}
-      <Card className="bg-card text-card-foreground border-border">
-        <CardHeader><CardTitle className="text-base">Filters</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label>Filter By</Label>
-            <Select value={filterType} onValueChange={(val: 'all' | 'season' | 'games') => {
-              setFilterType(val); setSelectedGameIds([]); setSelectedSeasonIds([])
-            }}>
-              <SelectTrigger className="bg-background text-foreground border-border"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Games</SelectItem>
-                <SelectItem value="season">By Season</SelectItem>
-                <SelectItem value="games">Specific Games</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {filterType === 'season' && (
-            <div className="space-y-2">
-              <Label>Select Season(s)</Label>
-              <SeasonMultiSelect
-                seasons={(allSeasons as Season[] | undefined) ?? []}
-                selectedIds={selectedSeasonIds}
-                onChange={setSelectedSeasonIds}
-                placeholder="All Seasons"
-              />
-            </div>
-          )}
-
-          {filterType === 'games' && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label>Select Games</Label>
-                <div className="flex gap-2">
-                  <button onClick={handleSelectAllGames} className="text-xs text-primary hover:underline">Select all</button>
-                  <span className="text-xs text-muted-foreground">·</span>
-                  <button onClick={handleUnselectAllGames} className="text-xs text-muted-foreground hover:text-foreground">Unselect all</button>
-                </div>
-              </div>
-              <div className="max-h-40 overflow-y-auto space-y-1 bg-background rounded-md border border-border p-3">
-                {(games as Game[] | undefined)?.map(game => {
-                  const s = (allSeasons as Season[] | undefined)?.find(s => s.id === game.season_id)
-                  return (
-                    <label key={game.id} className="flex items-center gap-3 cursor-pointer hover:bg-accent rounded px-2 py-1.5 transition-colors">
-                      <input type="checkbox" checked={selectedGameIds.includes(game.id)} onChange={() => handleGameToggle(game.id)} className="w-4 h-4 rounded border-border" />
-                      <span className="text-sm text-foreground">
-                        vs {game.opponent}, {new Date(game.game_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                        {s && <span className="text-xs text-muted-foreground ml-1">· {seasonLabel(s)}</span>}
-                      </span>
-                    </label>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
       {tab === 'me' && (
         <>
           {link.data === undefined || teamLinks.data === undefined || orgPlayers === undefined ? (
@@ -961,30 +527,28 @@ function PlayerStatsView({ tab }: { tab: 'me' | 'overview' | 'table' }) {
             // would yield an empty exclusion set, and every roster player
             // -- including ones someone else already claimed -- would
             // appear selectable.
-            <Card className="bg-card border-border">
-              <CardContent className="p-4 space-y-3">
-                {link.error || teamLinks.error || orgPlayersError ? (
-                  <p className="text-sm text-destructive">
-                    {link.error || teamLinks.error || orgPlayersError}
-                  </p>
-                ) : (
-                  <Skeleton className="h-9 w-full" />
-                )}
-              </CardContent>
-            </Card>
+            <section className="st-panel p-4">
+              {link.error || teamLinks.error || orgPlayersError ? (
+                <p className="text-sm text-destructive">
+                  {link.error || teamLinks.error || orgPlayersError}
+                </p>
+              ) : (
+                <Skeleton className="h-9 w-full" />
+              )}
+            </section>
           ) : !link.data ? (
             // No link yet: offer to claim a roster spot. A link never grants
             // any permission -- it only answers "whose stats are these" --
             // so a pending claim is harmless while it waits for approval.
-            <Card className="bg-card text-card-foreground border-border">
-              <CardHeader>
-                <CardTitle>Which player are you?</CardTitle>
-                <CardDescription>
+            <section className="st-panel">
+              <div className="st-panel-head">
+                <span className="st-overline">Which player are you?</span>
+              </div>
+              <div className="space-y-3 p-4">
+                <p className="st-meta">
                   Pick your name on the roster to see your own stats. A captain or
                   editor confirms it.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
+                </p>
                 <PlayerCombobox
                   players={unclaimedPlayers}
                   value="__none__"
@@ -1000,609 +564,139 @@ function PlayerStatsView({ tab }: { tab: 'me' | 'overview' | 'table' }) {
                   }}
                   placeholder="Select your name"
                 />
-                {claim.error && <p className="mt-2 text-sm text-destructive">{claim.error}</p>}
-              </CardContent>
-            </Card>
+                {claim.error && <p className="text-sm text-destructive">{claim.error}</p>}
+              </div>
+            </section>
           ) : link.data.status === 'pending' ? (
-            <Card className="bg-card text-card-foreground border-border">
-              <CardHeader><CardTitle>Waiting for confirmation</CardTitle></CardHeader>
-              <CardContent className="text-sm text-muted-foreground">
+            <section className="st-panel">
+              <div className="st-panel-head">
+                <span className="st-overline">Waiting for confirmation</span>
+              </div>
+              <p className="st-meta p-4">
                 You've claimed a roster spot. A captain or editor needs to confirm it
                 before your stats show up here.
-              </CardContent>
-            </Card>
+              </p>
+            </section>
           ) : statsArr === undefined ? (
             // Same shape as the gate above: `mine` is derived from `link`
             // (resolved by this point) AND `statsArr`, fetched by a separate
             // effect. Without this check, `mine` would read as undefined
             // while stats are still loading and fall through to the "no
             // stats yet" case below -- a wrong, if momentary, message.
-            <Card className="bg-card border-border">
-              <CardContent className="p-4 space-y-3">
-                <Skeleton className="h-9 w-full" />
-              </CardContent>
-            </Card>
+            <section className="st-panel p-4">
+              <Skeleton className="h-9 w-full" />
+            </section>
           ) : mine ? (
             <>
-              <h2 className="text-lg font-bold text-foreground">{mine.player_name}</h2>
-              <FadeIn className="grid grid-cols-2 gap-3">
-                <Card className="bg-card border-border">
-                  <CardContent className="pt-4">
-                    <p className="text-2xl font-bold text-green-600 dark:text-green-400">{mine.goals}</p>
-                    <p className="text-xs text-muted-foreground">Goals</p>
-                  </CardContent>
-                </Card>
-                <Card className="bg-card border-border">
-                  <CardContent className="pt-4">
-                    <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{mine.assists}</p>
-                    <p className="text-xs text-muted-foreground">Assists</p>
-                  </CardContent>
-                </Card>
-                <Card className="bg-card border-border">
-                  <CardContent className="pt-4">
-                    <p className="text-2xl font-bold text-orange-600 dark:text-orange-400">{mine.turnovers}</p>
-                    <p className="text-xs text-muted-foreground">Turnovers</p>
-                  </CardContent>
-                </Card>
-                <Card className="bg-card border-border">
-                  <CardContent className="pt-4">
-                    <p className="text-2xl font-bold text-foreground">{mine.games_played}</p>
-                    <p className="text-xs text-muted-foreground">Games played</p>
-                  </CardContent>
-                </Card>
+              <h2 className="st-name text-lg">{mine.player_name}</h2>
+              <FadeIn className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <MetricCard label="Goals" value={mine.goals} series="goals" hint={perGame(mine.goals, mine.games_played)} />
+                <MetricCard label="Assists" value={mine.assists} series="assists" hint={perGame(mine.assists, mine.games_played)} />
+                <MetricCard label="Turnovers" value={mine.turnovers} series="turnovers" hint={perGame(mine.turnovers, mine.games_played)} />
+                <MetricCard label="Games played" value={mine.games_played} />
               </FadeIn>
             </>
           ) : (
-            <Card className="bg-card text-card-foreground border-border">
-              <CardContent className="p-6 text-center text-sm text-muted-foreground">
-                No stats yet for the current filter.
-              </CardContent>
-            </Card>
+            <section className="st-panel">
+              <p className="st-meta p-8 text-center">No stats yet for the current filter.</p>
+            </section>
           )}
         </>
       )}
 
       {tab === 'overview' && (
         <>
-          {/* Top scorer / top assister + avg per game banner */}
-          {topScorer && topAssister && (
-            <FadeIn className="grid grid-cols-2 gap-3">
-              <Card className="bg-card border-border">
-                <CardContent className="pt-4">
-                  <div className="flex items-center gap-2 text-yellow-500 mb-1">
-                    <Award className="w-4 h-4" />
-                    <span className="text-xs font-semibold uppercase tracking-wide">Top Scorer</span>
-                  </div>
-                  <p className="font-bold text-foreground">{topScorer.player_name}</p>
-                  <p className="text-2xl font-bold text-primary">{topScorer.goals}</p>
-                  <p className="text-xs text-muted-foreground">goals</p>
-                </CardContent>
-              </Card>
-              <Card className="bg-card border-border">
-                <CardContent className="pt-4">
-                  <div className="flex items-center gap-2 text-blue-500 mb-1">
-                    <Target className="w-4 h-4" />
-                    <span className="text-xs font-semibold uppercase tracking-wide">Top Assister</span>
-                  </div>
-                  <p className="font-bold text-foreground">{topAssister.player_name}</p>
-                  <p className="text-2xl font-bold text-primary">{topAssister.assists}</p>
-                  <p className="text-xs text-muted-foreground">assists</p>
-                </CardContent>
-              </Card>
+          {/* The three cards that open the page. They render whenever the
+              filter covers any games at all -- the leader cards carry their
+              own "no player data" state, so a range with games but no
+              recorded stats still shows the team's record rather than
+              collapsing the whole row. */}
+          {(playerLines.length > 0 || gamesInFilter > 0) && (
+            <FadeIn className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <LeaderCard
+                overline="Top finisher"
+                icon={<Trophy className="h-3.5 w-3.5" weight="bold" />}
+                series="goals"
+                player={topFinisher}
+                value={topFinisher?.goals ?? 0}
+                unit="Goals"
+                teamTotal={teamGoals}
+                secondary={[
+                  { label: 'Assists', series: 'assists', value: topFinisher?.assists ?? 0 },
+                  { label: 'Turnovers', series: 'turnovers', value: topFinisher?.turnovers ?? 0 },
+                ]}
+              />
+              <LeaderCard
+                overline="Top playmaker"
+                icon={<Handshake className="h-3.5 w-3.5" weight="bold" />}
+                series="assists"
+                player={topPlaymaker}
+                value={topPlaymaker?.assists ?? 0}
+                unit="Assists"
+                teamTotal={teamAssists}
+                secondary={[
+                  { label: 'Goals', series: 'goals', value: topPlaymaker?.goals ?? 0 },
+                  { label: 'Turnovers', series: 'turnovers', value: topPlaymaker?.turnovers ?? 0 },
+                ]}
+              />
+              <TeamCard icon={<Scales className="h-3.5 w-3.5" weight="bold" />} team={teamLine} />
             </FadeIn>
           )}
 
-          {avgGoals && avgAssists && (
-            <div className="grid grid-cols-2 gap-3">
-              <FadeIn delay={0}>
-                <Card className="bg-green-500/5 border-green-500/20">
-                  <CardContent className="pt-3 pb-3 text-center">
-                    <div className="text-xl font-bold text-green-600 dark:text-green-400">{avgGoals}</div>
-                    <div className="text-xs text-muted-foreground">Avg goals/game</div>
-                  </CardContent>
-                </Card>
-              </FadeIn>
-              <FadeIn delay={40}>
-                <Card className="bg-blue-500/5 border-blue-500/20">
-                  <CardContent className="pt-3 pb-3 text-center">
-                    <div className="text-xl font-bold text-blue-600 dark:text-blue-400">{avgAssists}</div>
-                    <div className="text-xs text-muted-foreground">Avg assists/game</div>
-                  </CardContent>
-                </Card>
-              </FadeIn>
-            </div>
-          )}
+          {/* The leaderboard. Everything it needs is already parsed into
+              chartLines, so the panel takes no query and no filter state --
+              the same boundary GameRow keeps against `games`. */}
+          <PerformanceChart
+            players={chartLines}
+            loading={loading}
+            error={error ? `Error: ${error}` : null}
+            emptyLabel={filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No stats available yet'}
+          />
 
-          {/* Bar chart */}
-          <Card className="bg-card text-card-foreground border-border">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base flex items-center gap-2">
-                <BarChart3 className="w-4 h-4" />Performance Chart
-              </CardTitle>
-              <div className="flex gap-1 mt-2 bg-muted rounded-lg p-1">
-                {CHART_TABS.map(t => (
-                  <button key={t.key} onClick={() => setChartTab(t.key)}
-                    className={`flex-1 text-xs py-1.5 px-2 rounded-md font-medium transition-colors ${chartTab === t.key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            </CardHeader>
-            <CardContent className="pt-2">
-              {loading ? (
-                // Skeleton shaped like the horizontal bar chart: a name label plus a
-                // bar of varying width for each of several rows.
-                <div className="space-y-4 py-2">
-                  {[0.9, 0.75, 0.6, 0.5, 0.4, 0.3].map((w, i) => (
-                    <div key={i} className="flex items-center gap-3">
-                      <Skeleton className="h-3 w-12 shrink-0" />
-                      <Skeleton className="h-3.5" style={{ width: `${w * 100}%` }} />
-                    </div>
-                  ))}
-                </div>
-              ) : error ? (
-                <div className="flex items-center justify-center h-48 text-destructive text-sm">Error: {error}</div>
-              ) : chartData.length > 0 ? (
-                <FadeIn className="w-full" style={{ height: Math.max(200, chartData.length * 36) }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={chartData} layout="vertical" margin={{ top: 0, right: 16, left: 0, bottom: 0 }} barCategoryGap="20%">
-                      <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
-                      <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} />
-                      <YAxis type="category" dataKey="name" width={56} tick={{ fontSize: 11, fill: 'hsl(var(--foreground))' }} axisLine={false} tickLine={false} />
-                      <Tooltip content={<BarTooltip />} cursor={{ fill: 'hsl(var(--accent))' }} />
-                      {(chartTab === 'combined' || chartTab === 'goals') && <Bar dataKey="Goals" fill="#16a34a" radius={[0, 3, 3, 0]} maxBarSize={14} />}
-                      {(chartTab === 'combined' || chartTab === 'assists') && <Bar dataKey="Assists" fill="#2563eb" radius={[0, 3, 3, 0]} maxBarSize={14} />}
-                      {(chartTab === 'combined' || chartTab === 'turnovers') && <Bar dataKey="Turnovers" fill="#ea580c" radius={[0, 3, 3, 0]} maxBarSize={14} />}
-                      {chartTab === 'combined' && <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />}
-                    </BarChart>
-                  </ResponsiveContainer>
-                </FadeIn>
-              ) : (
-                <div className="flex flex-col items-center justify-center h-48 text-muted-foreground">
-                  <TrendingUp className="w-12 h-12 mb-3 opacity-40" />
-                  <p className="text-sm">{filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No stats available yet'}</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          {/* Who connects with whom. Takes joined pairs and nothing else --
+              it never sees a game_events row or a filter. */}
+          <ChemistryHub
+            pairs={chemistryPairs}
+            loading={pairingsLoading}
+            error={pairingsError ? `Error: ${pairingsError}` : null}
+            emptyLabel={filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No assisted goals in this range yet'}
+          />
 
-          {/* Top Pairings */}
-          <Card className="bg-card text-card-foreground border-border">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base flex items-center gap-2">
-                <Target className="w-4 h-4" />Top Pairings
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-2">
-              {pairingsLoading ? (
-                <div className="space-y-4 py-2">
-                  {[0.9, 0.75, 0.6, 0.5, 0.4].map((w, i) => (
-                    <div key={i} className="flex items-center gap-3">
-                      <Skeleton className="h-3 w-24 shrink-0" />
-                      <Skeleton className="h-3.5" style={{ width: `${w * 100}%` }} />
-                    </div>
-                  ))}
-                </div>
-              ) : pairingsError ? (
-                <div className="flex items-center justify-center h-48 text-destructive text-sm">Error: {pairingsError}</div>
-              ) : pairingRows.length > 0 ? (
-                <FadeIn className="w-full" style={{ height: Math.max(160, topPairingRows.length * 32) }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={pairChartData}
-                      layout="vertical"
-                      margin={{ top: 0, right: 16, left: 0, bottom: 0 }}
-                      barCategoryGap="20%"
-                    >
-                      <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" />
-                      <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} />
-                      <YAxis type="category" dataKey="pairLabel" width={140} tick={{ fontSize: 11, fill: 'hsl(var(--foreground))' }} axisLine={false} tickLine={false} />
-                      <Tooltip content={<PairTooltip />} cursor={{ fill: 'hsl(var(--accent))' }} />
-                      <Bar dataKey="Assists" fill="#2563eb" radius={[0, 3, 3, 0]} maxBarSize={14} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </FadeIn>
-              ) : (
-                <div className="flex flex-col items-center justify-center h-48 text-muted-foreground">
-                  <Target className="w-12 h-12 mb-3 opacity-40" />
-                  <p className="text-sm">{filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No assisted goals in this range yet'}</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          {/* One player's connections, both directions. Replaces the two
+              circular graphs, which drew these same edges twice. */}
+          <AssistMatrix
+            players={matrixPlayers}
+            edges={matrixEdges}
+            selectedId={matrixSelectedId}
+            onSelect={setNetworkSelectedId}
+            includeSubs={includeSubsInNetwork}
+            onIncludeSubsChange={setIncludeSubsInNetwork}
+            loading={pairingsLoading}
+            error={pairingsError ? `Error: ${pairingsError}` : null}
+            emptyLabel={filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No assisted goals in this range yet'}
+          />
 
-          {/* Assist Network */}
-          <Card className="bg-card text-card-foreground border-border">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base flex items-center justify-between gap-2">
-                <span className="flex items-center gap-2"><Share2 className="w-4 h-4" />Assist Network</span>
-                <label className="flex items-center gap-1.5 text-xs font-normal text-muted-foreground cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={includeSubsInNetwork}
-                    onChange={e => setIncludeSubsInNetwork(e.target.checked)}
-                    className="w-3.5 h-3.5 rounded border-border"
-                  />
-                  Include subs
-                </label>
-              </CardTitle>
-              <p className="text-xs text-muted-foreground">Tap a player to highlight their connections. Numbers on each line are counts.</p>
-            </CardHeader>
-            <CardContent className="pt-2 space-y-6">
-              <div>
-                <p className="text-sm font-medium text-blue-600 dark:text-blue-400 mb-1 text-center">Assists — who fed whom</p>
-                {pairingsLoading ? (
-                  <div className="flex items-center justify-center h-64">
-                    <Skeleton className="w-56 h-56 rounded-full" />
-                  </div>
-                ) : pairingsError ? (
-                  <div className="flex items-center justify-center h-48 text-destructive text-sm">Error: {pairingsError}</div>
-                ) : assistEdges.length > 0 ? (
-                  <FadeIn className="w-full relative">
-                    <DirectedNetworkGraph
-                      nodes={networkNodes}
-                      edges={assistEdges}
-                      positions={networkPositions}
-                      color="#2563eb"
-                      weightOf={n => n.assists}
-                      selectedId={networkSelectedId}
-                      onSelect={setNetworkSelectedId}
-                      ownEdgeSide="from"
-                    />
-                    <SelectedPlayerBadge node={selectedNetworkNode} />
-                  </FadeIn>
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
-                    <Share2 className="w-10 h-10 mb-2 opacity-40" />
-                    <p className="text-sm">{filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No assisted goals in this range yet'}</p>
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <p className="text-sm font-medium text-green-600 dark:text-green-400 mb-1 text-center">Goals — who scored off whom</p>
-                {pairingsLoading ? (
-                  <div className="flex items-center justify-center h-64">
-                    <Skeleton className="w-56 h-56 rounded-full" />
-                  </div>
-                ) : pairingsError ? (
-                  <div className="flex items-center justify-center h-48 text-destructive text-sm">Error: {pairingsError}</div>
-                ) : assistEdges.length > 0 ? (
-                  <FadeIn className="w-full relative">
-                    <DirectedNetworkGraph
-                      nodes={networkNodes}
-                      edges={assistEdges}
-                      positions={networkPositions}
-                      color="#16a34a"
-                      weightOf={n => n.goals}
-                      selectedId={networkSelectedId}
-                      onSelect={setNetworkSelectedId}
-                      ownEdgeSide="to"
-                    />
-                    <SelectedPlayerBadge node={selectedNetworkNode} />
-                  </FadeIn>
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
-                    <Target className="w-10 h-10 mb-2 opacity-40" />
-                    <p className="text-sm">{filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No assisted goals in this range yet'}</p>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Cumulative Progression Chart */}
-          <Card className="bg-card text-card-foreground border-border">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base flex items-center gap-2">
-                <LineChartIcon className="w-4 h-4" />Season Progression
-              </CardTitle>
-
-              <div className="mt-3 space-y-1">
-                <Label className="text-xs text-muted-foreground">Season</Label>
-                <Select value={cumulativeSeasonId} onValueChange={setCumulativeSeasonId}>
-                  <SelectTrigger className="bg-background text-foreground border-border h-8 text-sm"><SelectValue placeholder="All games" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">All games</SelectItem>
-                    {(allSeasons as Season[] | undefined)?.map(s => (
-                      <SelectItem key={s.id} value={String(s.id)}>{seasonLabel(s)}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Player filter */}
-              {allPlayersForSelection.length > 0 && (
-                <div className="mt-2 space-y-1">
-                  <Label className="text-xs text-muted-foreground">
-                    Players {selectedPlayerIds.length === 0 ? '(top 8)' : ''}
-                  </Label>
-                  <PlayerMultiSelect
-                    players={allPlayersForSelection}
-                    selectedIds={selectedPlayerIds}
-                    onChange={setSelectedPlayerIds}
-                    placeholder="Top 8 players"
-                  />
-                </div>
-              )}
-
-              {/* Stat tab */}
-              <div className="flex gap-1 mt-2 bg-muted rounded-lg p-1">
-                {CUMULATIVE_TABS.map(t => (
-                  <button key={t.key} onClick={() => setCumulativeStat(t.key)}
-                    className={`flex-1 text-xs py-1.5 px-2 rounded-md font-medium transition-colors ${cumulativeStat === t.key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            </CardHeader>
-            <CardContent className="pt-2">
-              {cumulativeLoading ? (
-                // Skeleton shaped like the line chart: a large plot block plus a row
-                // of legend chips underneath.
-                <div className="space-y-3">
-                  <Skeleton className="w-full" style={{ height: 220 }} />
-                  <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-                    {[0, 1, 2, 3, 4].map(i => (
-                      <div key={i} className="flex items-center gap-1.5">
-                        <Skeleton className="w-2.5 h-2.5 rounded-full shrink-0" />
-                        <Skeleton className="h-3 w-16" />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : lineData.length > 0 ? (
-                <FadeIn>
-                  <div style={{ height: 220 }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={lineData} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                        <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} />
-                        <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} />
-                        <Tooltip content={<LineTooltip />} />
-                        {topPlayers.map((p, i) => (
-                          <Line
-                            key={p.id}
-                            type="monotone"
-                            dataKey={p.name}
-                            stroke={LINE_COLORS[i % LINE_COLORS.length]}
-                            strokeWidth={2}
-                            dot={{ r: 3, strokeWidth: 0, fill: LINE_COLORS[i % LINE_COLORS.length] }}
-                            activeDot={{ r: 5 }}
-                          />
-                        ))}
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5">
-                    {topPlayers.map((p, i) => {
-                      const finalVal = lineData.length > 0 ? (lineData[lineData.length - 1]?.[p.name] as number ?? 0) : 0
-                      return (
-                        <div key={p.id} className="flex items-center gap-1.5 text-xs">
-                          <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: LINE_COLORS[i % LINE_COLORS.length] }} />
-                          <span className="text-foreground font-medium">{p.name}</span>
-                          <span className="text-muted-foreground">({finalVal})</span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </FadeIn>
-              ) : (
-                <div className="flex flex-col items-center justify-center h-56 text-muted-foreground">
-                  <LineChartIcon className="w-12 h-12 mb-3 opacity-40" />
-                  <p className="text-sm">No progression data yet</p>
-                  <p className="text-xs mt-1">Select a season with recorded games</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          {/* Cumulative output, focus + dim. The season and player pickers
+              live inside the panel because they scope this chart alone, not
+              the page -- the page's own scope is the header's FilterBar. */}
+          <ProgressionChart
+            data={lineData as ProgressionPoint[]}
+            players={topPlayers}
+            roster={allPlayersForSelection}
+            selectedPlayerIds={selectedPlayerIds}
+            onSelectedPlayerIdsChange={setSelectedPlayerIds}
+            seasons={(allSeasons as Season[] | undefined) ?? []}
+            seasonId={cumulativeSeasonId ?? ALL_SEASONS}
+            onSeasonChange={setCumulativeSeasonId}
+            stat={cumulativeStat}
+            onStatChange={setCumulativeStat}
+            loading={cumulativeLoading}
+          />
         </>
       )}
 
       {tab === 'table' && (
-        <>
-          {/* Summary table: skeleton rows while loading, shaped like the real rows */}
-          {loading && (
-            <Card className="bg-card text-card-foreground border-border">
-              <CardHeader><CardTitle className="text-base">Summary Table</CardTitle></CardHeader>
-              <CardContent>
-                <div className="overflow-x-auto">
-                  <div className="space-y-0 min-w-[420px]">
-                    <div className="flex items-center gap-3 px-2 pb-2 border-b border-border">
-                      <Skeleton className="h-3 flex-1" />
-                      <Skeleton className="h-3 w-8" />
-                      <Skeleton className="h-3 w-8" />
-                      <Skeleton className="h-3 w-8" />
-                      <Skeleton className="h-3 w-10" />
-                      <Skeleton className="h-3 w-10" />
-                      <Skeleton className="h-3 w-10" />
-                    </div>
-                    {[0, 1, 2, 3, 4, 5].map(i => (
-                      <div key={i} className="flex items-center gap-3 px-2 py-2.5 border-b border-border last:border-0">
-                        <Skeleton className="h-4 flex-1" />
-                        <Skeleton className="h-4 w-8" />
-                        <Skeleton className="h-4 w-8" />
-                        <Skeleton className="h-4 w-8" />
-                        <Skeleton className="h-3 w-10" />
-                        <Skeleton className="h-3 w-10" />
-                        <Skeleton className="h-3 w-10" />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {!loading && chartData.length > 0 && (
-            <Card className="bg-card text-card-foreground border-border">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0">
-                <CardTitle className="text-base">Summary Table</CardTitle>
-                <Popover open={columnsPopoverOpen} onOpenChange={setColumnsPopoverOpen}>
-                  <PopoverTrigger asChild>
-                    <Button type="button" size="sm" variant="outline" className="h-7 text-xs bg-card border-border gap-1.5">
-                      <Settings2 className="w-3.5 h-3.5" />Columns
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent align="end" className="w-72 space-y-3">
-                    <div className="space-y-1.5">
-                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Show columns</p>
-                      {allColumns.map(col => (
-                        <label key={col.id} className="flex items-center justify-between gap-2 text-sm">
-                          <span className="flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              checked={!hiddenColumnIds.has(col.id)}
-                              onChange={() => toggleColumnVisibility(col.id)}
-                              className="accent-primary w-3.5 h-3.5 cursor-pointer"
-                            />
-                            <span className={col.color}>{col.label}</span>
-                          </span>
-                          {!col.builtin && (
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveCustomColumn(col.id)}
-                              title="Delete this column"
-                              aria-label="Delete this column"
-                              className="text-muted-foreground hover:text-destructive transition-colors"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </label>
-                      ))}
-                    </div>
-                    <div className="space-y-2 pt-2 border-t border-border">
-                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Sort</p>
-                      <div className="flex items-center gap-1.5">
-                        <Select value={sortColumnId ?? '__none__'} onValueChange={v => setSortColumnId(v === '__none__' ? null : v)}>
-                          <SelectTrigger className="h-8 text-xs bg-card border-border flex-1"><SelectValue placeholder="Sort by..." /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">Default order</SelectItem>
-                            <SelectItem value="player_name">Player</SelectItem>
-                            {allColumns.map(c => <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                        <button
-                          type="button"
-                          disabled={!sortColumnId}
-                          onClick={() => setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))}
-                          className="h-8 w-8 flex items-center justify-center rounded-md border border-border bg-card disabled:opacity-40 hover:bg-muted transition-colors shrink-0"
-                        >
-                          {sortDir === 'asc' ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                        </button>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <Select value={sortColumnId2 ?? '__none__'} onValueChange={v => setSortColumnId2(v === '__none__' ? null : v)} disabled={!sortColumnId}>
-                          <SelectTrigger className="h-8 text-xs bg-card border-border flex-1 disabled:opacity-40"><SelectValue placeholder="Then by..." /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">None</SelectItem>
-                            <SelectItem value="player_name">Player</SelectItem>
-                            {allColumns.map(c => <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                        <button
-                          type="button"
-                          disabled={!sortColumnId || !sortColumnId2}
-                          onClick={() => setSortDir2(d => (d === 'asc' ? 'desc' : 'asc'))}
-                          className="h-8 w-8 flex items-center justify-center rounded-md border border-border bg-card disabled:opacity-40 hover:bg-muted transition-colors shrink-0"
-                        >
-                          {sortDir2 === 'asc' ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                        </button>
-                      </div>
-                    </div>
-                    <div className="space-y-2 pt-2 border-t border-border">
-                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Add a formula column</p>
-                      <div className="flex items-center gap-1.5">
-                        <Select value={newColStatA} onValueChange={v => setNewColStatA(v as StatKey)}>
-                          <SelectTrigger className="h-8 text-xs bg-card border-border flex-1"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            {(Object.keys(STAT_LABELS) as StatKey[]).map(k => <SelectItem key={k} value={k}>{STAT_LABELS[k]}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                        <Select value={newColOp} onValueChange={v => setNewColOp(v as '+' | '-')}>
-                          <SelectTrigger className="h-8 text-xs bg-card border-border w-14"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="+">+</SelectItem>
-                            <SelectItem value="-">-</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <Select value={newColStatB} onValueChange={v => setNewColStatB(v as StatKey | '__none__')}>
-                          <SelectTrigger className="h-8 text-xs bg-card border-border flex-1"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">None</SelectItem>
-                            {(Object.keys(STAT_LABELS) as StatKey[]).map(k => <SelectItem key={k} value={k}>{STAT_LABELS[k]}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <input type="checkbox" checked={newColPerGame} onChange={e => setNewColPerGame(e.target.checked)} className="accent-primary w-3.5 h-3.5 cursor-pointer" />
-                        Per game (divide by GP)
-                      </label>
-                      <Button type="button" size="sm" onClick={handleAddCustomColumn} className="w-full h-8 bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5">
-                        <Plus className="w-3.5 h-3.5" />Add column
-                      </Button>
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              </CardHeader>
-              <CardContent>
-                <div className="overflow-x-auto">
-                  <div className="space-y-0">
-                    <div className="flex items-center gap-3 px-2 pb-2 text-xs text-muted-foreground font-medium border-b border-border">
-                      <div className="relative shrink-0 flex items-center" style={{ width: getColumnWidth('player_name') }}>
-                        <button
-                          type="button"
-                          onClick={() => handleSortClick('player_name')}
-                          className="flex-1 min-w-0 flex items-center gap-1 text-left hover:text-foreground transition-colors"
-                        >
-                          <span className="truncate">Player</span>
-                          {sortColumnId === 'player_name' ? (sortDir === 'asc' ? <ChevronUp className="w-3 h-3 shrink-0" /> : <ChevronDown className="w-3 h-3 shrink-0" />) : <ChevronsUpDown className="w-3 h-3 opacity-30 shrink-0" />}
-                        </button>
-                        <div
-                          onPointerDown={e => handleResizeStart('player_name', e)}
-                          className="absolute right-0 top-0 bottom-0 w-2 -mr-2 cursor-col-resize hover:bg-primary/30 rounded-sm"
-                        />
-                      </div>
-                      <div className="flex items-center gap-3 ml-auto shrink-0">
-                        {visibleColumns.map(col => (
-                          <div key={col.id} className="relative shrink-0 flex items-center justify-end" style={{ width: getColumnWidth(col.id) }}>
-                            <button
-                              type="button"
-                              onClick={() => handleSortClick(col.id)}
-                              className={`flex items-center justify-end gap-0.5 hover:text-foreground transition-colors ${col.color}`}
-                            >
-                              {sortColumnId === col.id ? (sortDir === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />) : <ChevronsUpDown className="w-3 h-3 opacity-30" />}
-                              {col.label}
-                            </button>
-                            <div
-                              onPointerDown={e => handleResizeStart(col.id, e)}
-                              className="absolute right-0 top-0 bottom-0 w-2 -mr-2 cursor-col-resize hover:bg-primary/30 rounded-sm"
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    {sortedStats.map((p, index) => (
-                      <FadeIn key={p.player_id} delay={index * 40} className="flex items-center gap-3 px-2 py-2.5 border-b border-border last:border-0">
-                        <div className="text-sm font-medium text-foreground truncate shrink-0" style={{ width: getColumnWidth('player_name') }}>{p.player_name}</div>
-                        <div className="flex items-center gap-3 ml-auto shrink-0">
-                          {visibleColumns.map(col => (
-                            <div key={col.id} className={`text-right font-bold text-sm shrink-0 ${col.color}`} style={{ width: getColumnWidth(col.id) }}>
-                              {formatColumnValue(col, getColumnValue(col, p))}
-                            </div>
-                          ))}
-                        </div>
-                      </FadeIn>
-                    ))}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </>
+        <RankingsTable players={playerLines} loading={loading} />
       )}
     </div>
   )
@@ -1764,13 +858,27 @@ function Standings() {
     refresh()
   }
 
-  const formDot = (o: 'W' | 'L' | 'T', i: number) => (
-    <span
-      key={i}
-      className={`inline-block w-2 h-2 rounded-full ${
-        o === 'W' ? 'bg-green-500' : o === 'L' ? 'bg-red-500' : 'bg-yellow-500'
-      }`}
-    />
+  // The table takes rows, not a league: it never sees a `league_teams` row,
+  // a stage, or an eff_home_score. Same boundary GameRow keeps against
+  // `games`, and the reason the form guide can be computed here where the
+  // schedule's own rules already live.
+  const standingsRows: StandingsRow[] = useMemo(
+    () => sortedStandings.map(r => ({
+      teamId: r.team.id,
+      teamName: r.team.name + (r.team.is_us ? ' (us)' : ''),
+      isUs: r.team.is_us,
+      rank: r.rank,
+      gamesPlayed: r.games_played,
+      wins: r.wins,
+      losses: r.losses,
+      ties: r.ties,
+      pointsFor: r.points_for,
+      pointsAgainst: r.points_against,
+      pointDiff: r.point_diff,
+      points: r.points,
+      form: formByTeam.get(r.team.id) ?? [],
+    })),
+    [sortedStandings, formByTeam],
   )
 
   const seasons = (allSeasons as Season[] | undefined) ?? []
@@ -1807,60 +915,66 @@ function Standings() {
 
     return (
       <div className="space-y-4">
-        <button
-          onClick={() => { setDetailTeam(null); setEditingNotes(false) }}
-          className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ChevronLeft className="w-5 h-5" />
-          <span className="text-sm font-medium">Back to Standings</span>
+        <button type="button" className="st-btn" onClick={() => { setDetailTeam(null); setEditingNotes(false) }}>
+          <CaretLeft className="h-3.5 w-3.5" weight="bold" />
+          Standings
         </button>
 
-        <div className="flex items-center gap-2">
-          <h2 className="text-xl font-bold text-foreground">{detailTeam.name}</h2>
-          {detailTeam.is_us && <span className="text-xs font-normal text-primary">Us</span>}
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="st-title text-xl">{detailTeam.name}</h2>
+          {detailTeam.is_us && <span className="st-chip">Us</span>}
         </div>
 
         {oppHistoryLoading && !oppHistory ? (
-          <p className="text-sm text-muted-foreground">Loading...</p>
+          <p className="st-meta">Loading…</p>
         ) : (
           <>
             {allTimeH2h && (
-              <Card className="bg-card text-card-foreground border-border">
-                <CardContent className="p-4 text-center">
-                  <p className="text-xs text-muted-foreground mb-1">All-time head-to-head vs us</p>
-                  <p className="text-lg font-bold tabular-nums">
-                    <span className="text-green-600 dark:text-green-400">{allTimeH2h.w}W</span>
-                    <span className="mx-2 text-red-600 dark:text-red-400">{allTimeH2h.l}L</span>
-                    <span className="text-yellow-600 dark:text-yellow-400">{allTimeH2h.t}T</span>
-                  </p>
-                </CardContent>
-              </Card>
+              <section className="st-panel st-kpi">
+                <span className="st-overline">All-time head-to-head vs us</span>
+                {/* Three outcomes, three tokens, one figure each — the same
+                    up/down/tie family the standings differential uses, so a
+                    win means one colour everywhere on the page. */}
+                <div className="st-strip" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+                  <div className="st-strip-cell st-up">
+                    <span className="st-unit">Won</span>
+                    <span className="st-figure st-figure--sm">{allTimeH2h.w}</span>
+                  </div>
+                  <div className="st-strip-cell st-down">
+                    <span className="st-unit">Lost</span>
+                    <span className="st-figure st-figure--sm">{allTimeH2h.l}</span>
+                  </div>
+                  <div className="st-strip-cell st-tie">
+                    <span className="st-unit">Tied</span>
+                    <span className="st-figure st-figure--sm">{allTimeH2h.t}</span>
+                  </div>
+                </div>
+              </section>
             )}
 
-            <Card className="bg-card text-card-foreground border-border">
-              <CardHeader><CardTitle className="text-base">Seasons Played</CardTitle></CardHeader>
-              <CardContent>
+            <section className="st-panel">
+              <div className="st-panel-head"><span className="st-overline">Seasons played</span></div>
+              <div className="p-3 sm:p-4">
                 {oppTeams.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No seasons yet.</p>
+                  <p className="st-meta">No seasons yet.</p>
                 ) : (
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-1.5">
                     {oppTeams.map(t => (
-                      <span key={t.id} className="text-xs font-medium px-2 py-1 rounded-full bg-accent text-foreground">
+                      <span key={t.id} className="st-chip">
                         {seasonLabel({ name: t.season_name, year: t.season_year, organizer: t.season_organizer })}
                       </span>
                     ))}
                   </div>
                 )}
-              </CardContent>
-            </Card>
+              </div>
+            </section>
 
-            <Card className="bg-card text-card-foreground border-border">
-              <CardHeader><CardTitle className="text-base">All Games</CardTitle></CardHeader>
-              <CardContent>
-                {oppGames.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No games yet.</p>
-                ) : (
-                  <div className="divide-y divide-border">
+            <section className="st-panel">
+              <div className="st-panel-head"><span className="st-overline">All games</span></div>
+              {oppGames.length === 0 ? (
+                <p className="st-meta p-4">No games yet.</p>
+              ) : (
+                <div className="st-list">
                     {oppGames.map(g => {
                       const thisTeamId = oppTeams.find(t => t.season_id === g.season_id)?.id ?? null
                       const isThisTeamHome = g.eff_home_team_id === thisTeamId
@@ -1870,62 +984,62 @@ function Standings() {
                       const decided = g.is_final && mine != null && theirs != null
                       const season = oppTeams.find(t => t.season_id === g.season_id)
                       return (
-                        <div key={g.id} className="flex items-center justify-between text-sm py-2 gap-3">
-                          <div className="min-w-0">
-                            <p className="truncate">vs {otherName}</p>
-                            <p className="text-xs text-muted-foreground truncate">
+                        <div key={g.id} className="st-row">
+                          <div className="min-w-0 flex-1">
+                            <p className="st-name">vs {otherName}</p>
+                            <p className="st-meta mt-0.5 truncate">
                               {season ? seasonLabel({ name: season.season_name, year: season.season_year, organizer: season.season_organizer }) : ''}
                               {' · '}{g.game_date ?? 'TBD'}
                             </p>
                           </div>
                           {decided ? (
-                            <span className={`tabular-nums font-semibold shrink-0 ${mine! > theirs! ? 'text-green-600 dark:text-green-400' : mine! < theirs! ? 'text-red-600 dark:text-red-400' : 'text-yellow-600 dark:text-yellow-400'}`}>
+                            <span className={`st-figure st-figure--sm shrink-0 ${mine! > theirs! ? 'st-up' : mine! < theirs! ? 'st-down' : 'st-tie'}`}>
                               {mine}-{theirs}
                             </span>
                           ) : (
-                            <span className="text-xs text-muted-foreground shrink-0">Upcoming</span>
+                            <span className="st-unit shrink-0">Upcoming</span>
                           )}
                         </div>
                       )
                     })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+                </div>
+              )}
+            </section>
 
             {!detailTeam.is_us && (
-              <Card className="bg-card text-card-foreground border-border">
-                <CardHeader className="flex flex-row items-center justify-between">
-                  <CardTitle className="text-base">
+              <section className="st-panel">
+                <div className="st-panel-head">
+                  <span className="st-overline">
+                    <NotePencil className="h-3.5 w-3.5" weight="bold" />
                     Notes
-                    {detailSeason && <span className="text-xs font-normal text-muted-foreground ml-2">({seasonLabel({ name: detailSeason.season_name, year: detailSeason.season_year, organizer: detailSeason.season_organizer })})</span>}
-                  </CardTitle>
+                    {detailSeason && ` · ${seasonLabel({ name: detailSeason.season_name, year: detailSeason.season_year, organizer: detailSeason.season_organizer })}`}
+                  </span>
                   {can.record && !editingNotes && (
-                    <button onClick={() => setEditingNotes(true)} className="text-xs text-primary hover:underline">Edit</button>
+                    <button type="button" className="st-link" onClick={() => setEditingNotes(true)}>Edit</button>
                   )}
-                </CardHeader>
-                <CardContent>
+                </div>
+                <div className="p-3 sm:p-4">
                   {editingNotes ? (
                     <div className="space-y-2">
                       <textarea
                         value={notesValue}
                         onChange={e => setNotesValue(e.target.value)}
                         rows={4}
-                        className="w-full rounded-md border border-border bg-background text-foreground text-sm p-2"
+                        className="st-field"
                         placeholder="Scouting notes: their zone looks beatable deep..."
                       />
-                      <div className="flex gap-2">
-                        <Button size="sm" onClick={handleSaveNotes}>Save</Button>
-                        <Button size="sm" variant="ghost" onClick={() => { setEditingNotes(false); setNotesValue(detailTeam.notes ?? '') }}>Cancel</Button>
+                      <div className="flex gap-1.5">
+                        <button type="button" className="st-btn st-btn--accent" onClick={handleSaveNotes}>Save</button>
+                        <button type="button" className="st-btn" onClick={() => { setEditingNotes(false); setNotesValue(detailTeam.notes ?? '') }}>Cancel</button>
                       </div>
                     </div>
                   ) : (
-                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                    <p className="whitespace-pre-wrap text-sm text-[hsl(var(--st-ink-mid))]">
                       {detailTeam.notes || 'No notes yet.'}
                     </p>
                   )}
-                </CardContent>
-              </Card>
+                </div>
+              </section>
             )}
           </>
         )}
@@ -1935,149 +1049,94 @@ function Standings() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <Select
-          value={selectedSeasonId != null ? String(selectedSeasonId) : ''}
-          onValueChange={v => setSelectedSeasonId(parseInt(v, 10))}
-        >
-          <SelectTrigger className="bg-background text-foreground border-border flex-1">
-            <SelectValue placeholder="Select season" />
-          </SelectTrigger>
-          <SelectContent>
-            {seasons.map(s => (
-              <SelectItem key={s.id} value={String(s.id)}>{seasonLabel(s)}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <SinglePicker
+          items={seasons.map(s => ({ id: s.id, label: seasonLabel(s) }))}
+          selectedId={selectedSeasonId ?? null}
+          onChange={setSelectedSeasonId}
+          placeholder="Select season"
+          emptyLabel="No seasons yet"
+        />
         {can.manageTeam && (
           <button
+            type="button"
+            className="st-btn st-btn--icon"
             onClick={() => setManageOpen(true)}
-            className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground hover:text-foreground shrink-0"
             aria-label="Manage standings"
+            title="Manage standings"
           >
-            <Settings2 className="w-5 h-5" />
+            <Gear className="h-4 w-4" weight="bold" />
           </button>
         )}
       </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      {loading ? (
-        <Card className="bg-card border-border">
-          <CardContent className="p-4 space-y-3">
-            {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}
-          </CardContent>
-        </Card>
-      ) : (
-        <FadeIn>
-          <Card className="bg-card text-card-foreground border-border">
-            <CardContent className="p-0 overflow-x-auto">
-              {standings.length === 0 ? (
-                <p className="text-sm text-muted-foreground p-6 text-center">
-                  No league teams yet. Add the teams in your league to start tracking standings.
-                </p>
-              ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-muted-foreground text-xs border-b border-border">
-                      <th className="text-left font-medium py-2.5 pl-4 pr-2 w-8">
-                        <StandingsSortHeader label="#" sortKey="rank" activeKey={standingsSortKey} dir={standingsSortDir} onClick={handleStandingsSortClick} align="left" />
-                      </th>
-                      <th className="text-left font-medium py-2.5 px-2">
-                        <StandingsSortHeader label="Team" sortKey="team" activeKey={standingsSortKey} dir={standingsSortDir} onClick={handleStandingsSortClick} align="left" />
-                      </th>
-                      <th className="text-center font-medium py-2.5 px-2">
-                        <StandingsSortHeader label="GP" sortKey="games_played" activeKey={standingsSortKey} dir={standingsSortDir} onClick={handleStandingsSortClick} align="center" />
-                      </th>
-                      <th className="text-center font-medium py-2.5 px-2">
-                        <StandingsSortHeader label="W-L-T" sortKey="wins" activeKey={standingsSortKey} dir={standingsSortDir} onClick={handleStandingsSortClick} align="center" />
-                      </th>
-                      <th className="text-center font-medium py-2.5 px-2">
-                        <StandingsSortHeader label="GF" sortKey="points_for" activeKey={standingsSortKey} dir={standingsSortDir} onClick={handleStandingsSortClick} align="center" />
-                      </th>
-                      <th className="text-center font-medium py-2.5 px-2">
-                        <StandingsSortHeader label="GA" sortKey="points_against" activeKey={standingsSortKey} dir={standingsSortDir} onClick={handleStandingsSortClick} align="center" />
-                      </th>
-                      <th className="text-center font-medium py-2.5 px-2">
-                        <StandingsSortHeader label="+/-" sortKey="point_diff" activeKey={standingsSortKey} dir={standingsSortDir} onClick={handleStandingsSortClick} align="center" />
-                      </th>
-                      <th className="text-center font-medium py-2.5 px-2 pr-4">
-                        <StandingsSortHeader label="PTS" sortKey="points" activeKey={standingsSortKey} dir={standingsSortDir} onClick={handleStandingsSortClick} align="center" />
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sortedStandings.map(r => (
-                      <tr
-                        key={r.team.id}
-                        onClick={() => { setDetailTeam(r.team); setNotesValue(r.team.notes ?? ''); setEditingNotes(false) }}
-                        className={`border-b border-border last:border-0 cursor-pointer hover:bg-accent/50 transition-colors ${
-                          r.team.is_us ? 'bg-primary/10' : ''
-                        }`}
-                      >
-                        <td className={`py-2.5 pl-4 pr-2 tabular-nums ${r.team.is_us ? 'font-bold text-primary' : 'text-muted-foreground'}`}>{r.rank}</td>
-                        <td className="py-2.5 px-2">
-                          <div className={`truncate max-w-[9rem] ${r.team.is_us ? 'font-bold' : 'font-medium'}`}>{r.team.name}</div>
-                          <div className="flex flex-wrap gap-1 mt-1 max-w-[9rem]">{(formByTeam.get(r.team.id) ?? []).map(formDot)}</div>
-                        </td>
-                        <td className="text-center py-2.5 px-2 tabular-nums">{r.games_played}</td>
-                        <td className="text-center py-2.5 px-2 tabular-nums whitespace-nowrap">{r.wins}-{r.losses}-{r.ties}</td>
-                        <td className="text-center py-2.5 px-2 tabular-nums">{r.points_for}</td>
-                        <td className="text-center py-2.5 px-2 tabular-nums">{r.points_against}</td>
-                        <td className={`text-center py-2.5 px-2 tabular-nums ${r.point_diff > 0 ? 'text-green-600 dark:text-green-400' : r.point_diff < 0 ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground'}`}>
-                          {r.point_diff > 0 ? `+${r.point_diff}` : r.point_diff}
-                        </td>
-                        <td className="text-center py-2.5 px-2 pr-4 font-bold tabular-nums">{r.points}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </CardContent>
-          </Card>
-        </FadeIn>
-      )}
+      <FadeIn>
+        <StandingsTable
+          rows={standingsRows}
+          sortKey={standingsSortKey}
+          sortDir={standingsSortDir}
+          onSort={handleStandingsSortClick}
+          onSelect={id => {
+            const team = league?.teams.find(t => t.id === id)
+            if (!team) return
+            setDetailTeam(team)
+            setNotesValue(team.notes ?? '')
+            setEditingNotes(false)
+          }}
+          loading={loading}
+          emptyLabel="No league teams yet. Add the teams in your league to start tracking standings."
+        />
+      </FadeIn>
 
       {/* Manage league: teams and points config */}
       <Dialog open={manageOpen} onOpenChange={setManageOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Manage standings</DialogTitle></DialogHeader>
-          <div className="space-y-4">
+        <DialogContent className="stats-scope max-w-md">
+          <DialogHeader><DialogTitle className="st-title text-lg">Manage standings</DialogTitle></DialogHeader>
+          <div className="space-y-5">
             <div className="space-y-2">
-              <Label>Teams</Label>
-              <div className="space-y-1 max-h-56 overflow-y-auto">
+              <p className="st-overline">Teams</p>
+              <div className="st-list max-h-56 overflow-y-auto rounded-md border border-[hsl(var(--st-rule-strong))]">
                 {(league?.teams ?? []).map(t => (
-                  <div key={t.id} className="flex items-center gap-2 py-1">
+                  <div key={t.id} className="st-row">
                     {renamingTeamId === t.id ? (
                       <>
-                        <Input
+                        <input
                           value={renameValue}
                           onChange={e => setRenameValue(e.target.value)}
-                          className="h-8 bg-background text-foreground border-border"
+                          onKeyDown={e => { if (e.key === 'Enter') handleRenameTeam() }}
+                          className="st-field"
                           autoFocus
                         />
-                        <Button size="sm" onClick={handleRenameTeam}><Check className="w-4 h-4" /></Button>
-                        <Button size="sm" variant="ghost" onClick={() => setRenamingTeamId(null)}><X className="w-4 h-4" /></Button>
+                        <button type="button" className="st-btn st-btn--icon st-btn--accent" onClick={handleRenameTeam} aria-label="Save name">
+                          <CheckIcon className="h-3.5 w-3.5" weight="bold" />
+                        </button>
+                        <button type="button" className="st-btn st-btn--icon" onClick={() => setRenamingTeamId(null)} aria-label="Cancel rename">
+                          <XIcon className="h-3.5 w-3.5" weight="bold" />
+                        </button>
                       </>
                     ) : (
                       <>
-                        <span className={`flex-1 text-sm truncate ${t.is_us ? 'font-bold text-primary' : ''}`}>
-                          {t.name}{t.is_us ? ' (us)' : ''}
-                        </span>
+                        <span className="st-name min-w-0 flex-1">{t.name}{t.is_us ? ' (us)' : ''}</span>
                         <button
+                          type="button"
+                          className="st-btn st-btn--icon"
+                          style={{ height: '1.75rem', width: '1.75rem' }}
                           onClick={() => { setRenamingTeamId(t.id); setRenameValue(t.name) }}
-                          className="p-1.5 text-muted-foreground hover:text-foreground transition-colors"
                           aria-label={`Rename ${t.name}`}
                         >
-                          <Pencil className="w-3.5 h-3.5" />
+                          <PencilSimple className="h-3.5 w-3.5" weight="bold" />
                         </button>
                         {!t.is_us && (
                           <button
+                            type="button"
+                            className="st-btn st-btn--icon"
+                            style={{ height: '1.75rem', width: '1.75rem' }}
                             onClick={() => handleDeleteTeam(t.id)}
-                            className="p-1.5 text-muted-foreground hover:text-destructive transition-colors"
                             aria-label={`Delete ${t.name}`}
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Trash className="h-3.5 w-3.5" weight="bold" />
                           </button>
                         )}
                       </>
@@ -2085,35 +1144,38 @@ function Standings() {
                   </div>
                 ))}
               </div>
-              <div className="flex gap-2">
-                <Input
+              <div className="flex gap-1.5">
+                <input
                   value={newTeamName}
                   onChange={e => setNewTeamName(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') handleAddTeam() }}
                   placeholder="New team name"
-                  className="bg-background text-foreground border-border"
+                  className="st-field"
                 />
-                <Button size="sm" onClick={handleAddTeam} disabled={!newTeamName.trim()}>
-                  <Plus className="w-4 h-4" />
-                </Button>
+                <button type="button" className="st-btn st-btn--accent" onClick={handleAddTeam} disabled={!newTeamName.trim()}>
+                  <PlusIcon className="h-3.5 w-3.5" weight="bold" />
+                  Add
+                </button>
               </div>
             </div>
+
             <div className="space-y-2">
-              <Label>Standings points</Label>
+              <p className="st-overline">Standings points</p>
               <div className="grid grid-cols-3 gap-2">
                 {(['win', 'tie', 'loss'] as const).map(k => (
-                  <div key={k} className="space-y-1">
-                    <span className="text-xs text-muted-foreground capitalize">{k}</span>
-                    <Input
+                  <label key={k} className="space-y-1.5">
+                    <span className="st-unit block">{k}</span>
+                    <input
                       type="number" inputMode="numeric"
                       value={pointsDraft[k]}
                       onChange={e => setPointsDraft(p => ({ ...p, [k]: e.target.value }))}
-                      className="bg-background text-foreground border-border"
+                      className="st-field"
+                      style={{ fontFamily: 'var(--st-mono)', fontVariantNumeric: 'tabular-nums' }}
                     />
-                  </div>
+                  </label>
                 ))}
               </div>
-              <Button size="sm" variant="outline" onClick={handleSavePoints}>Save points</Button>
+              <button type="button" className="st-btn" onClick={handleSavePoints}>Save points</button>
             </div>
           </div>
         </DialogContent>
