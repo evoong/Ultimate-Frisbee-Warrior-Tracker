@@ -93,6 +93,20 @@ scoped system -- it is the global one, plus the tokens above.
 - **The theme toggle is an exception and lives in the header**, with the
   utility icons, in both layouts (`ThemeToggle`). It is flipped often and
   idly, so burying a one-tap control two clicks deep is worse than a row.
+- **Controls sit with what they act on.** `ThemeToggle` changes the page, so
+  it is in the content header; `PanelToggle` (collapse/expand) changes the
+  panel, so it is in the panel's own header beside the workspace, Gemini-style
+  -- not next to the page title, where it read as page chrome and sat in the
+  one row where the two regions are hardest to tell apart. shadcn's
+  `SidebarTrigger` is no longer used in `App.tsx`; `SidebarRail` stays as the
+  silent drag-edge, and Cmd/Ctrl-B still works.
+- **Collapsed, the panel toggle takes the top slot.** The header row becomes a
+  column (`group-data-[collapsible=icon]:flex-col`) with the toggle first,
+  because once the labels are gone it is the only way back out -- it must not
+  be the thing that hides. It moves by `order-first`, not by a second DOM
+  order, so the tab sequence is identical in both states. The 3rem rail leaves
+  exactly 2rem of content width: a `size-8` control fits, a larger one does
+  not.
 - **Inactive nav items sit at 75% ink, and that number is a floor, not a
   taste.** `--sidebar-foreground/75` over `--sidebar-background` is ~4.8:1 in
   light, just clear of 4.5:1; at `/60` it falls to ~3.2:1, which is a contrast
@@ -149,6 +163,20 @@ itself:
 - **Outcome chips keep a dark field in both themes** (deep green / oxblood with
   bright text, ~9.2:1 and ~5.7:1). Holding them steady across the theme toggle
   is what keeps win/loss instantly readable; do not invert them for light mode.
+- **The result is a second colour family, and it is semantic, not decorative.**
+  Win / loss / tie own two token sets that the olive accent never touches: the
+  chip's field (`--sch-win-bg` / `-fg` / `-edge`) and the score's ink
+  (`--sch-out-win` and its `-soft` partner, one pair per outcome). They are not
+  interchangeable. The chip's `-fg` is bright because it sits on a near-black
+  block; painting a score with it puts 66% L green on warm paper, which is the
+  highlighter look this ledger exists to avoid. In light the score inks go
+  *deep* -- forest 22%, brick 35%, bronze 26% L, all past 8:1 -- and in dark
+  they lift to a muted sage / clay / wheat at ~7:1, saturation held down so a
+  long list does not read as a scoreboard. `-soft` is the opponent's number:
+  same hue at roughly `--sch-ink-mid`'s weight, so the pair reads as one tinted
+  score with ours on top. `.sch-score--win|loss|tie` only rebinds `--sch-out`
+  and `--sch-out-soft`, so a fourth outcome is two lines and the three
+  `.sch-score-*` colour rules never change.
 - **Type.** Team names use the inherited sans at weight 650 with `-0.021em`
   tracking. Every number and every piece of metadata uses **Space Mono**
   (`--sch-mono`, loaded in `frontend/index.html`, two weights, `display=swap`) --
@@ -159,6 +187,16 @@ itself:
 - **Scores align on the dash.** `.sch-score` is a `2ch 1.75ch 2ch` grid so the
   dash forms a spine down the list regardless of digit count. Any new
   score-like column should do the same.
+- **The result chip leads the row and is sized to be scanned.** It is the first
+  grid track, not the last -- a result parked at the far end of a wide row is a
+  result you read twice -- and `.sch-chip--outcome` sets a fixed `min-width`
+  with centred text so WIN / LOSS / TIE stamp the same tile down a left-edge
+  spine. Its type is 14-15px, well above the 10px metadata size, and it grows
+  **sideways only**: the row's height comes from the name-plus-date block
+  (~36px desktop, ~31px mobile), and the chip must stay under that or every row
+  in the list gets taller. Verify with a measured row height, not by eye. The
+  `--next` chip ("In 6 days") deliberately keeps the small size -- at 15px it
+  would outgrow the fixed leading track that keeps the team names aligned.
 
 Structure and behaviour:
 

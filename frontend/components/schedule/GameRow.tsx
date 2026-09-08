@@ -40,7 +40,7 @@ export type GameRowProps = {
   delay?: number
   /** Pulls the row forward as the next fixture up. */
   featured?: boolean
-  /** Overrides the featured row's trailing chip text, e.g. "TOMORROW". */
+  /** Overrides the featured row's leading chip text, e.g. "TOMORROW". */
   featuredNote?: string | null
 }
 
@@ -56,8 +56,8 @@ export default function GameRow({ matchData, onSelect, delay = 0, featured = fal
   // field is one entry in `details` — no wrapper divs, no nested flexbox.
   const detailTracks = details.map(() => 'minmax(0, 6.5rem)').join(' ')
   const style = {
-    ['--sch-cols-sm' as string]: 'minmax(0, 1fr) auto auto',
-    ['--sch-cols-md' as string]: `minmax(0, 1fr) ${detailTracks ? detailTracks + ' ' : ''}auto 5.25rem 1rem`,
+    ['--sch-cols-sm' as string]: '5rem minmax(0, 1fr) auto',
+    ['--sch-cols-md' as string]: `5.25rem minmax(0, 1fr) ${detailTracks ? detailTracks + ' ' : ''}auto 1rem`,
     animationDelay: delay ? `${delay}ms` : undefined,
   }
 
@@ -78,7 +78,22 @@ export default function GameRow({ matchData, onSelect, delay = 0, featured = fal
         featured ? 'sch-row--featured' : '',
       ].join(' ')}
     >
-      {/* 1 — identity */}
+      {/* 1 — outcome. It leads the row on purpose: a result you have to hunt
+          for at the far end of a wide row is a result you read twice. The
+          track is a fixed width in both layouts so the chips stack into a
+          left-edge spine and a row without one still lines its name up. */}
+      <span className="sch-stagger sch-stagger-1 justify-self-start">
+        {played && outcome && outcomeLabel ? (
+          <Badge className={`sch-chip sch-chip--outcome ${CHIP_TONE[outcome]} rounded-[3px] shadow-none hover:bg-inherit`}>
+            {outcomeLabel}
+            {matchData.outcomeOverridden && <span className="opacity-60">*</span>}
+          </Badge>
+        ) : featuredNote ? (
+          <Badge className="sch-chip sch-chip--next rounded-[3px] shadow-none hover:bg-inherit">{featuredNote}</Badge>
+        ) : null}
+      </span>
+
+      {/* 2 — identity */}
       <span className="sch-stagger sch-shift sch-stagger-1 min-w-0 block">
         <span className="flex items-center gap-1.5 min-w-0">
           <span className="sch-team truncate">{opponent}</span>
@@ -92,7 +107,7 @@ export default function GameRow({ matchData, onSelect, delay = 0, featured = fal
         </span>
       </span>
 
-      {/* 2..n — drop-in fields (venue, duration, division…) */}
+      {/* 3..n — drop-in fields (venue, duration, division…) */}
       {details.map(d => (
         <span key={d.label} className="sch-stagger sch-stagger-2 hidden md:block min-w-0">
           <span className="sch-label block">{d.label}</span>
@@ -103,7 +118,7 @@ export default function GameRow({ matchData, onSelect, delay = 0, featured = fal
       {/* n+1 — score, or the date block for a fixture not yet played */}
       <span className="sch-stagger sch-stagger-2 justify-self-end">
         {played ? (
-          <span className="sch-score">
+          <span className={`sch-score${outcome ? ` sch-score--${outcome}` : ''}`}>
             <span className="sch-score-our">{ourScore ?? '–'}</span>
             <span className="sch-score-dash">–</span>
             <span className="sch-score-them">{theirScore ?? '–'}</span>
@@ -116,19 +131,7 @@ export default function GameRow({ matchData, onSelect, delay = 0, featured = fal
         )}
       </span>
 
-      {/* n+2 — outcome */}
-      <span className="sch-stagger sch-stagger-3 justify-self-end md:justify-self-start">
-        {played && outcome && outcomeLabel ? (
-          <Badge className={`sch-chip ${CHIP_TONE[outcome]} rounded-[3px] shadow-none hover:bg-inherit`}>
-            {outcomeLabel}
-            {matchData.outcomeOverridden && <span className="opacity-60">*</span>}
-          </Badge>
-        ) : featuredNote ? (
-          <Badge className="sch-chip sch-chip--next rounded-[3px] shadow-none hover:bg-inherit">{featuredNote}</Badge>
-        ) : null}
-      </span>
-
-      {/* n+3 — affordance, desktop only */}
+      {/* n+2 — affordance, desktop only */}
       <ChevronRight className="sch-caret sch-stagger sch-stagger-3 hidden h-4 w-4 md:block" strokeWidth={1.75} />
     </button>
   )

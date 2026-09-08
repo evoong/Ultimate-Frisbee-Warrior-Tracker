@@ -15,6 +15,7 @@ import {
 import { cn } from "../lib/shadcn/utils"
 import WorkspaceSwitcher from "./nav/WorkspaceSwitcher"
 import UserMenu from "./nav/UserMenu"
+import PanelToggle from "./nav/PanelToggle"
 
 type AppSidebarProps = {
   activeTab: Tab
@@ -85,12 +86,23 @@ export default function AppSidebar({
 }: AppSidebarProps) {
   return (
     <Sidebar collapsible="icon">
+      {/* Workspace on the left, panel control on the right, both inside the
+          panel's own top bar. Collapsed there is no room for a row, so the
+          two stack and the toggle takes the top slot -- it is the only way
+          back out once the labels are gone, so it must not be the thing that
+          scrolls or hides. `order-first` rather than a second DOM order keeps
+          the tab sequence identical in both states. */}
       <SidebarHeader className="p-2">
-        <WorkspaceSwitcher
-          teams={teams}
-          currentTeamId={currentTeamId}
-          switchTeam={switchTeam}
-        />
+        <div className="flex items-center gap-1 group-data-[collapsible=icon]:flex-col">
+          <div className="min-w-0 flex-1 group-data-[collapsible=icon]:flex-none">
+            <WorkspaceSwitcher
+              teams={teams}
+              currentTeamId={currentTeamId}
+              switchTeam={switchTeam}
+            />
+          </div>
+          <PanelToggle className="group-data-[collapsible=icon]:order-first" />
+        </div>
       </SidebarHeader>
 
       <SidebarContent>
