@@ -11,6 +11,7 @@ import { getDefaultJamSeasonId } from '../lib/seasonUtils'
 import { track } from '../lib/analytics'
 import { POSITIONS } from '../lib/positions'
 import { isTurnoverEvent } from '../lib/eventUtils'
+import { SHOW_TURNOVERS } from '../lib/features'
 import { sortGamesUpcomingFirst, isPastGame } from '../lib/gameOrder'
 import { todayLocalStr } from '../lib/seasonUtils'
 import SeasonMultiSelect from '../components/SeasonMultiSelect'
@@ -2145,7 +2146,7 @@ export default function Schedule() {
                       <th className="text-left font-medium px-3 pb-2">Player</th>
                       <th className="w-10 text-center font-medium text-green-600 dark:text-green-400 pb-2">G</th>
                       <th className="w-10 text-center font-medium text-blue-600 dark:text-blue-400 pb-2">A</th>
-                      <th className="w-10 text-center font-medium text-orange-600 dark:text-orange-400 pb-2">TO</th>
+                      {SHOW_TURNOVERS && <th className="w-10 text-center font-medium text-orange-600 dark:text-orange-400 pb-2">TO</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -2155,7 +2156,7 @@ export default function Schedule() {
                         <td className="px-3 py-2 font-medium text-foreground">{p.name}</td>
                         <td className="w-10 text-center font-bold text-green-600 dark:text-green-400">{p.goals}</td>
                         <td className="w-10 text-center font-bold text-blue-600 dark:text-blue-400">{p.assists}</td>
-                        <td className="w-10 text-center font-bold text-orange-600 dark:text-orange-400">{p.turnovers}</td>
+                        {SHOW_TURNOVERS && <td className="w-10 text-center font-bold text-orange-600 dark:text-orange-400">{p.turnovers}</td>}
                       </tr>
                     ))}
                   </tbody>

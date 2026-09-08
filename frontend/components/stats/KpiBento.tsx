@@ -53,10 +53,12 @@ export function LeaderCard({ overline, icon, series, player, value, unit, teamTo
   value: number
   unit: string
   teamTotal: number
-  /** This player's other two numbers, so the card is their whole line rather
+  /** This player's other numbers, so the card is their whole line rather
    *  than the one stat that got them onto it. Same strip, same anatomy, as
-   *  the team card beside it. */
-  secondary: { label: string; series: SeriesKey; value: number }[]
+   *  the team card beside it. A cell with no series of its own stays
+   *  neutral, the way the team card's "Scored" does -- a combined figure
+   *  like G+A belongs to no one series and must not borrow one. */
+  secondary: { label: string; series?: SeriesKey; value: number }[]
 }) {
   const perGame = player && player.gamesPlayed > 0 ? value / player.gamesPlayed : null
   const share = teamTotal > 0 ? Math.round((value / teamTotal) * 100) : null

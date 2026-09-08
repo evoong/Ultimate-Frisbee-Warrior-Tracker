@@ -5,8 +5,8 @@ import { Skeleton } from '../../lib/shadcn/skeleton'
 import { SinglePicker } from './Picker'
 import {
   COLUMN_WIDTHS_KEY, CUSTOM_COLUMNS_KEY, DEFAULT_COLUMNS, HIDDEN_COLUMNS_KEY,
-  MIN_PLAYER_COLUMN_WIDTH, MIN_STAT_COLUMN_WIDTH, STAT_LABELS,
-  compareByColumn, defaultWidthFor, formatColumnValue, getColumnValue,
+  MIN_PLAYER_COLUMN_WIDTH, MIN_STAT_COLUMN_WIDTH, STAT_LABELS, VISIBLE_STAT_KEYS,
+  compareByColumn, defaultWidthFor, formatColumnValue, getColumnValue, isColumnAvailable,
   type ColumnConfig, type ColumnTerm, type StatKey,
 } from './columns'
 import type { PlayerLine } from './types'
@@ -57,7 +57,13 @@ export default function RankingsTable({ players, loading }: {
   useEffect(() => { localStorage.setItem(HIDDEN_COLUMNS_KEY, JSON.stringify([...hiddenColumnIds])) }, [hiddenColumnIds])
   useEffect(() => { localStorage.setItem(COLUMN_WIDTHS_KEY, JSON.stringify(columnWidths)) }, [columnWidths])
 
-  const allColumns = useMemo(() => [...DEFAULT_COLUMNS, ...customColumns], [customColumns])
+  // Custom columns are filtered, not pruned: one built from a stat that is
+  // currently gated off drops out of the table and out of the manage list,
+  // and comes back untouched the day the stat does.
+  const allColumns = useMemo(
+    () => [...DEFAULT_COLUMNS, ...customColumns.filter(isColumnAvailable)],
+    [customColumns],
+  )
   const visibleColumns = allColumns.filter(c => !hiddenColumnIds.has(c.id))
   const widthOf = (id: string) => columnWidths[id] ?? defaultWidthFor(id, allColumns)
 
@@ -243,7 +249,7 @@ export default function RankingsTable({ players, loading }: {
                 <p className="st-overline px-1">Add a formula column</p>
                 <div className="flex items-center gap-1.5">
                   <div className="st-seg">
-                    {(Object.keys(STAT_LABELS) as StatKey[]).map(k => (
+                    {VISIBLE_STAT_KEYS.map(k => (
                       <button key={k} type="button" className="st-seg-btn" data-active={newColStatA === k} onClick={() => setNewColStatA(k)}>
                         {STAT_LABELS[k]}
                       </button>
@@ -258,13 +264,13 @@ export default function RankingsTable({ players, loading }: {
                   </div>
                 </div>
                 {/* Three segmented controls instead of three <Select>s: with
-                    four options apiece, a dropdown hides the whole choice
-                    behind a click to save no space at all. */}
+                    a handful of options apiece, a dropdown hides the whole
+                    choice behind a click to save no space at all. */}
                 <div className="st-seg">
                   <button type="button" className="st-seg-btn" data-active={newColStatB === null} onClick={() => setNewColStatB(null)}>
                     None
                   </button>
-                  {(Object.keys(STAT_LABELS) as StatKey[]).map(k => (
+                  {VISIBLE_STAT_KEYS.map(k => (
                     <button key={k} type="button" className="st-seg-btn" data-active={newColStatB === k} onClick={() => setNewColStatB(k)}>
                       {STAT_LABELS[k]}
                     </button>

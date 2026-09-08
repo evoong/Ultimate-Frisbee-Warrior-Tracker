@@ -3,14 +3,26 @@ import { useSidebar } from "../../lib/shadcn/sidebar"
 import { cn } from "../../lib/shadcn/utils"
 
 /**
- * Collapse/expand for the rail, living in the rail's own top bar next to the
- * workspace rather than in the content header.
+ * Collapse/expand for the rail, and the left half of the shell's utility
+ * strip.
  *
- * It is a control *of the panel*, so it belongs *to the panel*: parked beside
- * the page title it read as one more piece of page chrome, and it sat in the
- * one row where the sidebar and the content area are hardest to tell apart.
- * On the collapsed rail it stays put and becomes the way back out, which is
- * why it is the first thing in the header once the labels are gone.
+ * The strip is what is left of the content header once the page title comes
+ * out of it: the page now titles itself with a real <h1> at the top of its
+ * own content, so the bar above holds nothing about the page at all. That
+ * leaves exactly two controls -- one that acts on the panel, one that acts
+ * on the theme -- parked at the two ends of a 48px strip, which is why the
+ * toggle can sit here now without reading as page chrome. There is nothing
+ * left beside it to be mistaken for.
+ *
+ * It is the only copy. A second one inside the rail's own header would be
+ * two buttons doing one job in adjacent rows, and this one is at a fixed
+ * point on screen in both states, which is what a control you use to get the
+ * panel *back* has to be.
+ *
+ * It matches ThemeToggle exactly -- same 36px square, same 18px glyph, same
+ * neutral ink -- because a strip of two icons is read as one instrument, and
+ * mismatched sizes are the loudest tell that a toolbar was assembled rather
+ * than designed.
  *
  * One glyph in both states, not a swap between open/close icons: the button
  * never moves and the panel beside it is visibly open or shut, so animating
@@ -34,13 +46,13 @@ export default function PanelToggle({ className }: { className?: string }) {
       aria-expanded={expanded}
       title={label}
       className={cn(
-        "grid size-8 shrink-0 place-items-center rounded-md text-sidebar-foreground/75 transition-colors",
-        "hover:bg-sidebar-accent hover:text-sidebar-foreground",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:ring-offset-1 focus-visible:ring-offset-sidebar",
+        "grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors",
+        "hover:bg-accent hover:text-foreground",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
         className
       )}
     >
-      <SidebarSimple className="size-[17px]" weight="regular" />
+      <SidebarSimple className="size-[18px]" weight="regular" />
     </button>
   )
 }

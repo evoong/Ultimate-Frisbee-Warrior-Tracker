@@ -3,6 +3,7 @@ import {
   Bar, BarChart, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { ChartBar, TrendUp } from '@phosphor-icons/react'
+import { SHOW_TURNOVERS } from '../../lib/features'
 import { Skeleton } from '../../lib/shadcn/skeleton'
 import { useMediaQuery } from '../../lib/shadcn/use-media-query'
 import type { PlayerLine, SeriesKey } from './types'
@@ -19,11 +20,15 @@ import './stats-theme.css'
 // combination is now reachable — goals against turnovers, say — and the
 // legend stops being a second, redundant thing beside the tabs.
 
-const SERIES: { key: SeriesKey; label: string; dataKey: string; token: string; cls: string }[] = [
+const ALL_SERIES: { key: SeriesKey; label: string; dataKey: string; token: string; cls: string }[] = [
   { key: 'goals', label: 'Goals', dataKey: 'goals', token: '--st-goals', cls: 'st-goals' },
   { key: 'assists', label: 'Assists', dataKey: 'assists', token: '--st-assists', cls: 'st-assists' },
   { key: 'turnovers', label: 'Turnovers', dataKey: 'turnovers', token: '--st-turnovers', cls: 'st-turnovers' },
 ]
+
+// The legend, the bars and the tooltip all walk this one list, so a gated
+// series leaves the chart in one step and takes its swatch with it.
+const SERIES = ALL_SERIES.filter(s => s.key !== 'turnovers' || SHOW_TURNOVERS)
 
 // The name column. Recharts wants a number, not a class, so this is the one
 // piece of the chart's layout that has to come through JS. 104px is ~13% of
@@ -118,7 +123,7 @@ export default function PerformanceChart({ players, loading, error, emptyLabel }
   const wide = useMediaQuery('(min-width: 640px)')
   const axisWidth = wide ? AXIS_WIDE : AXIS_NARROW
 
-  const [shown, setShown] = useState<Set<SeriesKey>>(() => new Set<SeriesKey>(['goals', 'assists', 'turnovers']))
+  const [shown, setShown] = useState<Set<SeriesKey>>(() => new Set<SeriesKey>(SERIES.map(s => s.key)))
   const toggle = (key: SeriesKey) => setShown(prev => {
     if (prev.has(key) && prev.size === 1) return prev
     const next = new Set(prev)

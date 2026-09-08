@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { ChartLine } from '@phosphor-icons/react'
+import { SHOW_TURNOVERS } from '../../lib/features'
 import { Skeleton } from '../../lib/shadcn/skeleton'
 import { MultiPicker, SinglePicker } from './Picker'
 import {
@@ -22,12 +23,14 @@ import './stats-theme.css'
 // The accent is the right colour for it: "the line you are looking at" is
 // state, which is the only thing that colour is ever spent on in this app.
 
-const STATS: { key: ProgressionStat; label: string }[] = [
+const ALL_STATS: { key: ProgressionStat; label: string }[] = [
   { key: 'ga', label: 'G+A' },
   { key: 'goals', label: 'Goals' },
   { key: 'assists', label: 'Assists' },
   { key: 'turnovers', label: 'TO' },
 ]
+
+const STATS = ALL_STATS.filter(s => s.key !== 'turnovers' || SHOW_TURNOVERS)
 
 const AXIS_TICK = {
   fontFamily: 'var(--st-mono)',

@@ -143,20 +143,35 @@ scoped system -- it is the global one, plus the tokens above.
 - **The theme toggle is an exception and lives in the header**, with the
   utility icons, in both layouts (`ThemeToggle`). It is flipped often and
   idly, so burying a one-tap control two clicks deep is worse than a row.
-- **Controls sit with what they act on.** `ThemeToggle` changes the page, so
-  it is in the content header; `PanelToggle` (collapse/expand) changes the
-  panel, so it is in the panel's own header beside the workspace, Gemini-style
-  -- not next to the page title, where it read as page chrome and sat in the
-  one row where the two regions are hardest to tell apart. shadcn's
-  `SidebarTrigger` is no longer used in `App.tsx`; `SidebarRail` stays as the
-  silent drag-edge, and Cmd/Ctrl-B still works.
-- **Collapsed, the panel toggle takes the top slot.** The header row becomes a
-  column (`group-data-[collapsible=icon]:flex-col`) with the toggle first,
-  because once the labels are gone it is the only way back out -- it must not
-  be the thing that hides. It moves by `order-first`, not by a second DOM
-  order, so the tab sequence is identical in both states. The 3rem rail leaves
-  exactly 2rem of content width: a `size-8` control fits, a larger one does
-  not.
+- **The bar above the content is a utility strip, not a page header, and it
+  must never learn the page's name again.** It used to open with an `<h1>` of
+  the active tab's label, which put "Schedule" on screen three times at once
+  -- the lit sidebar row, this bar, and the page's own title -- and spent 56px
+  of every viewport restating what the highlighted nav item already said. The
+  page is the thing that titles the page: **every page owns an `<h1>` at the
+  top of its own content** (`pages/Schedule.tsx`, `Roster`, `Strategy`,
+  `Chat`, `components/stats/StatsHeader`), with its page-specific actions on
+  the same line, right-aligned. Add a page and give it its own heading; do not
+  reach back up into the shell for one. Nothing in the strip changes when you
+  change page, which is the whole point of it.
+- **The strip is `h-12` and holds exactly two controls, one at each end.**
+  `PanelToggle` left, `ThemeToggle` right, `px-3`, nothing between them. Both
+  are the same 36px square with an 18px Phosphor glyph at neutral ink -- two
+  icons alone on a rule read as one instrument, and a size or weight mismatch
+  is instantly visible when there is nothing else to look at. 48px is the
+  thinnest bar those squares fit in with air; do not pad it back to 56 and do
+  not park anything in the middle.
+- **There is one panel toggle and it lives in the strip.** It sat in the
+  sidebar's own header for a while (Gemini-style, beside the workspace), which
+  was right while the row opposite it carried the page title -- next to a
+  title it read as page chrome, in the one row where the two regions are
+  hardest to tell apart. With the title gone that row is no longer about the
+  page, so the toggle sits at a fixed point on screen in both states, which is
+  what a control you use to get the panel *back* has to be. A second copy in
+  the sidebar header would be two buttons doing one job in adjacent rows. The
+  sidebar header is the `WorkspaceSwitcher` and nothing else. shadcn's
+  `SidebarTrigger` is still unused; `SidebarRail` stays as the silent
+  drag-edge, and Cmd/Ctrl-B still works.
 - **The active item is a 2px rail plus weight and ink, and no fill at all.**
   It used to also carry a wash of the accent, which is one bit of state said
   three ways, and a low-alpha tint of a deep accent lands as a muddy grey, so
@@ -327,6 +342,24 @@ below are the ones that are specific to a page whose subject is numbers.
   degrees clear of the cyan, of the green and of the amber. Turnovers is
   amber rather than red because red is the ledger's *loss* colour and a
   turnover is a caution, not a result.
+- **The turnover series is currently switched off at the display layer, and
+  `--st-turnovers` is not dead code.** No screen in the app can record a
+  `Turnover` / `Throwaway` / `Drop` event, so every turnover figure was a
+  guaranteed 0 -- a column of zeros reads as "this team never turns it over"
+  rather than as "nobody tracked it". `SHOW_TURNOVERS` in
+  `frontend/lib/features.ts` is the one switch: it gates the leaderboard
+  series, the rankings column and its formula-builder option, the
+  progression stat, the Me tab's metric card, the leader cards' second strip
+  cell, the Roster summary / per-game / by-season columns and the turnover
+  breakdown card, and the Schedule box score's TO column. The whole data
+  path underneath -- `isTurnoverEvent`, every aggregation, the columns,
+  the tokens -- is untouched, so flipping the flag brings all of it back
+  with its layout and colours intact. Do not "clean up" what looks unused
+  behind the flag, and gate any new turnover surface through it.
+  Two knock-on rules while it is off: grids that were sized for four cards
+  (the Me tab, the Roster summary) size for three, and a leader card's strip
+  is still two cells -- the second falls back to a neutral G+A, because the
+  strip is two columns at every width by design.
 - **The accent is spent on exactly two things: the active tab's rail and the
   checked state in a filter popover.** Not on the leader's crest -- "top
   scorer" is a fact about the data, not a state, and a ring there was

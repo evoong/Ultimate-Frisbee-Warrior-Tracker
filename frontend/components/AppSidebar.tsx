@@ -15,7 +15,6 @@ import {
 import { cn } from "../lib/shadcn/utils"
 import WorkspaceSwitcher from "./nav/WorkspaceSwitcher"
 import UserMenu from "./nav/UserMenu"
-import PanelToggle from "./nav/PanelToggle"
 
 type AppSidebarProps = {
   activeTab: Tab
@@ -97,23 +96,17 @@ export default function AppSidebar({
 }: AppSidebarProps) {
   return (
     <Sidebar collapsible="icon">
-      {/* Workspace on the left, panel control on the right, both inside the
-          panel's own top bar. Collapsed there is no room for a row, so the
-          two stack and the toggle takes the top slot -- it is the only way
-          back out once the labels are gone, so it must not be the thing that
-          scrolls or hides. `order-first` rather than a second DOM order keeps
-          the tab sequence identical in both states. */}
+      {/* The workspace, and nothing else. The collapse control used to share
+          this row; it lives in the shell's utility strip now (App.tsx), where
+          it sits at one fixed point on screen whether the rail is open or
+          shut -- see components/nav/PanelToggle. Collapsed, this header is a
+          single monogram tile on the 3rem rail. */}
       <SidebarHeader className="p-2">
-        <div className="flex items-center gap-1 group-data-[collapsible=icon]:flex-col">
-          <div className="min-w-0 flex-1 group-data-[collapsible=icon]:flex-none">
-            <WorkspaceSwitcher
-              teams={teams}
-              currentTeamId={currentTeamId}
-              switchTeam={switchTeam}
-            />
-          </div>
-          <PanelToggle className="group-data-[collapsible=icon]:order-first" />
-        </div>
+        <WorkspaceSwitcher
+          teams={teams}
+          currentTeamId={currentTeamId}
+          switchTeam={switchTeam}
+        />
       </SidebarHeader>
 
       <SidebarContent>
