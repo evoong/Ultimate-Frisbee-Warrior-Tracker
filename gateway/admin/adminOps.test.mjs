@@ -150,6 +150,76 @@ const registry = createRegistry([bump, nuke])
         && !JSON.stringify(res.body).includes('user abc'))
 }
 
+// --- operation definitions: schema and role wiring ---
+{
+  const { ADMIN_OPERATIONS } = await import('./ops.ts')
+  const byName = new Map(ADMIN_OPERATIONS.map(o => [o.name, o]))
+
+  check('all eight operations are registered', ADMIN_OPERATIONS.length === 8)
+  for (const n of ['set_member_role', 'remove_member', 'invite_member', 'revoke_invite',
+                   'set_player_link', 'approve_player_link', 'merge_players', 'delete_org']) {
+    check(`${n} is registered`, byName.has(n))
+  }
+
+  // Destructive operations are superadmin-only; routine support work is not.
+  check('merge_players is superadmin', byName.get('merge_players').minRole === 'superadmin')
+  check('delete_org is superadmin',    byName.get('delete_org').minRole === 'superadmin')
+  check('set_member_role is support',  byName.get('set_member_role').minRole === 'support')
+
+  // team_invites.role forbids 'captain'; the schema must reject it up front
+  // rather than letting a bare check-constraint error reach the operator.
+  const inv = byName.get('invite_member').input
+  check('invite_member accepts editor', inv.safeParse({ team_id: 1, email: 'a@b.co', role: 'editor' }).success)
+  check('invite_member rejects captain', !inv.safeParse({ team_id: 1, email: 'a@b.co', role: 'captain' }).success)
+  check('invite_member rejects a non-email', !inv.safeParse({ team_id: 1, email: 'nope', role: 'member' }).success)
+
+  const smr = byName.get('set_member_role').input
+  check('set_member_role accepts captain', smr.safeParse(
+    { team_id: 1, user_id: '11111111-1111-4111-8111-111111111111', role: 'captain' }).success)
+  check('set_member_role rejects an unknown role', !smr.safeParse(
+    { team_id: 1, user_id: '11111111-1111-4111-8111-111111111111', role: 'wizard' }).success)
+  check('set_member_role rejects a non-uuid user', !smr.safeParse(
+    { team_id: 1, user_id: 'me', role: 'member' }).success)
+
+  // delete_org demands the typed name, so a mis-click cannot destroy a tenant.
+  const del = byName.get('delete_org').input
+  check('delete_org requires confirm_name', !del.safeParse({ organization_id: 1 }).success)
+  check('delete_org accepts a confirm_name', del.safeParse(
+    { organization_id: 1, confirm_name: 'Warriors' }).success)
+
+  // merge_players must refuse a self-merge before any SQL runs.
+  const mp = byName.get('merge_players').input
+  check('merge_players rejects a self-merge', !mp.safeParse({ keep_id: 5, merge_id: 5 }).success)
+  check('merge_players accepts two distinct ids', mp.safeParse({ keep_id: 5, merge_id: 6 }).success)
+}
+
+// --- the last-captain trigger is translated, not leaked as a 500 ---
+{
+  const { ADMIN_OPERATIONS } = await import('./ops.ts')
+  const setRole = ADMIN_OPERATIONS.find(o => o.name === 'set_member_role')
+  const audits = []
+  globalThis.fetch = async (url, init) => {
+    const u = String(url)
+    if (u.includes('/admin_audit_log')) { audits.push(JSON.parse(init.body)); return new Response('[]', { status: 200 }) }
+    // The pre-read finds the member...
+    if (u.includes('/team_members') && (init?.method ?? 'GET') === 'GET') {
+      return new Response(JSON.stringify([{ team_id: 1, user_id: 'u', role: 'captain' }]),
+                          { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }
+    // ...and the PATCH trips the trigger.
+    return new Response('team 1 must have at least one captain', { status: 400 })
+  }
+  const reg = createRegistry([setRole])
+  const su = { ...CTX, adminRole: 'superadmin' }
+  const res = await dispatchOperation(reg, su, 'set_member_role', 'apply',
+    { team_id: 1, user_id: '11111111-1111-4111-8111-111111111111', role: 'member' })
+  check('a last-captain violation is a 409, not a 500', res.status === 409)
+  check('the operator is told how to fix it',
+        JSON.stringify(res.body).includes('at least one captain'))
+  check('a last-captain violation audits as denied',
+        audits.length === 1 && audits[0].result === 'denied')
+}
+
 globalThis.fetch = realFetch
 console.log(failed === 0 ? '\nall passed' : `\n${failed} failed`)
 process.exit(failed === 0 ? 0 : 1)
