@@ -13,6 +13,7 @@ import { useMyPlayerLink, useClaimPlayer, useGetTeamPlayerLinks } from '../hooks
 import { getLatestJamSeasonWithPlayedGame, getDefaultJamSeasonId } from '../lib/seasonUtils'
 import { isPastGame } from '../lib/gameOrder'
 import { track } from '../lib/analytics'
+import { SHOW_TURNOVERS } from '../lib/features'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
 import PlayerCombobox from '../components/PlayerCombobox'
 import { Skeleton } from '../lib/shadcn/skeleton'
@@ -30,7 +31,7 @@ import ProgressionChart from '../components/stats/ProgressionChart'
 import {
   ALL_SEASONS, shortName,
   type ChemistryPair, type FilterMode, type MatrixEdge, type PlayerLine,
-  type ProgressionPoint, type ProgressionStat, type TeamLine,
+  type ProgressionPoint, type ProgressionStat, type SeriesKey, type TeamLine,
 } from '../components/stats/types'
 import {
   CaretLeft, Check as CheckIcon, Gear, Handshake, NotePencil, PencilSimple,
@@ -64,6 +65,22 @@ function perGame(total: string | number, gamesPlayed: string | number): string |
   const g = Number(gamesPlayed)
   if (!Number.isFinite(g) || g <= 0) return undefined
   return `${(Number(total) / g).toFixed(1)} / gm`
+}
+
+// The two cells that close a leader card. A leader's card is meant to be
+// their whole line, which is why it carries the stats that did *not* put them
+// on it. With turnovers gated off there is only one of those left, so the
+// second cell falls back to G+A -- the strip is two columns at every width by
+// design, and one lonely cell is a different object from the team card
+// beside it.
+function secondaryFor(hero: SeriesKey, p: PlayerLine | null): { label: string; series?: SeriesKey; value: number }[] {
+  const other: SeriesKey = hero === 'goals' ? 'assists' : 'goals'
+  const cells: { label: string; series?: SeriesKey; value: number }[] = [
+    { label: other === 'goals' ? 'Goals' : 'Assists', series: other, value: p?.[other] ?? 0 },
+  ]
+  if (SHOW_TURNOVERS) cells.push({ label: 'Turnovers', series: 'turnovers', value: p?.turnovers ?? 0 })
+  else cells.push({ label: 'G+A', value: (p?.goals ?? 0) + (p?.assists ?? 0) })
+  return cells
 }
 
 function seasonLabel(s: { name: string; year: number; organizer: string | null }) {
@@ -589,10 +606,15 @@ function PlayerStatsView({
           ) : mine ? (
             <>
               <h2 className="st-name text-lg">{mine.player_name}</h2>
-              <FadeIn className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              {/* The grid tracks the card count rather than being pinned at
+                  four: with turnovers gated off, a lg:grid-cols-4 leaves a
+                  quarter of the row empty. */}
+              <FadeIn className={`grid gap-3 ${SHOW_TURNOVERS ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3'}`}>
                 <MetricCard label="Goals" value={mine.goals} series="goals" hint={perGame(mine.goals, mine.games_played)} />
                 <MetricCard label="Assists" value={mine.assists} series="assists" hint={perGame(mine.assists, mine.games_played)} />
-                <MetricCard label="Turnovers" value={mine.turnovers} series="turnovers" hint={perGame(mine.turnovers, mine.games_played)} />
+                {SHOW_TURNOVERS && (
+                  <MetricCard label="Turnovers" value={mine.turnovers} series="turnovers" hint={perGame(mine.turnovers, mine.games_played)} />
+                )}
                 <MetricCard label="Games played" value={mine.games_played} />
               </FadeIn>
             </>
@@ -621,10 +643,7 @@ function PlayerStatsView({
                 value={topFinisher?.goals ?? 0}
                 unit="Goals"
                 teamTotal={teamGoals}
-                secondary={[
-                  { label: 'Assists', series: 'assists', value: topFinisher?.assists ?? 0 },
-                  { label: 'Turnovers', series: 'turnovers', value: topFinisher?.turnovers ?? 0 },
-                ]}
+                secondary={secondaryFor('goals', topFinisher)}
               />
               <LeaderCard
                 overline="Top playmaker"
@@ -634,10 +653,7 @@ function PlayerStatsView({
                 value={topPlaymaker?.assists ?? 0}
                 unit="Assists"
                 teamTotal={teamAssists}
-                secondary={[
-                  { label: 'Goals', series: 'goals', value: topPlaymaker?.goals ?? 0 },
-                  { label: 'Turnovers', series: 'turnovers', value: topPlaymaker?.turnovers ?? 0 },
-                ]}
+                secondary={secondaryFor('assists', topPlaymaker)}
               />
               <TeamCard icon={<Scales className="h-3.5 w-3.5" weight="bold" />} team={teamLine} />
             </FadeIn>

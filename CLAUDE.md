@@ -327,6 +327,24 @@ below are the ones that are specific to a page whose subject is numbers.
   degrees clear of the cyan, of the green and of the amber. Turnovers is
   amber rather than red because red is the ledger's *loss* colour and a
   turnover is a caution, not a result.
+- **The turnover series is currently switched off at the display layer, and
+  `--st-turnovers` is not dead code.** No screen in the app can record a
+  `Turnover` / `Throwaway` / `Drop` event, so every turnover figure was a
+  guaranteed 0 -- a column of zeros reads as "this team never turns it over"
+  rather than as "nobody tracked it". `SHOW_TURNOVERS` in
+  `frontend/lib/features.ts` is the one switch: it gates the leaderboard
+  series, the rankings column and its formula-builder option, the
+  progression stat, the Me tab's metric card, the leader cards' second strip
+  cell, the Roster summary / per-game / by-season columns and the turnover
+  breakdown card, and the Schedule box score's TO column. The whole data
+  path underneath -- `isTurnoverEvent`, every aggregation, the columns,
+  the tokens -- is untouched, so flipping the flag brings all of it back
+  with its layout and colours intact. Do not "clean up" what looks unused
+  behind the flag, and gate any new turnover surface through it.
+  Two knock-on rules while it is off: grids that were sized for four cards
+  (the Me tab, the Roster summary) size for three, and a leader card's strip
+  is still two cells -- the second falls back to a neutral G+A, because the
+  strip is two columns at every width by design.
 - **The accent is spent on exactly two things: the active tab's rail and the
   checked state in a filter popover.** Not on the leader's crest -- "top
   scorer" is a fact about the data, not a state, and a ring there was
