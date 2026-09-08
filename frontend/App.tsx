@@ -14,7 +14,7 @@ import { useAuth } from './contexts/AuthContext'
 import { Loader2, LogOut } from 'lucide-react'
 import { NAV_ITEMS, visibleNavItems, tabForPath, pathForTab, isKnownPath, renamedPathFor, type Tab } from './lib/nav'
 import { useMediaQuery } from './lib/shadcn/use-media-query'
-import { SidebarProvider, SidebarInset, SidebarTrigger } from './lib/shadcn/sidebar'
+import { SidebarProvider, SidebarInset } from './lib/shadcn/sidebar'
 import AppSidebar from './components/AppSidebar'
 import PasskeysDialog from './components/PasskeysDialog'
 import OrganizationSettingsDialog from './components/OrganizationSettingsDialog'
@@ -273,9 +273,11 @@ export default function App() {
         <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
         <SidebarInset>
           {/* The theme toggle sits here, with the utility icons, rather than
-              as a labelled row in the sidebar -- see components/nav/ThemeToggle. */}
+              as a labelled row in the sidebar -- see components/nav/ThemeToggle.
+              The panel collapse control is the opposite case and lives in the
+              sidebar's own header (components/nav/PanelToggle): it acts on the
+              panel, not on the page. */}
           <header className="sticky top-0 z-10 flex h-14 items-center gap-2 border-b border-border bg-card px-4">
-            <SidebarTrigger />
             <h1 className="text-lg font-bold text-primary">{activeLabel}</h1>
             <ThemeToggle theme={theme} toggleTheme={toggleTheme} className="ml-auto" />
           </header>

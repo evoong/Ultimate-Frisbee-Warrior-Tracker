@@ -93,6 +93,20 @@ scoped system -- it is the global one, plus the tokens above.
 - **The theme toggle is an exception and lives in the header**, with the
   utility icons, in both layouts (`ThemeToggle`). It is flipped often and
   idly, so burying a one-tap control two clicks deep is worse than a row.
+- **Controls sit with what they act on.** `ThemeToggle` changes the page, so
+  it is in the content header; `PanelToggle` (collapse/expand) changes the
+  panel, so it is in the panel's own header beside the workspace, Gemini-style
+  -- not next to the page title, where it read as page chrome and sat in the
+  one row where the two regions are hardest to tell apart. shadcn's
+  `SidebarTrigger` is no longer used in `App.tsx`; `SidebarRail` stays as the
+  silent drag-edge, and Cmd/Ctrl-B still works.
+- **Collapsed, the panel toggle takes the top slot.** The header row becomes a
+  column (`group-data-[collapsible=icon]:flex-col`) with the toggle first,
+  because once the labels are gone it is the only way back out -- it must not
+  be the thing that hides. It moves by `order-first`, not by a second DOM
+  order, so the tab sequence is identical in both states. The 3rem rail leaves
+  exactly 2rem of content width: a `size-8` control fits, a larger one does
+  not.
 - **Inactive nav items sit at 75% ink, and that number is a floor, not a
   taste.** `--sidebar-foreground/75` over `--sidebar-background` is ~4.8:1 in
   light, just clear of 4.5:1; at `/60` it falls to ~3.2:1, which is a contrast
@@ -173,7 +187,6 @@ itself:
 - **Scores align on the dash.** `.sch-score` is a `2ch 1.75ch 2ch` grid so the
   dash forms a spine down the list regardless of digit count. Any new
   score-like column should do the same.
-
 - **The result chip leads the row and is sized to be scanned.** It is the first
   grid track, not the last -- a result parked at the far end of a wide row is a
   result you read twice -- and `.sch-chip--outcome` sets a fixed `min-width`
