@@ -12,7 +12,7 @@ const CreateOrganization = lazy(() => import('./pages/CreateOrganization'))
 const PublicTeams = lazy(() => import('./pages/PublicTeams'))
 import { useAuth } from './contexts/AuthContext'
 import { Loader2, LogOut } from 'lucide-react'
-import { NAV_ITEMS, visibleNavItems, tabForPath, pathForTab, isKnownPath, renamedPathFor, type Tab } from './lib/nav'
+import { visibleNavItems, tabForPath, pathForTab, isKnownPath, renamedPathFor, type Tab } from './lib/nav'
 import { useMediaQuery } from './lib/shadcn/use-media-query'
 import { SidebarProvider, SidebarInset } from './lib/shadcn/sidebar'
 import AppSidebar from './components/AppSidebar'
@@ -20,6 +20,7 @@ import PasskeysDialog from './components/PasskeysDialog'
 import OrganizationSettingsDialog from './components/OrganizationSettingsDialog'
 import FeedbackDialog from './components/FeedbackDialog'
 import ThemeToggle from './components/nav/ThemeToggle'
+import PanelToggle from './components/nav/PanelToggle'
 import UserMenu from './components/nav/UserMenu'
 import WorkspaceSwitcher from './components/nav/WorkspaceSwitcher'
 import { passkeysAvailable } from './lib/passkeys'
@@ -251,7 +252,6 @@ export default function App() {
 
   // Desktop: collapsible sidebar shell.
   if (isDesktop) {
-    const activeLabel = NAV_ITEMS.find(item => item.key === activeTab)?.label ?? ''
     return (
       <SidebarProvider>
         <AppSidebar
@@ -272,13 +272,20 @@ export default function App() {
         <OrganizationSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
         <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
         <SidebarInset>
-          {/* The theme toggle sits here, with the utility icons, rather than
-              as a labelled row in the sidebar -- see components/nav/ThemeToggle.
-              The panel collapse control is the opposite case and lives in the
-              sidebar's own header (components/nav/PanelToggle): it acts on the
-              panel, not on the page. */}
-          <header className="sticky top-0 z-10 flex h-14 items-center gap-2 border-b border-border bg-card px-4">
-            <h1 className="text-[15px] font-semibold tracking-[-0.014em] text-foreground">{activeLabel}</h1>
+          {/* A utility strip, not a page header. The page's name used to sit
+              here as an <h1>, which made three copies of the word "Schedule"
+              visible at once -- the active nav item, this bar, and the page's
+              own title -- and spent 56px of every viewport saying what the
+              lit-up sidebar row already said. The page titles itself now
+              (every page carries its own <h1> at the top of its content), and
+              what is left is two controls that belong to the shell rather
+              than to the page: the panel on the left, the theme on the right,
+              nothing in between. Nothing here changes when you change page.
+
+              48px rather than 56: two 36px squares need 6px of air, and the
+              bar is now the thinnest thing that can hold them. */}
+          <header className="sticky top-0 z-10 flex h-12 items-center border-b border-border bg-card px-3">
+            <PanelToggle />
             <ThemeToggle theme={theme} toggleTheme={toggleTheme} className="ml-auto" />
           </header>
           {guestNotice}
