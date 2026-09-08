@@ -1,5 +1,5 @@
 begin;
-select plan(37);
+select plan(49);
 
 select has_function('public', 'admin_preview_delete_org', array['bigint'],
   'admin_preview_delete_org exists');
@@ -78,8 +78,16 @@ insert into public.game_attendance (game_id, player_id, organization_id)
 values (9101, 9001, 1), (9101, 9002, 1);
 
 -- game_lineups (game_id, player_id, lineup_name)
+-- 'O' is a genuine 3-column collision (same game_id, same lineup_name) and
+-- must be dropped. 'D' shares game_id with the 'O' pair but has no keeper
+-- counterpart in that lineup_name, so it is NOT a collision and must survive
+-- the conflict delete, then get repointed to the keeper -- this is what
+-- discriminates a real 3-column (game_id, player_id, lineup_name) match from
+-- a 2-column match that drops lineup_name (or game_id): a broken match would
+-- treat 'D' as colliding with 'O' just because they share a game_id, and
+-- wrongly delete it instead of repointing it.
 insert into public.game_lineups (game_id, player_id, lineup_name, organization_id)
-values (9101, 9001, 'O', 1), (9101, 9002, 'O', 1);
+values (9101, 9001, 'O', 1), (9101, 9002, 'O', 1), (9101, 9002, 'D', 1);
 
 -- strategy_positions (step_id, player_id)
 insert into public.strategy_plays (id, name, organization_id) values (9201, 'Admin RPC Test Play', 1);
@@ -132,12 +140,22 @@ select is(
 select is(
   (select count(*)::int from public.game_lineups where game_id = 9101 and lineup_name = 'O'),
   1,
-  'game_lineups: the conflicting row was dropped, not duplicated (3-column match still holds)'
+  'game_lineups: the conflicting (''O'') row was dropped, not duplicated'
 );
 select is(
   (select player_id from public.game_lineups where game_id = 9101 and lineup_name = 'O'),
   9001,
-  'game_lineups: the surviving row belongs to the keeper'
+  'game_lineups: the surviving ''O'' row belongs to the keeper'
+);
+select is(
+  (select count(*)::int from public.game_lineups where game_id = 9101 and lineup_name = 'D'),
+  1,
+  'game_lineups: the non-colliding ''D'' row (same game_id, no keeper counterpart) survives -- proves lineup_name is part of the conflict match'
+);
+select is(
+  (select player_id from public.game_lineups where game_id = 9101 and lineup_name = 'D'),
+  9001,
+  'game_lineups: the surviving ''D'' row was repointed to the keeper, not deleted'
 );
 
 select is(
@@ -204,10 +222,17 @@ select is(
 -- happen. This exercises the four columns that carry no unique constraint
 -- (game_events.player_id/related_player_id, lineup_template_players.player_id,
 -- strategy_arrows.start_player_id) in addition to re-proving the plain-repoint
--- path for the six conflict-bearing tables.
+-- path for all six conflict-bearing tables, season_players included (season
+-- 9002 has the merge player but not the keeper, so there is no collision).
 
 insert into public.players (id, display_name, organization_id)
 values (9501, 'Keeper B', 1), (9502, 'Merged B', 1);
+
+insert into public.seasons (id, name, organization_id, team_id)
+values (9002, 'Merge Test Season B', 1, (select id from public.teams where organization_id = 1 limit 1));
+
+insert into public.season_players (season_id, player_id, organization_id)
+values (9002, 9502, 1);
 
 insert into public.game_attendance (game_id, player_id, organization_id)
 values (9102, 9502, 1);
@@ -237,8 +262,15 @@ values (9401, 1, 1, 'Admin RPC Test Template');
 insert into public.lineup_template_players (template_id, organization_id, lineup_name, player_id)
 values (9401, 1, 'O', 9502);
 
+-- Captured into a temp table (rather than a bare select) so the returned
+-- `repointed` JSON survives past this call -- lives_ok only reports pass/
+-- fail, it does not hand back the query's result. lives_ok executes this
+-- via EXECUTE with no savepoint on the success path, so the temp table's
+-- effect persists in the rest of this transaction. See the comment further
+-- down for why the per-column counts in that JSON matter more than the
+-- final-state checks below.
 select lives_ok(
-  $$ select public.admin_merge_players(9501, 9502) $$,
+  $$ create temp table t_merge_b as select public.admin_merge_players(9501, 9502) as result $$,
   'merge succeeds with no conflicts (plain repoint across every referencing column)'
 );
 
@@ -251,6 +283,11 @@ select is(
   (select player_id from public.game_lineups where game_id = 9102 and lineup_name = 'D'),
   9501,
   'game_lineups.player_id repointed to the keeper'
+);
+select is(
+  (select player_id from public.season_players where season_id = 9002),
+  9501,
+  'season_players.player_id repointed to the keeper'
 );
 select is(
   (select player_id from public.strategy_positions where step_id = 9302),
@@ -294,34 +331,65 @@ select is(
   'the merged player row (non-conflict case) is gone'
 );
 
--- Single assertion covering all ten referencing columns at once: a dropped
--- UPDATE anywhere in the migration would leave one of the two merged player
--- ids (9002 from the conflict merge, 9502 from the plain-repoint merge)
--- behind, and this would catch it regardless of which column.
+-- A "no dangling reference" sweep does NOT work here and must not be
+-- reintroduced. admin_merge_players ends with an unconditional
+-- `delete from public.players where id = p_merge_id`, and every one of the
+-- ten referencing columns has an ON DELETE action (CASCADE for
+-- game_attendance, game_lineups, lineup_template_players, season_players,
+-- strategy_positions, player_links, player_private; SET NULL for
+-- game_events.player_id/related_player_id and
+-- strategy_arrows.start_player_id) that removes or nulls any row still
+-- pointing at the merged id. So the merged id is guaranteed to be gone from
+-- all ten columns by the time this test could check for it -- whether or
+-- not the repoint UPDATE that was supposed to move it first actually ran.
+-- A dropped UPDATE statement is therefore invisible to a sweep like that,
+-- for any of the ten columns.
+--
+-- Instead, assert against the `repointed` counts admin_merge_players itself
+-- returns (captured above into t_merge_b). Scenario B seeds exactly one row
+-- per referencing column with no keeper-side conflict, so the correct
+-- repoint count for every one of the ten columns is exactly 1. A dropped
+-- UPDATE statement makes its key absent from the JSON, or its count 0 --
+-- either way this goes red, which the sweep never could.
 select is(
-  (select count(*)::int from (
-    select 1 from public.game_attendance         where player_id in (9002, 9502)
-    union all
-    select 1 from public.game_events              where player_id in (9002, 9502)
-    union all
-    select 1 from public.game_events              where related_player_id in (9002, 9502)
-    union all
-    select 1 from public.game_lineups             where player_id in (9002, 9502)
-    union all
-    select 1 from public.lineup_template_players  where player_id in (9002, 9502)
-    union all
-    select 1 from public.season_players           where player_id in (9002, 9502)
-    union all
-    select 1 from public.strategy_arrows          where start_player_id in (9002, 9502)
-    union all
-    select 1 from public.strategy_positions       where player_id in (9002, 9502)
-    union all
-    select 1 from public.player_links             where player_id in (9002, 9502)
-    union all
-    select 1 from public.player_private           where player_id in (9002, 9502)
-  ) dangling),
-  0,
-  'no row in any of the ten player-referencing columns still holds a merged player id'
+  ((select result from t_merge_b) -> 'repointed' ->> 'game_attendance.player_id')::int,
+  1, 'repointed count: game_attendance.player_id'
+);
+select is(
+  ((select result from t_merge_b) -> 'repointed' ->> 'game_events.player_id')::int,
+  1, 'repointed count: game_events.player_id'
+);
+select is(
+  ((select result from t_merge_b) -> 'repointed' ->> 'game_events.related_player_id')::int,
+  1, 'repointed count: game_events.related_player_id'
+);
+select is(
+  ((select result from t_merge_b) -> 'repointed' ->> 'game_lineups.player_id')::int,
+  1, 'repointed count: game_lineups.player_id'
+);
+select is(
+  ((select result from t_merge_b) -> 'repointed' ->> 'lineup_template_players.player_id')::int,
+  1, 'repointed count: lineup_template_players.player_id'
+);
+select is(
+  ((select result from t_merge_b) -> 'repointed' ->> 'season_players.player_id')::int,
+  1, 'repointed count: season_players.player_id'
+);
+select is(
+  ((select result from t_merge_b) -> 'repointed' ->> 'strategy_arrows.start_player_id')::int,
+  1, 'repointed count: strategy_arrows.start_player_id'
+);
+select is(
+  ((select result from t_merge_b) -> 'repointed' ->> 'strategy_positions.player_id')::int,
+  1, 'repointed count: strategy_positions.player_id'
+);
+select is(
+  ((select result from t_merge_b) -> 'repointed' ->> 'player_links.player_id')::int,
+  1, 'repointed count: player_links.player_id'
+);
+select is(
+  ((select result from t_merge_b) -> 'repointed' ->> 'player_private.player_id')::int,
+  1, 'repointed count: player_private.player_id'
 );
 
 select * from finish();
