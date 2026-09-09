@@ -15,9 +15,9 @@ import './stats-theme.css'
 // disc went — the old "←" was pointing at the scorer from the assister,
 // which is backwards from how anyone says it out loud.
 
-/** The count that earns the top row its badge. Below this the leader is just
- *  whoever happened to play together most, which is not a claim worth making
- *  on the page. */
+/** The count a pairing has to reach to be called lethal. Below this the
+ *  leader is just whoever happened to play together most, which is not a
+ *  claim worth making on the page. */
 const LETHAL_MIN = 3
 
 export default function ChemistryHub({ pairs, loading, error, emptyLabel }: {
@@ -26,7 +26,14 @@ export default function ChemistryHub({ pairs, loading, error, emptyLabel }: {
   error: string | null
   emptyLabel: string
 }) {
-  const top = pairs[0]?.count ?? 0
+  // The list arrives sorted by count descending, but the badge is a
+  // property of the count, not of the row index: three pairings on 3 are
+  // three lethal pairings, and giving the badge to whichever of them the
+  // sort happened to put first says the other two are something lesser.
+  // Reduced rather than read off pairs[0] so the rule survives a caller
+  // that hands over an unsorted slice.
+  const top = pairs.reduce((m, p) => Math.max(m, p.count), 0)
+  const lethal = top >= LETHAL_MIN
 
   return (
     <section className="st-panel">
@@ -85,7 +92,7 @@ export default function ChemistryHub({ pairs, loading, error, emptyLabel }: {
                 <span className="st-name">{shortName(p.scorerName)}</span>
               </p>
 
-              {i === 0 && p.count >= LETHAL_MIN && (
+              {lethal && p.count === top && (
                 <span className="st-chip hidden shrink-0 sm:inline-flex">Lethal</span>
               )}
 

@@ -1,25 +1,31 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ArrowsLeftRight, Check } from '@phosphor-icons/react'
 import { Avatar, AvatarFallback, AvatarImage } from '../../lib/shadcn/avatar'
 import { Skeleton } from '../../lib/shadcn/skeleton'
+import AssistWeb from './AssistWeb'
 import { SinglePicker } from './Picker'
 import { crestInitials, shortName, type MatrixEdge, type PlayerLine } from './types'
 import './stats-theme.css'
 
-// One player's connections, both directions, as two lists.
+// One player's connections, both directions, two ways of looking at them.
 //
-// This replaced a pair of 320px circular force-ish graphs: every player on
-// the ring, every pairing a curved line across the middle with a number
-// floating on it. At a real roster size that is a hairball — the lines cross
-// each other and the labels, the node positions carry no meaning (they came
-// out of a greedy farthest-point placement whose only job was to keep the
-// busiest nodes from overlapping), and the only question it could answer was
-// the one you got by tapping a node to dim everything else. That question is
-// "who does this player connect with", and it is a list.
+// The web (AssistWeb, the default) is the shape of the team: who is wired to
+// whom, with the focused player's lines lit and the rest of the pack dimmed
+// behind them. The table is the same edges as two ranked lists, which is the
+// view that answers "how many" without being read off a curve.
 //
-// Two graphs collapsed into one view, too: the old "Assists" and "Goals"
-// rings drew the exact same edges and differed only in which end of an edge
-// counted as the selected player's own. That is what the two columns are.
+// Both read one selection and one edge set, so switching view never changes
+// what is on screen, only how it is drawn -- and both are two directions of
+// the same fact, which is why the old pair of rings ("Assists" and "Goals")
+// collapsed into one of each: they drew identical edges and differed only in
+// which end counted as the selected player's own. Here that difference is
+// the table's two columns and the web's two line colours.
+
+/** Web or table, per device. Which of two drawings of the same data somebody
+ *  prefers is a viewing preference nobody else ever sees, so it lives here
+ *  rather than in the page -- the same reasoning as RankingsTable's columns. */
+const VIEW_KEY = 'ufwt:stats:assistView'
+type MatrixView = 'web' | 'table'
 
 function Column({ title, total, rows, series, emptyLabel }: {
   title: string
@@ -74,6 +80,11 @@ export default function AssistMatrix({
   error: string | null
   emptyLabel: string
 }) {
+  const [view, setView] = useState<MatrixView>(() => {
+    try { return localStorage.getItem(VIEW_KEY) === 'table' ? 'table' : 'web' } catch { return 'web' }
+  })
+  useEffect(() => { try { localStorage.setItem(VIEW_KEY, view) } catch { /* private mode */ } }, [view])
+
   const byId = useMemo(() => new Map(players.map(p => [p.playerId, p])), [players])
   const selected = selectedId == null ? undefined : byId.get(selectedId)
 
@@ -108,20 +119,42 @@ export default function AssistMatrix({
           <ArrowsLeftRight className="h-3.5 w-3.5" weight="bold" />
           Assist matrix
         </span>
-        {/* The subs toggle kept its behaviour and lost its raw checkbox. It
-            is the same button shape as the leaderboard's legend, because it
-            is the same kind of control: one thing in the panel switched on
-            and off. */}
-        <button
-          type="button"
-          className="st-legend"
-          data-active={includeSubs}
-          aria-pressed={includeSubs}
-          onClick={() => onIncludeSubsChange(!includeSubs)}
-        >
-          <Check className="h-3 w-3" weight="bold" />
-          Subs
-        </button>
+        <div className="flex items-center gap-1">
+          {/* The subs toggle kept its behaviour and lost its raw checkbox. It
+              is the same button shape as the leaderboard's legend, because it
+              is the same kind of control: one thing in the panel switched on
+              and off. */}
+          <button
+            type="button"
+            className="st-legend"
+            data-active={includeSubs}
+            aria-pressed={includeSubs}
+            onClick={() => onIncludeSubsChange(!includeSubs)}
+          >
+            <Check className="h-3 w-3" weight="bold" />
+            Subs
+          </button>
+
+          {/* Two drawings of one data set, so a segmented control rather than
+              a pair of icon buttons: the choice is exclusive and both options
+              have to be readable at once. Neutral raised surface for the
+              active side, never the accent -- picking a view is not "you are
+              here". */}
+          <div className="st-seg" role="group" aria-label="Assist matrix view">
+            {([['web', 'Web'], ['table', 'Table']] as const).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className="st-seg-btn"
+                data-active={view === key}
+                aria-pressed={view === key}
+                onClick={() => setView(key)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {loading ? (
@@ -161,21 +194,32 @@ export default function AssistMatrix({
             )}
           </div>
 
-          <div className="st-matrix border-t border-[hsl(var(--st-rule))]">
-            <Column
-              title="Assisted by"
-              total={fedTotal}
-              rows={fed}
-              series="goals"
-              emptyLabel="Nobody has assisted them in this range"
-            />
-            <Column
-              title="Assisted to"
-              total={threwTotal}
-              rows={threw}
-              series="assists"
-              emptyLabel="They have not assisted anybody in this range"
-            />
+          <div className="border-t border-[hsl(var(--st-rule))]">
+            {view === 'web' ? (
+              <AssistWeb
+                players={players}
+                edges={edges}
+                selectedId={selectedId}
+                onSelect={onSelect}
+              />
+            ) : (
+              <div className="st-matrix">
+                <Column
+                  title="Assisted by"
+                  total={fedTotal}
+                  rows={fed}
+                  series="goals"
+                  emptyLabel="Nobody has assisted them in this range"
+                />
+                <Column
+                  title="Assisted to"
+                  total={threwTotal}
+                  rows={threw}
+                  series="assists"
+                  emptyLabel="They have not assisted anybody in this range"
+                />
+              </div>
+            )}
           </div>
         </>
       )}
