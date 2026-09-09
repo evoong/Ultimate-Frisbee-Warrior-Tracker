@@ -3,6 +3,8 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YA
 import { ChartLine } from '@phosphor-icons/react'
 import { SHOW_TURNOVERS } from '../../lib/features'
 import { Skeleton } from '../../lib/shadcn/skeleton'
+import Swap from './Swap'
+import Segmented from './Segmented'
 import { MultiPicker, SinglePicker } from './Picker'
 import {
   ALL_SEASONS, seasonLabel, shortName,
@@ -110,6 +112,12 @@ export default function ProgressionChart({
   )
 
   const last = data[data.length - 1]
+
+  // See PerformanceChart: the lines stay and dim while the next season
+  // loads. The skeleton is only for a panel with nothing drawn yet.
+  const drawable = data.length > 0 && players.length > 0
+  const cold = loading && !drawable
+  const busy = loading && drawable
   const seasonItems = [
     { id: ALL_SEASONS, label: 'All games' },
     ...seasons.map(s => ({ id: s.id, label: seasonLabel(s) })),
@@ -132,20 +140,12 @@ export default function ProgressionChart({
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[hsl(var(--st-rule))] px-3 py-2.5 sm:px-4">
-        <div className="st-seg" role="group" aria-label="Progression stat">
-          {STATS.map(t => (
-            <button
-              key={t.key}
-              type="button"
-              className="st-seg-btn"
-              data-active={stat === t.key}
-              aria-pressed={stat === t.key}
-              onClick={() => onStatChange(t.key)}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          options={STATS}
+          value={stat}
+          onChange={onStatChange}
+          ariaLabel="Progression stat"
+        />
         {roster.length > 0 && (
           <MultiPicker
             items={roster.map(p => ({ id: p.id, label: p.name, hint: String(p.total) }))}
@@ -158,8 +158,8 @@ export default function ProgressionChart({
         )}
       </div>
 
-      <div className="p-3 sm:p-4">
-        {loading ? (
+      <Swap busy={busy} className="p-3 sm:p-4">
+        {cold ? (
           <div className="space-y-3">
             <Skeleton className="w-full" style={{ height: 220 }} />
             <div className="flex flex-wrap gap-2">
@@ -239,7 +239,7 @@ export default function ProgressionChart({
             </div>
           </>
         )}
-      </div>
+      </Swap>
     </section>
   )
 }

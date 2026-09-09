@@ -5,6 +5,7 @@ import {
 import { ChartBar, TrendUp } from '@phosphor-icons/react'
 import { SHOW_TURNOVERS } from '../../lib/features'
 import { Skeleton } from '../../lib/shadcn/skeleton'
+import Swap from './Swap'
 import { useMediaQuery } from '../../lib/shadcn/use-media-query'
 import type { PlayerLine, SeriesKey } from './types'
 import './stats-theme.css'
@@ -142,6 +143,14 @@ export default function PerformanceChart({ players, loading, error, emptyLabel }
   const rowHeight = 16 + active.length * 13
   const height = Math.max(200, rows.length * rowHeight + 8)
 
+  // A panel that already has a leaderboard keeps it while the next range
+  // loads and dims, rather than collapsing into six skeleton bars. The
+  // skeleton here is ~150px and the chart is ~500px, so the swap and the
+  // swap back are two full-page reflows for every click on the range filter.
+  // The skeleton is for a cold panel: one that has nothing to show yet.
+  const cold = loading && rows.length === 0
+  const busy = loading && rows.length > 0
+
   return (
     <section className="st-panel">
       <div className="st-panel-head">
@@ -167,8 +176,8 @@ export default function PerformanceChart({ players, loading, error, emptyLabel }
         </div>
       </div>
 
-      <div className="p-3 sm:p-4">
-        {loading ? (
+      <Swap busy={busy} className="p-3 sm:p-4">
+        {cold ? (
           <div className="space-y-4 py-2">
             {[0.92, 0.78, 0.64, 0.51, 0.4, 0.29].map((w, i) => (
               <div key={i} className="flex items-center gap-3">
@@ -245,7 +254,7 @@ export default function PerformanceChart({ players, loading, error, emptyLabel }
             </ResponsiveContainer>
           </div>
         )}
-      </div>
+      </Swap>
     </section>
   )
 }
