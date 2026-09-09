@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ArrowsLeftRight, Check } from '@phosphor-icons/react'
 import { Avatar, AvatarFallback, AvatarImage } from '../../lib/shadcn/avatar'
 import { Skeleton } from '../../lib/shadcn/skeleton'
+import Segmented, { type SegmentOption } from './Segmented'
 import AssistWeb from './AssistWeb'
 import { SinglePicker } from './Picker'
 import { crestInitials, shortName, type MatrixEdge, type PlayerLine } from './types'
@@ -26,6 +27,14 @@ import './stats-theme.css'
  *  rather than in the page -- the same reasoning as RankingsTable's columns. */
 const VIEW_KEY = 'ufwt:stats:assistView'
 type MatrixView = 'web' | 'table'
+
+// Two drawings of one data set, so a segmented control rather than a pair of
+// icon buttons: the choice is exclusive and both options have to be readable
+// at once.
+const VIEWS: SegmentOption<MatrixView>[] = [
+  { key: 'web', label: 'Web' },
+  { key: 'table', label: 'Table' },
+]
 
 function Column({ title, total, rows, series, emptyLabel }: {
   title: string
@@ -112,6 +121,12 @@ export default function AssistMatrix({
   const fedTotal = fed.reduce((s, r) => s + r.count, 0)
   const threwTotal = threw.reduce((s, r) => s + r.count, 0)
 
+  // See PerformanceChart: the web (or the table) stays and dims while the
+  // next range loads. The skeleton is only for a panel with nothing yet.
+  const drawable = players.length > 0 && edges.length > 0
+  const cold = loading && !drawable
+  const busy = loading && drawable
+
   return (
     <section className="st-panel">
       <div className="st-panel-head">
@@ -140,89 +155,83 @@ export default function AssistMatrix({
               have to be readable at once. Neutral raised surface for the
               active side, never the accent -- picking a view is not "you are
               here". */}
-          <div className="st-seg" role="group" aria-label="Assist matrix view">
-            {([['web', 'Web'], ['table', 'Table']] as const).map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                className="st-seg-btn"
-                data-active={view === key}
-                aria-pressed={view === key}
-                onClick={() => setView(key)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <Segmented
+            options={VIEWS}
+            value={view}
+            onChange={setView}
+            ariaLabel="Assist matrix view"
+          />
         </div>
       </div>
 
-      {loading ? (
-        <div className="space-y-3 p-4">
-          <Skeleton className="h-8 w-52" />
-          <div className="grid gap-3 md:grid-cols-2">
-            {[0, 1, 2, 3, 4, 5].map(i => <Skeleton key={i} className="h-9" />)}
+      <div className="st-swap" data-busy={busy}>
+        {cold ? (
+          <div className="space-y-3 p-4">
+            <Skeleton className="h-8 w-52" />
+            <div className="grid gap-3 md:grid-cols-2">
+              {[0, 1, 2, 3, 4, 5].map(i => <Skeleton key={i} className="h-9" />)}
+            </div>
           </div>
-        </div>
-      ) : error ? (
-        <p className="flex h-40 items-center justify-center text-sm text-destructive">{error}</p>
-      ) : players.length === 0 || edges.length === 0 ? (
-        <div className="flex h-40 flex-col items-center justify-center gap-3">
-          <ArrowsLeftRight className="h-8 w-8 opacity-25" weight="regular" />
-          <p className="st-meta">{emptyLabel}</p>
-        </div>
-      ) : (
-        <>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-3 sm:px-4">
-            <SinglePicker
-              items={players.map(p => ({
-                id: p.playerId,
-                label: p.name,
-                photoUrl: p.photoUrl,
-                hint: `${p.goals}G ${p.assists}A`,
-              }))}
-              selectedId={selectedId}
-              onChange={onSelect}
-              placeholder="Pick a player"
-              emptyLabel="No players in range"
-              showCrests
-            />
-            {selected && (
-              <span className="st-meta">
-                {selected.goals} goals · {selected.assists} assists · {selected.gamesPlayed} games
-              </span>
-            )}
+        ) : error ? (
+          <p className="flex h-40 items-center justify-center text-sm text-destructive">{error}</p>
+        ) : players.length === 0 || edges.length === 0 ? (
+          <div className="flex h-40 flex-col items-center justify-center gap-3">
+            <ArrowsLeftRight className="h-8 w-8 opacity-25" weight="regular" />
+            <p className="st-meta">{emptyLabel}</p>
           </div>
-
-          <div className="border-t border-[hsl(var(--st-rule))]">
-            {view === 'web' ? (
-              <AssistWeb
-                players={players}
-                edges={edges}
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-3 sm:px-4">
+              <SinglePicker
+                items={players.map(p => ({
+                  id: p.playerId,
+                  label: p.name,
+                  photoUrl: p.photoUrl,
+                  hint: `${p.goals}G ${p.assists}A`,
+                }))}
                 selectedId={selectedId}
-                onSelect={onSelect}
+                onChange={onSelect}
+                placeholder="Pick a player"
+                emptyLabel="No players in range"
+                showCrests
               />
-            ) : (
-              <div className="st-matrix">
-                <Column
-                  title="Assisted by"
-                  total={fedTotal}
-                  rows={fed}
-                  series="goals"
-                  emptyLabel="Nobody has assisted them in this range"
+              {selected && (
+                <span className="st-meta">
+                  {selected.goals} goals · {selected.assists} assists · {selected.gamesPlayed} games
+                </span>
+              )}
+            </div>
+
+            <div className="border-t border-[hsl(var(--st-rule))]">
+              {view === 'web' ? (
+                <AssistWeb
+                  players={players}
+                  edges={edges}
+                  selectedId={selectedId}
+                  onSelect={onSelect}
                 />
-                <Column
-                  title="Assisted to"
-                  total={threwTotal}
-                  rows={threw}
-                  series="assists"
-                  emptyLabel="They have not assisted anybody in this range"
-                />
-              </div>
-            )}
-          </div>
-        </>
-      )}
+              ) : (
+                <div className="st-matrix">
+                  <Column
+                    title="Assisted by"
+                    total={fedTotal}
+                    rows={fed}
+                    series="goals"
+                    emptyLabel="Nobody has assisted them in this range"
+                  />
+                  <Column
+                    title="Assisted to"
+                    total={threwTotal}
+                    rows={threw}
+                    series="assists"
+                    emptyLabel="They have not assisted anybody in this range"
+                  />
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
     </section>
   )
 }

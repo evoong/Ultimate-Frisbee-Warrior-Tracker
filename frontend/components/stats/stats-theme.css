@@ -176,25 +176,63 @@
 }
 
 /* ── Segmented control ──────────────────────────────────────────────────
-   The scope switch: all-time / season / games. The active segment is a
-   raised neutral surface, deliberately NOT the accent. A filter says which
-   slice of data you are looking at; the accent says where you are in the
-   app. Spending it here would leave "you are here" and "you are filtered"
-   wearing the same colour in the same header. */
+   The scope switch: all-time / season / games, and the same shape wherever
+   the page offers a small exclusive choice. The active segment is a raised
+   neutral surface, deliberately NOT the accent. A filter says which slice of
+   data you are looking at; the accent says where you are in the app. Spending
+   it here would leave "you are here" and "you are filtered" wearing the same
+   colour in the same header.
+
+   Two rules keep the control from moving the layout around it, and both are
+   load-bearing rather than cosmetic — see Segmented.tsx:
+
+   - Columns are equal (`1fr`), so the group's width is the widest label
+     times the count, and never depends on which segment is live.
+   - `.st-seg-btn::after` is a hidden copy of the label at the ACTIVE weight,
+     stacked in the same grid cell as the visible one. Without it, a segment
+     that goes 500 -> 600 on activation is a couple of pixels wider than it
+     was, and the whole group breathes on every click. */
 .st-seg {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.125rem;
-  padding: 0.1875rem;
+  position: relative;
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  align-items: stretch;
+  padding: 3px;
   border: 1px solid hsl(var(--st-rule-strong));
   border-radius: 7px;
   background: hsl(var(--st-panel));
+  isolation: isolate;
 }
 
+/* One thumb per group, moved by transform, rather than a fill on whichever
+   button is active: the same reason the schedule ledger has one travelling
+   rail instead of a ::before on every row. Width is exactly one column of the
+   inner track, so translateX(100%) is precisely one segment. */
+.st-seg-thumb {
+  position: absolute;
+  z-index: 0;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc((100% - 6px) / var(--st-seg-n, 1));
+  border-radius: 5px;
+  background: hsl(var(--st-raise));
+  border: 1px solid hsl(var(--st-rule-strong));
+  transform: translateX(calc(var(--st-seg-i, 0) * 100%));
+  transition: transform 260ms cubic-bezier(0.32, 0.72, 0, 1), opacity 140ms ease;
+}
+.dark .st-seg-thumb { border-color: transparent; }
+.st-seg-thumb[data-off='true'] { opacity: 0; }
+
 .st-seg-btn {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
   padding: 0.3125rem 0.625rem;
   border-radius: 5px;
-  border: 1px solid transparent;
+  background: transparent;
   font-family: var(--st-mono);
   font-size: 0.6875rem;
   font-weight: 500;
@@ -202,7 +240,17 @@
   letter-spacing: 0.02em;
   white-space: nowrap;
   color: hsl(var(--st-ink-mid));
-  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease;
+  transition: color 160ms ease;
+}
+.st-seg-btn > span { grid-area: 1 / 1; }
+/* The width reservation described above. Hidden from paint and from the
+   accessibility tree, present only so the column can never grow. */
+.st-seg-btn::after {
+  content: attr(data-label);
+  grid-area: 1 / 1;
+  font-weight: 600;
+  visibility: hidden;
+  pointer-events: none;
 }
 .st-seg-btn:hover { color: hsl(var(--st-ink)); }
 .st-seg-btn:focus-visible {
@@ -212,10 +260,86 @@
 .st-seg-btn[data-active='true'] {
   color: hsl(var(--st-ink));
   font-weight: 600;
-  background: hsl(var(--st-raise));
-  border-color: hsl(var(--st-rule-strong));
 }
-.dark .st-seg-btn[data-active='true'] { border-color: transparent; }
+
+/* ── Page scope group ───────────────────────────────────────────────────
+   The segmented control plus the picker that narrows it, in the page header.
+
+   The slot is a FIXED width and is always in the DOM, empty or not. All-time
+   needs no picker, Season and Games each need a different one, and this group
+   is right-aligned against the title in a `justify-between` row — so a slot
+   that sizes to its contents drags the segmented control sideways on every
+   click, and at some widths re-wraps the header and shoves the entire page
+   down. An empty reserved slot is invisible; a moving header is not.
+
+   It is also why the picker inside fills the slot rather than sizing to its
+   label: "Jam Summer 2026" and "Pick games" are different widths, so a
+   content-sized trigger reintroduces the same shift one level down. */
+.st-scope {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+/* The group is pinned to the picker's own 2.125rem, the height every control
+   in this system already stands at, so the header row is exactly as tall with
+   a picker in the slot as without one. Left at the segments' natural 29px the
+   row grew 5px the moment a picker appeared — which is small, and is still
+   the tab strip and every panel under it stepping down the page on a click. */
+.st-scope,
+.st-scope .st-seg {
+  height: 2.125rem;
+}
+.st-scope-slot {
+  flex: 0 0 11.5rem;
+  min-width: 0;
+}
+.st-scope-slot > * {
+  width: 100%;
+  max-width: none;
+  animation: st-scope-in 180ms ease both;
+}
+@keyframes st-scope-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (max-width: 560px) {
+  .st-scope { width: 100%; }
+  .st-scope-slot { flex: 1 1 auto; }
+}
+
+/* ── Refetching in place ────────────────────────────────────────────────
+   A panel that already has rows keeps them while the next range loads, and
+   dims instead of collapsing into its skeleton. Swapping ~500px of chart for
+   ~150px of skeleton and back is two full-page reflows per click, and the
+   second one throws whatever you were reading somewhere else on screen. The
+   skeleton is for a cold panel — one that has nothing to show yet.
+
+   The delay is on the way IN only: a fetch that resolves inside 140ms never
+   dims at all, so a fast range change is a straight cross-fade of the numbers
+   rather than a flicker. Coming back out is immediate. */
+.st-swap {
+  transition: opacity 180ms ease;
+}
+.st-swap[data-busy='true'] {
+  opacity: 0.4;
+  pointer-events: none;
+  transition-delay: 140ms;
+}
+
+/* The same dim plus a measured height, for a panel whose contents change
+   size between ranges. See Swap.tsx. The delay list is per property on
+   purpose: the dim waits 140ms so a fast fetch never flickers, but the
+   height must start the instant the new content is in, or the panel holds
+   the old size for a beat and then lurches. */
+.st-reveal {
+  overflow: hidden;
+  transition-property: opacity, height;
+  transition-duration: 180ms, 340ms;
+  transition-timing-function: ease, cubic-bezier(0.22, 1, 0.36, 1);
+}
+.st-reveal[data-busy='true'] {
+  transition-delay: 140ms, 0ms;
+}
 
 /* ── Buttons ────────────────────────────────────────────────────────────
    One shape, one height, one glyph weight for every control in a panel
@@ -1000,6 +1124,9 @@ textarea.st-field {
   .st-kpi,
   .st-picker,
   .st-seg-btn,
+  .st-seg-thumb,
+  .st-swap,
+  .st-reveal,
   .st-tab,
   .st-legend,
   .st-web-node,
@@ -1009,4 +1136,6 @@ textarea.st-field {
   .st-meter-fill {
     transition-duration: 1ms;
   }
+
+  .st-scope-slot > * { animation: none; }
 }

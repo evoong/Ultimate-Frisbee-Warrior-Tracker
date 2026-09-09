@@ -87,6 +87,10 @@ function seasonLabel(s: { name: string; year: number; organizer: string | null }
   return [s.organizer, s.name, s.year].filter(Boolean).join(' ')
 }
 
+// A stable identity for "no pairings yet", so the memos that derive the
+// chemistry list and the matrix edges off it do not recompute every render.
+const NO_PAIRINGS: PairingRow[] = []
+
 type PageTab = 'me' | 'overview' | 'table' | 'standings'
 
 // URL words for each tab, readable rather than the internal PageTab keys
@@ -162,12 +166,22 @@ export default function Stats() {
 
   const handleModeChange = (mode: FilterMode) => {
     setFilterType(mode)
-    setSelectedGameIds([])
     // Switching back into Season mode with nothing selected reads as "all
     // seasons", which is the same view as All-time and makes the segment
     // that was just clicked look inert. Reinstate the season the page
     // opened on instead.
     setSelectedSeasonIds(mode === 'season' && defaultSeasonId != null ? [defaultSeasonId] : [])
+    // Games mode lands on the most recent game that has actually been
+    // played, for the same reason. Empty was worse than inert here: with
+    // nothing selected the fetch effect below fires no query at all, so
+    // every panel kept showing the *previous* range's numbers under a
+    // segment that now says "Games" -- stale data wearing a fresh label.
+    // `games` is date-desc from the hook, so the first past one is the
+    // latest. A user who wants several picks them from the slot beside it.
+    const latest = mode === 'games'
+      ? ((games as Game[] | undefined) ?? []).find(g => isPastGame(g))
+      : undefined
+    setSelectedGameIds(latest ? [latest.id] : [])
   }
 
   return (
@@ -307,7 +321,35 @@ function PlayerStatsView({
     teamLinks.trigger({ teamId: currentTeamId })
   }, [tab, currentTeamId, user])
 
-  const statsArr = stats as PlayerStat[] | undefined
+  // ── One commit per range change ─────────────────────────────────────────
+  // The range filter fires two independent queries -- player_stats and assist
+  // pairings -- with two independent latencies, and the panels below read one
+  // or the other. Publishing each result the moment it lands makes a single
+  // click on "Season" settle the page twice: the KPI cards and the leaderboard
+  // change at ~260ms (the leaderboard losing 210px and dragging everything
+  // under it up with it), chemistry and the assist web change again at ~480ms.
+  // Two jolts 200ms apart read as the page assembling itself out of parts.
+  //
+  // So the page holds the last settled pair until every query this tab reads
+  // has come back, then commits all of it in one step. Overview reads both;
+  // Me and Player Rankings read only player_stats and must not wait on a
+  // round trip for a panel that is not on screen.
+  //
+  // `settled` is written during render deliberately: it is derived from this
+  // render's own data and is idempotent, and an effect would publish one
+  // paint late -- which is the flash this exists to remove.
+  const rangePending = loading || (tab === 'overview' && pairingsLoading)
+  const settled = useRef<{ stats?: PlayerStat[]; pairings?: PairingRow[] }>({})
+  if (!rangePending) {
+    settled.current = {
+      stats: stats as PlayerStat[] | undefined,
+      // On a tab that does not read pairings, keep whatever was last
+      // committed rather than publishing a half-loaded set to a tab the user
+      // may be about to switch to.
+      pairings: pairingsLoading ? settled.current.pairings : (pairings as PairingRow[] | undefined),
+    }
+  }
+  const statsArr = settled.current.stats
 
   // "Me" tab: the claimed player's own row from the exact same `stats`
   // query the Table tab renders (same Filters card, same fetch) -- so
@@ -482,7 +524,7 @@ function PlayerStatsView({
   // matrix takes all of them, because it filters by one player at a time and
   // a pairing outside the top ten is exactly the one a mid-roster player
   // needs to see.
-  const pairingRows = (pairings as PairingRow[] | undefined) ?? []
+  const pairingRows = settled.current.pairings ?? NO_PAIRINGS
 
   const orgPlayerMap = useMemo(() => new Map(
     ((orgPlayers as { id: number; photo_url: string | null; is_sub: boolean }[] | undefined) ?? [])
@@ -609,14 +651,17 @@ function PlayerStatsView({
               {/* The grid tracks the card count rather than being pinned at
                   four: with turnovers gated off, a lg:grid-cols-4 leaves a
                   quarter of the row empty. */}
-              <FadeIn className={`grid gap-3 ${SHOW_TURNOVERS ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3'}`}>
-                <MetricCard label="Goals" value={mine.goals} series="goals" hint={perGame(mine.goals, mine.games_played)} />
-                <MetricCard label="Assists" value={mine.assists} series="assists" hint={perGame(mine.assists, mine.games_played)} />
-                {SHOW_TURNOVERS && (
-                  <MetricCard label="Turnovers" value={mine.turnovers} series="turnovers" hint={perGame(mine.turnovers, mine.games_played)} />
-                )}
-                <MetricCard label="Games played" value={mine.games_played} />
-              </FadeIn>
+              {/* Wrapper, not FadeIn -- see the card row on the Overview tab. */}
+              <div className="st-swap" data-busy={rangePending}>
+                <FadeIn className={`grid gap-3 ${SHOW_TURNOVERS ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3'}`}>
+                  <MetricCard label="Goals" value={mine.goals} series="goals" hint={perGame(mine.goals, mine.games_played)} />
+                  <MetricCard label="Assists" value={mine.assists} series="assists" hint={perGame(mine.assists, mine.games_played)} />
+                  {SHOW_TURNOVERS && (
+                    <MetricCard label="Turnovers" value={mine.turnovers} series="turnovers" hint={perGame(mine.turnovers, mine.games_played)} />
+                  )}
+                  <MetricCard label="Games played" value={mine.games_played} />
+                </FadeIn>
+              </div>
             </>
           ) : (
             <section className="st-panel">
@@ -634,29 +679,36 @@ function PlayerStatsView({
               recorded stats still shows the team's record rather than
               collapsing the whole row. */}
           {(playerLines.length > 0 || gamesInFilter > 0) && (
-            <FadeIn className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              <LeaderCard
-                overline="Top finisher"
-                icon={<Trophy className="h-3.5 w-3.5" weight="bold" />}
-                series="goals"
-                player={topFinisher}
-                value={topFinisher?.goals ?? 0}
-                unit="Goals"
-                teamTotal={teamGoals}
-                secondary={secondaryFor('goals', topFinisher)}
-              />
-              <LeaderCard
-                overline="Top playmaker"
-                icon={<Handshake className="h-3.5 w-3.5" weight="bold" />}
-                series="assists"
-                player={topPlaymaker}
-                value={topPlaymaker?.assists ?? 0}
-                unit="Assists"
-                teamTotal={teamAssists}
-                secondary={secondaryFor('assists', topPlaymaker)}
-              />
-              <TeamCard icon={<Scales className="h-3.5 w-3.5" weight="bold" />} team={teamLine} />
-            </FadeIn>
+            /* The dim goes on a wrapper, never on FadeIn itself: FadeIn's
+               entrance runs with `animation-fill-mode: both`, so the
+               animation keeps ownership of `opacity` after it ends and a
+               transition on the same element never runs -- the card row would
+               snap to 40% and back while every panel below it faded. */
+            <div className="st-swap" data-busy={rangePending && playerLines.length > 0}>
+              <FadeIn className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <LeaderCard
+                  overline="Top finisher"
+                  icon={<Trophy className="h-3.5 w-3.5" weight="bold" />}
+                  series="goals"
+                  player={topFinisher}
+                  value={topFinisher?.goals ?? 0}
+                  unit="Goals"
+                  teamTotal={teamGoals}
+                  secondary={secondaryFor('goals', topFinisher)}
+                />
+                <LeaderCard
+                  overline="Top playmaker"
+                  icon={<Handshake className="h-3.5 w-3.5" weight="bold" />}
+                  series="assists"
+                  player={topPlaymaker}
+                  value={topPlaymaker?.assists ?? 0}
+                  unit="Assists"
+                  teamTotal={teamAssists}
+                  secondary={secondaryFor('assists', topPlaymaker)}
+                />
+                <TeamCard icon={<Scales className="h-3.5 w-3.5" weight="bold" />} team={teamLine} />
+              </FadeIn>
+            </div>
           )}
 
           {/* The leaderboard. Everything it needs is already parsed into
@@ -664,7 +716,7 @@ function PlayerStatsView({
               the same boundary GameRow keeps against `games`. */}
           <PerformanceChart
             players={chartLines}
-            loading={loading}
+            loading={rangePending}
             error={error ? `Error: ${error}` : null}
             emptyLabel={filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No stats available yet'}
           />
@@ -673,7 +725,7 @@ function PlayerStatsView({
               it never sees a game_events row or a filter. */}
           <ChemistryHub
             pairs={chemistryPairs}
-            loading={pairingsLoading}
+            loading={rangePending}
             error={pairingsError ? `Error: ${pairingsError}` : null}
             emptyLabel={filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No assisted goals in this range yet'}
           />
@@ -688,7 +740,7 @@ function PlayerStatsView({
             onSelect={setNetworkSelectedId}
             includeSubs={includeSubsInNetwork}
             onIncludeSubsChange={setIncludeSubsInNetwork}
-            loading={pairingsLoading}
+            loading={rangePending}
             error={pairingsError ? `Error: ${pairingsError}` : null}
             emptyLabel={filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No assisted goals in this range yet'}
           />
@@ -713,7 +765,7 @@ function PlayerStatsView({
       )}
 
       {tab === 'table' && (
-        <RankingsTable players={playerLines} loading={loading} />
+        <RankingsTable players={playerLines} loading={rangePending} />
       )}
     </div>
   )

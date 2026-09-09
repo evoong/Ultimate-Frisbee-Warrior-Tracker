@@ -3,6 +3,8 @@ import { CaretDown, CaretUp, CaretUpDown, Check, Plus, SlidersHorizontal, Trash 
 import { Popover, PopoverContent, PopoverTrigger } from '../../lib/shadcn/popover'
 import { Skeleton } from '../../lib/shadcn/skeleton'
 import { SinglePicker } from './Picker'
+import Swap from './Swap'
+import Segmented, { type SegmentOption } from './Segmented'
 import {
   COLUMN_WIDTHS_KEY, CUSTOM_COLUMNS_KEY, DEFAULT_COLUMNS, HIDDEN_COLUMNS_KEY,
   MIN_PLAYER_COLUMN_WIDTH, MIN_STAT_COLUMN_WIDTH, STAT_LABELS, VISIBLE_STAT_KEYS,
@@ -25,6 +27,21 @@ import './stats-theme.css'
 // back as "no sort" while the table stayed sorted.
 const SORT_NONE = -100
 const SORT_PLAYER = -101
+
+// The formula builder's three choices, as segments. `null` — "no second
+// stat" — has to be a real key to be a real segment, so it travels as this
+// sentinel and is mapped back at the call site.
+const NO_STAT = '__none__'
+const STAT_SEGMENTS: SegmentOption<StatKey>[] =
+  VISIBLE_STAT_KEYS.map(k => ({ key: k, label: STAT_LABELS[k] }))
+const OP_SEGMENTS: SegmentOption<'+' | '-'>[] = [
+  { key: '+', label: '+' },
+  { key: '-', label: '-' },
+]
+const STAT_B_SEGMENTS: SegmentOption<string>[] = [
+  { key: NO_STAT, label: 'None' },
+  ...VISIBLE_STAT_KEYS.map(k => ({ key: k as string, label: STAT_LABELS[k] })),
+]
 
 export default function RankingsTable({ players, loading }: {
   players: PlayerLine[]
@@ -65,6 +82,11 @@ export default function RankingsTable({ players, loading }: {
     [customColumns],
   )
   const visibleColumns = allColumns.filter(c => !hiddenColumnIds.has(c.id))
+
+  // See PerformanceChart: the table stays and dims while the next range
+  // loads. The skeleton is only for a table that has no rows yet.
+  const cold = loading && players.length === 0
+  const busy = loading && players.length > 0
   const widthOf = (id: string) => columnWidths[id] ?? defaultWidthFor(id, allColumns)
 
   const rows = useMemo(() => {
@@ -248,34 +270,28 @@ export default function RankingsTable({ players, loading }: {
               <div className="space-y-2 border-t border-[hsl(var(--st-rule))] pt-2.5">
                 <p className="st-overline px-1">Add a formula column</p>
                 <div className="flex items-center gap-1.5">
-                  <div className="st-seg">
-                    {VISIBLE_STAT_KEYS.map(k => (
-                      <button key={k} type="button" className="st-seg-btn" data-active={newColStatA === k} onClick={() => setNewColStatA(k)}>
-                        {STAT_LABELS[k]}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="st-seg">
-                    {(['+', '-'] as const).map(op => (
-                      <button key={op} type="button" className="st-seg-btn" data-active={newColOp === op} onClick={() => setNewColOp(op)}>
-                        {op}
-                      </button>
-                    ))}
-                  </div>
+                  <Segmented
+                    options={STAT_SEGMENTS}
+                    value={newColStatA}
+                    onChange={setNewColStatA}
+                    ariaLabel="First stat"
+                  />
+                  <Segmented
+                    options={OP_SEGMENTS}
+                    value={newColOp}
+                    onChange={setNewColOp}
+                    ariaLabel="Operator"
+                  />
                 </div>
                 {/* Three segmented controls instead of three <Select>s: with
                     a handful of options apiece, a dropdown hides the whole
                     choice behind a click to save no space at all. */}
-                <div className="st-seg">
-                  <button type="button" className="st-seg-btn" data-active={newColStatB === null} onClick={() => setNewColStatB(null)}>
-                    None
-                  </button>
-                  {VISIBLE_STAT_KEYS.map(k => (
-                    <button key={k} type="button" className="st-seg-btn" data-active={newColStatB === k} onClick={() => setNewColStatB(k)}>
-                      {STAT_LABELS[k]}
-                    </button>
-                  ))}
-                </div>
+                <Segmented
+                  options={STAT_B_SEGMENTS}
+                  value={newColStatB ?? NO_STAT}
+                  onChange={k => setNewColStatB(k === NO_STAT ? null : k as StatKey)}
+                  ariaLabel="Second stat"
+                />
                 <div className="flex items-center gap-1.5">
                   <button
                     type="button"
@@ -300,57 +316,59 @@ export default function RankingsTable({ players, loading }: {
         </Popover>
       </div>
 
-      {loading ? (
-        <div className="space-y-2.5 p-4">
-          {[0, 1, 2, 3, 4, 5].map(i => <Skeleton key={i} className="h-5" />)}
-        </div>
-      ) : players.length === 0 ? (
-        <p className="st-meta p-8 text-center">No players in this range</p>
-      ) : (
-        <div className="st-scroll">
-          <table className="st-table">
-            <thead>
-              <tr>
-                {/* The rank gutter is row position, not a stored rank: sort by
-                    turnovers and "1" has to mean the top of what is on screen,
-                    or the column is lying about the order you just chose. */}
-                <th className="st-th" style={{ width: 34 }}>#</th>
-                <th className="st-th st-th--left relative" style={{ width: widthOf('player_name') }}>
-                  <button type="button" className="st-sort" data-active={sortColumnId === 'player_name'} onClick={() => handleSortClick('player_name')}>
-                    Player
-                    {sortGlyph('player_name')}
-                  </button>
-                  <span className="st-resize" onPointerDown={e => handleResizeStart('player_name', e)} />
-                </th>
-                {visibleColumns.map(col => (
-                  <th key={col.id} className={`st-th relative ${col.color}`} style={{ width: widthOf(col.id) }}>
-                    <button type="button" className="st-sort" data-active={sortColumnId === col.id} onClick={() => handleSortClick(col.id)}>
-                      {sortGlyph(col.id)}
-                      {col.label}
+      <Swap busy={busy}>
+        {cold ? (
+          <div className="space-y-2.5 p-4">
+            {[0, 1, 2, 3, 4, 5].map(i => <Skeleton key={i} className="h-5" />)}
+          </div>
+        ) : players.length === 0 ? (
+          <p className="st-meta p-8 text-center">No players in this range</p>
+        ) : (
+          <div className="st-scroll">
+            <table className="st-table">
+              <thead>
+                <tr>
+                  {/* The rank gutter is row position, not a stored rank: sort by
+                      turnovers and "1" has to mean the top of what is on screen,
+                      or the column is lying about the order you just chose. */}
+                  <th className="st-th" style={{ width: 34 }}>#</th>
+                  <th className="st-th st-th--left relative" style={{ width: widthOf('player_name') }}>
+                    <button type="button" className="st-sort" data-active={sortColumnId === 'player_name'} onClick={() => handleSortClick('player_name')}>
+                      Player
+                      {sortGlyph('player_name')}
                     </button>
-                    <span className="st-resize" onPointerDown={e => handleResizeStart(col.id, e)} />
+                    <span className="st-resize" onPointerDown={e => handleResizeStart('player_name', e)} />
                   </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((p, i) => (
-                <tr key={p.playerId} className="st-tr">
-                  <td className="st-td" style={{ color: 'hsl(var(--st-ink-faint))', fontWeight: 500, fontSize: '0.6875rem' }}>{i + 1}</td>
-                  <td className="st-td st-td--left" style={{ width: widthOf('player_name'), overflow: 'hidden' }}>
-                    <span className="st-name" title={p.name}>{p.name}</span>
-                  </td>
                   {visibleColumns.map(col => (
-                    <td key={col.id} className={`st-td ${col.color}`} style={{ width: widthOf(col.id) }}>
-                      {formatColumnValue(col, getColumnValue(col, p))}
-                    </td>
+                    <th key={col.id} className={`st-th relative ${col.color}`} style={{ width: widthOf(col.id) }}>
+                      <button type="button" className="st-sort" data-active={sortColumnId === col.id} onClick={() => handleSortClick(col.id)}>
+                        {sortGlyph(col.id)}
+                        {col.label}
+                      </button>
+                      <span className="st-resize" onPointerDown={e => handleResizeStart(col.id, e)} />
+                    </th>
                   ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody>
+                {rows.map((p, i) => (
+                  <tr key={p.playerId} className="st-tr">
+                    <td className="st-td" style={{ color: 'hsl(var(--st-ink-faint))', fontWeight: 500, fontSize: '0.6875rem' }}>{i + 1}</td>
+                    <td className="st-td st-td--left" style={{ width: widthOf('player_name'), overflow: 'hidden' }}>
+                      <span className="st-name" title={p.name}>{p.name}</span>
+                    </td>
+                    {visibleColumns.map(col => (
+                      <td key={col.id} className={`st-td ${col.color}`} style={{ width: widthOf(col.id) }}>
+                        {formatColumnValue(col, getColumnValue(col, p))}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Swap>
     </section>
   )
 }

@@ -412,6 +412,95 @@ below are the ones that are specific to a page whose subject is numbers.
 - **Floating layers are the one place a shadow is allowed.** The tooltip and
   the filter popovers have no surface to seam against, so they take
   `--st-lift`. Nothing in the document flow does.
+- **One segmented-control idiom, and it is a fixed-size object**
+  (`components/stats/Segmented.tsx`). It replaced five hand-rolled copies of
+  the same markup -- the scope filter, the assist matrix's web/table, the
+  progression chart's stat, and the rankings formula builder's three groups.
+  Three things about it are load-bearing rather than cosmetic:
+  - **The active segment is one travelling thumb, not a fill on whichever
+    button was clicked.** Same reasoning as the ledger's single rail: a fill
+    that blinks from one segment to another says something changed without
+    saying what moved where.
+  - **Columns are equal (`1fr`) and every button carries a hidden bold copy
+    of its own label** (`.st-seg-btn::after`, `attr(data-label)`, stacked in
+    the same grid cell). Content-width segments whose active one goes to 600
+    weight make the group a couple of pixels wider on every click, and this
+    control sits at the right-hand end of a `justify-between` header, so
+    those pixels push the header around.
+  - **In the page header the group is pinned to 2.125rem**, the height every
+    other control in this system already stands at. At the segments' natural
+    29px the header row grew 5px the moment a picker appeared beside them --
+    which is the tab strip and every panel below it stepping down the page.
+- **The scope filter's picker slot is reserved whether or not a picker is in
+  it** (`.st-scope-slot`, a fixed 11.5rem). All-time needs no picker, Season
+  and Games each need a different one, and the picker inside fills the slot
+  rather than sizing to its label -- "Jam Summer 2026" and "Pick games" are
+  different widths, so a content-sized trigger reintroduces the same shift
+  one level down. An empty reserved slot is invisible; a header that moves
+  when you click a filter is not. Verify by measuring the header's and the
+  segmented control's rects in all three modes, not by eye: they must be
+  identical to the pixel.
+- **Games mode lands on the most recent played game, never on nothing.** With
+  no games selected the fetch effect fires no query at all, so every panel
+  kept showing the *previous* range's numbers under a segment that now said
+  "Games" -- stale data wearing a fresh label. Same reasoning as Season mode
+  reinstating the default season rather than showing all of them.
+- **A panel that already has rows keeps them while the next range loads.**
+  `.st-swap` + `data-busy`: the skeleton is for a *cold* panel, one with
+  nothing to show yet, and every panel computes `cold` / `busy` from whether
+  it currently has data. Swapping ~500px of leaderboard for ~150px of
+  skeleton and back is two full-page reflows per click on the filter, and the
+  second one throws whatever you were reading somewhere else on screen. The
+  dim's `transition-delay` is on the way *in* only (140ms), so a fetch that
+  resolves quickly never dims at all and a fast range change reads as a
+  cross-fade of the numbers; coming back out is immediate.
+- **The whole page commits once per range change, not once per query.** The
+  filter fires two independent round trips -- `player_stats` and assist
+  pairings -- and four panels read one or the other. Publishing each as it
+  landed settled the page *twice* per click: measured, the KPI figures and
+  the leaderboard changed at ~260ms (the leaderboard losing 210px and
+  dragging everything below it up), then chemistry and the assist web changed
+  again at ~480ms and moved another 225px. Two jolts 200ms apart is what
+  makes a page read as parts arriving rather than as a view changing. So
+  `PlayerStatsView` holds the last settled pair in a ref until every query
+  *this tab reads* is back, then commits all of it in one step --
+  `rangePending` is `loading || (tab === 'overview' && pairingsLoading)`,
+  because Me and Player Rankings must not wait on a pairings round trip for a
+  panel that is not on screen. The ref is written during render on purpose:
+  an effect publishes one paint late, which is the flash this removes.
+- **Panel bodies change height through `Swap`, never instantly.** One commit
+  still leaves one height change, and it is a couple of hundred pixels: a
+  leaderboard is 12 rows all-time and 7 in one season. `Swap` measures the
+  inner box with a ResizeObserver and transitions an explicit height on the
+  outer one, so the panel eases to its new size over ~340ms instead of
+  cutting. Three things about it are load-bearing:
+  - **Padding goes on the inner box** (the `className` prop), never the
+    outer -- an explicit height on a padded outer box clips.
+  - **Recharts is unaffected** because its `ResponsiveContainer` measures the
+    explicitly-sized div *inside* the content, which never moves; animating
+    an ancestor does not make it re-measure per frame.
+  - **A width change is treated as a window resize and lands instantly.**
+    Animated, the panel visibly lags a drag. Only a height change at a stable
+    width is a new range arriving.
+  The assist matrix deliberately keeps the plain `.st-swap`: its web is
+  `aspect-ratio: 1`, so its height barely moves, and the web's svg is
+  `overflow: visible` by design -- an `overflow: hidden` ancestor would clip
+  the names that sit outside the ring.
+- **The dim goes on a wrapper, never on a `FadeIn`.** `FadeIn` runs its
+  entrance with `animation-fill-mode: both`, so the animation keeps ownership
+  of `opacity` after it ends and a transition on the same element never runs.
+  Put `.st-swap` on the element itself and the KPI card row snaps to 40% and
+  back in a single frame while every panel below it fades over 180ms --
+  which looks exactly like the bug this whole section exists to fix.
+- **Verify all of this by measuring, and not under `--virtual-time-budget`.**
+  Virtual time runs timers but produces no rendering steps, so `rAF` barely
+  ticks and **ResizeObserver never fires** -- every `Swap` reads as stuck at
+  its old height, which looks like a broken component and is not one. Drive a
+  real headless Chrome over CDP (`--remote-debugging-port`) instead, sample
+  geometry on an interval, and collapse the samples to the frames where
+  something actually moved. One click should produce exactly one frame where
+  the numbers change, followed by a continuous glide -- not two frames of
+  numbers changing.
 - **The filter lives in the page header and its state lives in `Stats()`.**
   It was a titled "Filters" Card with a `<Label>` over a full-width
   `<Select>` -- roughly a third of the first screen spent saying "this
