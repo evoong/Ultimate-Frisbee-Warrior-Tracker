@@ -1,6 +1,8 @@
-import { Disc, Moon, Sun, LogOut, KeyRound, Settings, MessageSquarePlus } from "lucide-react"
+import { NavLink, useLocation } from "react-router-dom"
+import { Disc, Moon, Sun, LogOut, KeyRound, Settings, MessageSquarePlus, ShieldCheck } from "lucide-react"
 import { visibleNavItems, type Tab } from "../lib/nav"
 import type { TeamMembership } from "../lib/authClient"
+import { useAdminRole } from "../lib/adminClient"
 import {
   Sidebar,
   SidebarHeader,
@@ -47,6 +49,8 @@ export default function AppSidebar({
   openPasskeys,
   openFeedback,
 }: AppSidebarProps) {
+  const { role: adminRole } = useAdminRole()
+  const location = useLocation()
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
@@ -92,6 +96,20 @@ export default function AppSidebar({
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
+              {adminRole && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={location.pathname.startsWith("/admin")}
+                    tooltip="Admin"
+                  >
+                    <NavLink to="/admin">
+                      <ShieldCheck />
+                      <span>Admin</span>
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

@@ -55,7 +55,10 @@ export function pathForTab(tab: Tab): string {
 // Real routes that exist in the app but aren't nav tabs, so they must not
 // appear in NAV_ITEMS (that would put them in the sidebar / bottom nav).
 // /teams is the guest public-teams browser (see PublicTeams.tsx / App.tsx).
-const EXTRA_KNOWN_PATHS = ["/teams"]
+// /admin is the role-gated admin console (see AdminLayout.tsx / App.tsx) --
+// without listing it here, the "unrecognized authenticated-tab URL" redirect
+// below would bounce every visit to /admin straight back to /schedule.
+const EXTRA_KNOWN_PATHS = ["/teams", "/admin"]
 
 // Whether pathname falls under one of the app's real tabs (its own path or
 // a sub-path), used to decide whether an unrecognized URL should redirect
