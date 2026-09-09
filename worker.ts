@@ -2,6 +2,8 @@ import { createGateway } from './gateway/index.js'
 import { parseCookies, cookieNames } from './gateway/cookies.js'
 import { verifyAccessToken } from './gateway/jwt.js'
 import { createMembershipLookup } from './gateway/membership.js'
+import { createAdminLookup } from './gateway/admin/adminAuth.js'
+import { handleAdminRequest } from './gateway/admin/index.js'
 import { handleChatRequest, handleChatHistoryRequest, handleChatHistoryDeleteRequest, type ChatConfig } from './gateway/chat.js'
 import { runJamSync, JAM_SYNC_MONITOR_SLUG, JAM_SYNC_MONITOR_CONFIG } from './gateway/jamSync.js'
 import { UfwtMcp } from './gateway/mcpAgent.js'
@@ -63,6 +65,26 @@ async function handleAppRequest(request: Request, env: Env, ctx: ExecutionContex
 
       const gatewayResponse = await gateway(request);
       if (gatewayResponse) return gatewayResponse;
+
+      // Admin console. Outside the gateway because it holds the service-role
+      // key, and before ASSETS.fetch so /api/admin/* is never treated as a
+      // static asset. The lookup is constructed per request, never hoisted to
+      // module scope: its cache is instance-scoped so a long-lived isolate
+      // does not accumulate entries across distinct users.
+      const adminResponse = await handleAdminRequest(
+        {
+          supabaseUrl: env.SUPABASE_URL,
+          supabaseSecretKey: env.SUPABASE_SECRET_KEY,
+          jwksUrl: env.SUPABASE_JWKS_URL,
+        },
+        request,
+        createAdminLookup({
+          supabaseUrl: env.SUPABASE_URL,
+          supabaseSecretKey: env.SUPABASE_SECRET_KEY,
+          onLookupError: (err) => Sentry.captureException(err),
+        })
+      );
+      if (adminResponse) return adminResponse;
 
       // AI chat: needs the service-role key and Gemini, so it lives outside
       // the gateway (which only ever proxies as the caller's own token).
