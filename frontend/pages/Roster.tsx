@@ -223,7 +223,19 @@ export default function Roster() {
   // Empty array means "All Seasons"
   const [seasonFilters, setSeasonFilters] = useState<string[]>([])
   const [assistView, setAssistView] = useState<'list' | 'network'>('list')
-  const [rosterSeasonIds, setRosterSeasonIds] = useState<number[]>([])
+  // null until the season default resolves; [] means "All Seasons". That
+  // third state is what stops the page firing an unfiltered all-players query
+  // on mount and then immediately refiring for the default season -- two
+  // answers to the same question, with the roster visibly reshuffling from one
+  // to the other. Everything below reads activeSeasonIds; only the resolving
+  // effect and the season picker touch the nullable state itself.
+  const [rosterSeasonIds, setRosterSeasonIds] = useState<number[] | null>(null)
+  const activeSeasonIds = rosterSeasonIds ?? []
+  // The default season is applied exactly once. "Nothing is selected yet" is
+  // not a usable guard: it is equally true the moment someone deliberately
+  // picks All Seasons, so any later refetch of seasons would drag them back
+  // into a season.
+  const seasonDefaultApplied = useRef(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
 
@@ -276,14 +288,18 @@ export default function Roster() {
   useEffect(() => {
     const s = seasonsWithGames as { id: number }[] | undefined
     const allS = allSeasons as Season[] | undefined
-    if (!s || s.length === 0 || !allS || allS.length === 0 || rosterSeasonIds.length > 0) return
-    const defaultId = getDefaultJamSeasonId(allS, s[0]!.id)
-    setRosterSeasonIds([defaultId])
+    if (!s || !allS || seasonDefaultApplied.current) return
+    seasonDefaultApplied.current = true
+    // Both queries have answered by here. A team with no seasons at all
+    // resolves to All Seasons rather than staying null, or the roster would
+    // sit on skeletons waiting for a default that is never coming.
+    if (s.length === 0 || allS.length === 0) { setRosterSeasonIds([]); return }
+    setRosterSeasonIds([getDefaultJamSeasonId(allS, s[0]!.id)])
   }, [seasonsWithGames, allSeasons])
 
   useEffect(() => {
-    if (currentTeamId == null) return
-    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
+    if (currentTeamId == null || rosterSeasonIds === null) return
+    fetchPlayers({ seasonIds: activeSeasonIds.length > 0 ? activeSeasonIds : undefined, organizationId: currentTeamId })
   }, [rosterSeasonIds, currentTeamId])
 
   useEffect(() => {
@@ -412,7 +428,7 @@ export default function Roster() {
       // fetchPlayerPrivate's refetch will update that map on its own.
       setSelectedPlayer({ ...selectedPlayer, ...updated })
       track('player_updated', { player_id: selectedPlayer.id })
-      fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
+      fetchPlayers({ seasonIds: activeSeasonIds.length > 0 ? activeSeasonIds : undefined, organizationId: currentTeamId })
       if (currentTeamId != null) fetchPlayerPrivate({ teamId: currentTeamId })
       // Keep the form open when the phone save failed, so the error banner
       // rendered next to the Phone field (bound to upsertPlayerPrivate's
@@ -437,7 +453,7 @@ export default function Roster() {
     await updatePlayerSeasons({ playerId: selectedPlayer.id, seasonIds: selectedSeasonIds, subsBySeasonId: selectedSeasonSubs, organizationId: currentTeamId })
     track('player_seasons_updated', { player_id: selectedPlayer.id, season_count: selectedSeasonIds.length })
     await fetchPlayerSeasons({ playerId: selectedPlayer.id })
-    const refreshed = await fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
+    const refreshed = await fetchPlayers({ seasonIds: activeSeasonIds.length > 0 ? activeSeasonIds : undefined, organizationId: currentTeamId })
     // fetchPlayers' own return value is the raw `players` row -- no phone
     // field at all (that column no longer exists there). Not a problem:
     // the detail view derives phone from phoneByPlayerId at render time
@@ -453,7 +469,7 @@ export default function Roster() {
     track('player_deleted', { player_id: selectedPlayer.id })
     setDeleteConfirm(false)
     handleBack()
-    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
+    fetchPlayers({ seasonIds: activeSeasonIds.length > 0 ? activeSeasonIds : undefined, organizationId: currentTeamId })
   }
 
   const handlePositionChange = async (player: Player, position: string) => {
@@ -461,7 +477,7 @@ export default function Roster() {
     setSelectedPlayer({ ...player, position: newPos })
     await updatePosition({ playerId: player.id, position: newPos })
     track('player_role_updated', { player_id: player.id, position: newPos })
-    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
+    fetchPlayers({ seasonIds: activeSeasonIds.length > 0 ? activeSeasonIds : undefined, organizationId: currentTeamId })
   }
 
   const handlePhotoClick = () => fileInputRef.current?.click()
@@ -475,7 +491,7 @@ export default function Roster() {
       const updated = { ...selectedPlayer, photo_url: result.photo_url }
       setSelectedPlayer(updated)
       track('player_photo_uploaded', { player_id: selectedPlayer.id })
-      fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
+      fetchPlayers({ seasonIds: activeSeasonIds.length > 0 ? activeSeasonIds : undefined, organizationId: currentTeamId })
     } else setUploadError('Upload failed. Please try again.')
     e.target.value = ''
   }
@@ -518,7 +534,7 @@ export default function Roster() {
   }
 
   const handleOpenManageRoster = () => {
-    setManageSeasonId(rosterSeasonIds.length === 1 ? rosterSeasonIds[0]! : (allSeasonsArr[0]?.id ?? null))
+    setManageSeasonId(activeSeasonIds.length === 1 ? activeSeasonIds[0]! : (allSeasonsArr[0]?.id ?? null))
     setManageSearch('')
     setShowCreateForm(false)
     setShowManageRoster(true)
@@ -568,8 +584,8 @@ export default function Roster() {
     setManageSaving(false)
     setShowManageRoster(false)
     fetchAllOrgPlayers({ organizationId: currentTeamId })
-    if (rosterSeasonIds.length === 0 || rosterSeasonIds.includes(manageSeasonId)) {
-      fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
+    if (activeSeasonIds.length === 0 || activeSeasonIds.includes(manageSeasonId)) {
+      fetchPlayers({ seasonIds: activeSeasonIds.length > 0 ? activeSeasonIds : undefined, organizationId: currentTeamId })
     }
   }
 
@@ -1139,9 +1155,12 @@ export default function Roster() {
   }
 
   // ── Roster List View ──────────────────────────────────────────────────────────
-  // Show skeleton player cards until the first players fetch resolves. Gating on
-  // players === undefined keeps skeletons out of later refetches once we have data.
-  if (loading && players === undefined) {
+  // Show skeleton player cards until the first players fetch resolves --
+  // including the window before it fires at all, while the season default is
+  // still resolving, so the list appears once, already in its final order.
+  // Gating on players === undefined keeps skeletons out of later refetches.
+  const awaitingSeasonDefault = currentTeamId != null && rosterSeasonIds === null
+  if (players === undefined && (loading || awaitingSeasonDefault)) {
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-between">
@@ -1202,7 +1221,7 @@ export default function Roster() {
       {/* Season filter */}
       <SeasonMultiSelect
         seasons={allSeasonsArr}
-        selectedIds={rosterSeasonIds}
+        selectedIds={activeSeasonIds}
         onChange={setRosterSeasonIds}
         placeholder="All Seasons"
         onCreateNew={() => setShowCreateSeason(true)}
