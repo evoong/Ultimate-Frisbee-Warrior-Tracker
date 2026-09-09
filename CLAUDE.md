@@ -360,13 +360,14 @@ below are the ones that are specific to a page whose subject is numbers.
   (the Me tab, the Roster summary) size for three, and a leader card's strip
   is still two cells -- the second falls back to a neutral G+A, because the
   strip is two columns at every width by design.
-- **The accent is spent on exactly two things: the active tab's rail and the
-  checked state in a filter popover.** Not on the leader's crest -- "top
-  scorer" is a fact about the data, not a state, and a ring there was
-  decoration. Not on the active filter segment either: a filter says which
-  slice you are looking at, the accent says where you are in the app, and
-  spending it on both leaves them wearing one colour in one header. The
-  active segment is a raised neutral surface instead.
+- **The accent is spent on state and nothing else: the active tab's rail, the
+  checked state in a filter popover, and the one thing you are looking at**
+  -- the progression chart's focused line, the assist web's focused node.
+  Not on the leader's crest -- "top scorer" is a fact about the data, not a
+  state, and a ring there was decoration. Not on the active filter segment
+  either: a filter says which slice you are looking at, the accent says where
+  you are in the app, and spending it on both leaves them wearing one colour
+  in one header. The active segment is a raised neutral surface instead.
 - **A card binds one series and everything inside reads it.** `--st-series`
   is set once by `.st-goals` on the card; the figure, the overline's glyph,
   the chip and the meter fill all resolve from it, so a card cannot end up
@@ -432,29 +433,84 @@ these:
   own trigger styling and their own lucide chevrons. `PlayerMultiSelect` was
   deleted with its last caller; `SeasonMultiSelect` stays because Schedule and
   Roster still use it. Add a fourth dropdown here and it goes through Picker.
-- **The circular assist graph is gone and should not come back.** It was two
-  320px rings -- every player on the circumference, every pairing a curved
-  line across the middle with a count floating on it -- and at a real roster
-  size that is a hairball: the lines cross each other and the labels, and the
-  node positions carried no information at all (they came out of a greedy
-  farthest-point placement whose only job was stopping the busiest nodes from
-  overlapping). The only question it could answer was the one you got by
-  tapping a node to dim everything else, and that question -- "who does this
-  player connect with" -- is a list. `spreadOrder`, `circleLayout`,
-  `mergeBidirectionalEdges` and `DirectedNetworkGraph` went with it, ~225
-  lines.
-- **The two rings were also the same data twice.** "Assists" and "Goals" drew
-  identical edges and differed only in which end of an edge counted as the
-  selected player's own. That is what the matrix's two columns are, which is
-  why they take *different* series colours: "assisted by" counts goals the
-  selected player scored (green), "assisted to" counts assists they threw
-  (violet). One shared "connection" colour would lose that.
+- **The assist matrix has two views of one data set -- a web and a table --
+  and the web is the default** (`components/stats/AssistWeb.tsx`, chosen with
+  a segmented control in the panel head, remembered per device in
+  localStorage). The web is the ring this page used to have and lost: every
+  connected player on the circumference, every assist a curved line between
+  two of them. It was removed for being a hairball, and it is back only
+  because the three things that made it one are fixed. Undo any of them and
+  it is a hairball again:
+  - **Focus + dim, exactly as the progression chart does it.** One player is
+    always focused -- the same selection the picker and the table's columns
+    read -- their lines are drawn at full strength and every other line drops
+    to `--st-ink / 0.13`. Every edge at full strength in one colour is what
+    made a real roster's worth of lines unreadable.
+  - **Direction is colour, so one ring says what two used to.** A line into
+    the focused player is `--st-goals`, a line out of them is `--st-assists`
+    -- the same two series the table's two columns take, so the two views are
+    one statement in one palette. It is also why A->B and B->A stay two
+    separate lines: they are two different facts about the focused player.
+    The old graph had to merge them into a single line with a combined count
+    precisely because both were drawn in the same colour.
+  - **Only the focused player's lines carry a count, and only their partners
+    carry a name.** All a dimmed line has to say is "this pairing exists". A
+    count bubble on every line and a name on every node was the other half of
+    what made the picture unreadable.
+  - **A count bubble goes out near its partner's end of the line, never at
+    the midpoint.** Every lit line meets the focused player, so the midpoint
+    is the one place they cannot go: a dozen lines converge there and the
+    bubbles land on one small arc, overlapping each other and the hub. Out at
+    the partner's end the lines have fanned apart, and a number beside a face
+    answers "whose is this" without the eye tracing a curve back. `BUBBLE_T`
+    is that preference list and the placement is greedy -- busiest line first,
+    each taking the first candidate clear of every node disc and every bubble
+    already down, falling back to the roomiest candidate rather than to the
+    midpoint. Verify it by measuring the rendered circles against each other
+    and against the node discs, not by eye.
+  - **The svg paints in three passes -- every line, then every arrowhead,
+    then every count.** One group per edge instead and a line crossing an
+    earlier edge is painted straight through that edge's bubble, so whether a
+    number is legible depends on which pairing came first out of the query.
+  The two curves of a pair separate *because the perpendicular flips with the
+  line's direction*, so the offset is taken on the same side every time.
+  Choosing a side by id order -- the obvious thing to reach for -- cancels
+  that flip out and lays the two lines exactly on top of each other, which
+  reads as one connection. Node positions still carry no information: they
+  come out of the same greedy farthest-point placement (`spreadOrder`), whose
+  only job is keeping the busiest nodes from clustering. Node *size* is
+  degree, and the radius scales down as the ring fills rather than the roster
+  being capped -- a cap silently drops somebody's connections off the
+  picture.
+- **The web's type is in svg user units, so it scales with the picture.** The
+  ring renders ~480px wide in a desktop panel and ~300px on a phone, which
+  takes a 9.5-unit name down to 7.5 real pixels; the `max-width: 640px` block
+  is the same type at the same rendered size, not bigger type. The svg is
+  deliberately `overflow: visible` -- a name sits outside the ring with only
+  the viewBox margin behind it -- and `fitLabel()` caps a label at 12
+  characters, so a long first name spills into the wrapper's padding instead
+  of over the panel's border. Verify a narrow layout by measuring
+  (`scrollWidth === clientWidth`, and the label rects against the svg's), not
+  by screenshot: Chrome will not lay out below ~500px on macOS, and the media
+  query keys off the *viewport*, so a 360px probe div in a 900px window is
+  silently testing the desktop sizes.
+- **The two views are the same data twice, and the colours say so.** The page
+  used to draw two rings, "Assists" and "Goals", over identical edges,
+  differing only in which end of an edge counted as the selected player's
+  own. That difference is now the table's two columns and the web's two line
+  colours: "assisted by" counts goals the selected player scored (green),
+  "assisted to" counts assists they threw (violet). One shared "connection"
+  colour would lose that.
 - **A meter gets its own fixed track (`.st-track`), never the flexible cell.**
   Inside the name cell it stretches to whatever the panel is wide -- 740px on
   the chemistry list, at which point it reads as a loading bar rather than as
   a comparison -- and because the name cell is the row's only `1fr` it also
   strands the count 700px from the name it belongs to. Same reasoning as the
   ledger's fixed verdict track; verify it the same way, by measuring.
+- **"Lethal" belongs to the count, not to row 1.** Three pairings on 3 are
+  three lethal pairings; badging whichever of them the sort happened to put
+  first says the other two are something lesser. The badge goes to every pair
+  whose count equals the maximum, once that maximum clears `LETHAL_MIN`.
 - **The chemistry row drops its meter below `sm` (`.st-track--optional`).** It
   carries two names where every other row carries one, so it runs out of width
   first: at 360px each name was being shrunk to ~31px, which ellipsises

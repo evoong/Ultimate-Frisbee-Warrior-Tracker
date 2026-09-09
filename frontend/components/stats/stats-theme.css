@@ -889,6 +889,107 @@ textarea.st-field {
   background: hsl(var(--st-series, var(--st-ink-mid)));
 }
 
+/* ── Assist web ─────────────────────────────────────────────────────────
+   The ring view of the assist matrix. Same three colour families as the
+   rest of the page: the two series colours carry direction (violet out of
+   the focused player, green into them), the accent marks the focused node
+   -- which is state, the same use the progression chart's focused line
+   makes of it -- and everything else is the neutral ramp at low alpha.
+
+   The svg deliberately overflows its box. A name sits outside its node, so
+   the ring's own margin is the only thing between a long label and the
+   viewBox edge; the wrapper's padding is the slack that keeps "Marisol O."
+   from being clipped mid-letter at narrow widths. */
+.st-web {
+  padding: 0.5rem 0.75rem 0.875rem;
+}
+
+.st-web-svg {
+  display: block;
+  width: 100%;
+  max-width: 30rem;
+  margin: 0 auto;
+  aspect-ratio: 1;
+  overflow: visible;
+  touch-action: manipulation;
+}
+
+/* Nodes are the only interactive thing in the picture, so they take the
+   pointer and the keyboard; the lines are decoration over the top of a
+   selection that already lives in the panel's picker. */
+.st-web-node {
+  cursor: pointer;
+  transition: opacity 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.st-web-node:hover { opacity: 0.82; }
+.st-web-node:focus-visible {
+  outline: 2px solid hsl(var(--st-accent));
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.st-web-edge { transition: opacity 200ms cubic-bezier(0.22, 1, 0.36, 1); }
+
+/* Every number on this page is Geist Mono; a count floating on a line is
+   still a number. Names are Geist, for the same reason .st-name sets its
+   own family rather than inheriting the table's mono. */
+.st-web-count,
+.st-web-mono {
+  font-family: var(--st-mono);
+  font-size: 8px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.st-web-mono { font-size: 8.5px; letter-spacing: 0.02em; }
+
+.st-web-label {
+  font-family: var(--st-sans);
+  font-size: 9.5px;
+  font-weight: 560;
+  letter-spacing: -0.01em;
+}
+
+/* Type inside an svg is in user units, so it scales with the picture: the
+   ring renders at ~480px on a desktop panel and at ~300px on a 360px phone,
+   which takes a 9.5-unit name down to 7.5 real pixels. These sizes are the
+   same type at the same rendered size, not bigger type -- the picture is
+   what got smaller. They cost ring margin, which is why they stay at the
+   floor: for reading exact numbers on a phone the Table view is one tap
+   away, and this view is about the shape of the connections. */
+@media (max-width: 640px) {
+  .st-web-count { font-size: 9.5px; }
+  .st-web-mono { font-size: 10.5px; }
+  .st-web-label { font-size: 12px; }
+}
+
+/* The key, not a legend: these swatches are not buttons and toggle nothing
+   -- the picker is what changes what the web shows. */
+.st-web-key {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem 0.875rem;
+  padding: 0.5rem 0.1875rem 0;
+  font-family: var(--st-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: hsl(var(--st-ink-mid));
+}
+.st-web-key > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+.st-web-swatch {
+  width: 0.625rem;
+  height: 0.125rem;
+  border-radius: 1px;
+  background: hsl(var(--st-series, var(--st-ink-faint)));
+}
+.st-web-hint { margin-left: auto; color: hsl(var(--st-ink-faint)); }
+
 /* Recharts paints its own focus/active outlines on every <Bar>; without
    this a click leaves a stock blue-black rectangle behind the bar. */
 .stats-scope .recharts-wrapper:focus,
@@ -901,6 +1002,8 @@ textarea.st-field {
   .st-seg-btn,
   .st-tab,
   .st-legend,
+  .st-web-node,
+  .st-web-edge,
   .st-link,
   .st-option,
   .st-meter-fill {

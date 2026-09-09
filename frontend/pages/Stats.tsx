@@ -678,8 +678,9 @@ function PlayerStatsView({
             emptyLabel={filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No assisted goals in this range yet'}
           />
 
-          {/* One player's connections, both directions. Replaces the two
-              circular graphs, which drew these same edges twice. */}
+          {/* One player's connections, both directions -- as a web of the
+              whole roster (default) or as two ranked lists. It takes joined
+              edges and a selection and nothing else. */}
           <AssistMatrix
             players={matrixPlayers}
             edges={matrixEdges}
