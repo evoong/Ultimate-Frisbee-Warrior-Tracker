@@ -49,7 +49,7 @@ export async function handleAdminRead(
   }
 
   if (head === 'audit') {
-    const limit = Math.min(Number(url.searchParams.get('limit') ?? 50) || 50, AUDIT_PAGE_MAX)
+    const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 50) || 50, 1), AUDIT_PAGE_MAX)
     // Keyset pagination on the identity primary key: the log is append-only,
     // so an id cursor is stable in a way an offset is not.
     const cursor = url.searchParams.get('cursor')

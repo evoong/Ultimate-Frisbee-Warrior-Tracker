@@ -1,5 +1,5 @@
 begin;
-select plan(8);
+select plan(10);
 
 select has_function('public', 'admin_search', array['text'], 'admin_search exists');
 select has_function('public', 'admin_user_detail', array['uuid'], 'admin_user_detail exists');
@@ -8,6 +8,16 @@ select has_function('public', 'admin_org_detail', array['bigint'], 'admin_org_de
 select ok(
   not has_function_privilege('authenticated', 'public.admin_search(text)', 'EXECUTE'),
   'authenticated cannot execute admin_search'
+);
+
+select ok(
+  not has_function_privilege('authenticated', 'public.admin_user_detail(uuid)', 'EXECUTE'),
+  'authenticated cannot execute admin_user_detail'
+);
+
+select ok(
+  not has_function_privilege('authenticated', 'public.admin_org_detail(bigint)', 'EXECUTE'),
+  'authenticated cannot execute admin_org_detail'
 );
 
 -- Search reaches organizations by name.
@@ -19,7 +29,7 @@ select ok(
 -- Search reaches auth.users by email, which plain REST cannot do at all.
 select ok(
   (select jsonb_array_length(public.admin_search(
-     split_part((select email from auth.users limit 1), '@', 1)) -> 'users')) >= 1,
+     split_part((select email from auth.users where email is not null order by email limit 1), '@', 1)) -> 'users')) >= 1,
   'admin_search finds a real user by an email fragment'
 );
 
