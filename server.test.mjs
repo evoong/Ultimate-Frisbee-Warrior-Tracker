@@ -3,6 +3,21 @@ import { createClient } from "@supabase/supabase-js";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 
+// This file does destructive CRUD cycles (section 4 below) against whatever
+// SUPABASE_URL points at. The root .env points at PRODUCTION (see
+// CLAUDE.md), so without this check a plain `npm test` silently runs
+// insert/update/delete cycles against the live database -- which is exactly
+// how a real player row got hard-deleted on 2026-09-04. Fail closed instead.
+const supabaseUrl = process.env.SUPABASE_URL ?? "";
+if (!/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?/.test(supabaseUrl)) {
+  console.error(
+    `✗ SUPABASE_URL (${supabaseUrl || "<unset>"}) is not a local Supabase instance.\n` +
+    `  server.test.mjs performs destructive CRUD cycles and must never run against production.\n` +
+    `  Use the local stack instead: npm run db:start, then point SUPABASE_URL at its local URL (see \`supabase status\`).`
+  );
+  process.exit(1);
+}
+
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SECRET_KEY
