@@ -50,6 +50,7 @@ the specific hole that let a test run reach production in the first place.
 | Cascade coverage | Automatic, via per-row triggers | Postgres fires `BEFORE DELETE` row triggers on cascade-deleted rows too, so attaching the trigger to every table covers cascades for free — no special-casing needed. |
 | Archive access | Service-role only, RLS enabled with zero policies | Archived jsonb can contain data from tables like `player_private`; this must not be reachable by `anon`/`authenticated`. |
 | Restore mechanism | `restore_deleted_row(archive_id)`, service-role only | Recovery is a deliberate admin action taken after an incident, not an app-facing "undo" — see Non-goals. |
+| Archive mutability | Append-only — `update`/`delete`/`truncate` rejected by trigger, for every role including `service_role` | RLS's zero-policies block stops `anon`/`authenticated` but does nothing against `service_role`, which bypasses RLS entirely — and `service_role` is exactly the role that caused the original incident. A trigger fires regardless of role, so this is the only thing that actually protects the archive from a repeat of the same failure mode. |
 | Root-cause guard | `server.test.mjs` refuses to run unless `SUPABASE_URL` looks like the local stack | Cheapest possible fix for the actual mechanism that caused this incident; independent of the archive but shipped in the same pass since it directly prevents a repeat. |
 
 ## Archive mechanism
@@ -102,6 +103,15 @@ Granted to `service_role` only; revoked from `public`/`anon`/`authenticated`.
 Restoring re-creates the row with its original `id` and all original column
 values (including original `created_at`/`created_by`) — this is a literal
 undo, not a fresh insert that happens to look similar.
+
+**Append-only enforcement:** a second trigger (`reject_archive_mutation()`,
+`before update or delete ... for each row` plus `before truncate ... for each
+statement`) unconditionally raises on any `UPDATE`/`DELETE`/`TRUNCATE`
+against `deleted_rows_archive` itself, for every role — including
+`service_role`. This is deliberately not RLS-based: RLS is bypassed by
+`service_role`, which is exactly the role that caused the original incident,
+so only a trigger (which fires regardless of role) actually closes this
+hole.
 
 **Known limitation:** if a restored row's original `id` has since been
 reused by a new row (e.g. the identity sequence advanced and a later insert
