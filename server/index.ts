@@ -11,6 +11,9 @@ import type { Content } from "@google/genai";
 import { PostHog } from "posthog-node";
 import { createGateway } from "../gateway/index.js";
 import { nodeAdapter } from "../gateway/node-adapter.js";
+import { createAdminLookup } from "../gateway/admin/adminAuth.js";
+import { handleAdminRequest, isAdminPath } from "../gateway/admin/index.js";
+import { createNodeAdapter } from "../gateway/node-adapter.js";
 import { getVaultSecret } from "../gateway/secrets.js";
 import { runJamSync, JAM_SYNC_MONITOR_SLUG, JAM_SYNC_MONITOR_CONFIG } from "../gateway/jamSync.js";
 import { CHAT_FUNCTION_DECLARATIONS, WRITE_FUNCTIONS, callChatFunction, type ActionsConfig } from "../gateway/gameActions.js";
@@ -42,6 +45,32 @@ const gatewayConfig = {
 // request bodies stream through to Supabase untouched. No CORS middleware:
 // everything is same-origin (Vite proxy in dev, single host in prod).
 app.use(nodeAdapter(createGateway(gatewayConfig)));
+
+// Admin console, mounted before express.json() so the handler reads its own
+// request body from the web Request it is handed. Module-scoped lookup for the
+// same documented reason as `membership` below: Express has no per-request
+// isolate boundary, so a module-scoped cache is bounded by distinct users
+// rather than by request volume, with staleness capped by the 30s TTL.
+const adminLookup = createAdminLookup({
+  supabaseUrl: process.env.SUPABASE_URL,
+  supabaseSecretKey: process.env.SUPABASE_SECRET_KEY,
+  onLookupError: (err) => Sentry.captureException(err),
+});
+app.use(
+  createNodeAdapter(
+    (request) =>
+      handleAdminRequest(
+        {
+          supabaseUrl: process.env.SUPABASE_URL,
+          supabaseSecretKey: process.env.SUPABASE_SECRET_KEY,
+          jwksUrl: process.env.SUPABASE_JWKS_URL,
+        },
+        request,
+        adminLookup
+      ),
+    isAdminPath
+  )
+);
 app.use(express.json());
 
 // Vercel serverless filesystem is read-only except /tmp; use /tmp/uploads there

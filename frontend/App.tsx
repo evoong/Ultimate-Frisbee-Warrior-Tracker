@@ -10,6 +10,15 @@ const Login = lazy(() => import('./pages/Login'))
 const ResetPassword = lazy(() => import('./pages/ResetPassword'))
 const CreateOrganization = lazy(() => import('./pages/CreateOrganization'))
 const PublicTeams = lazy(() => import('./pages/PublicTeams'))
+// Lazy so the admin bundle is not shipped to the overwhelming majority of
+// users who will never open it. This is a bundle-size and blast-radius
+// measure, NOT a security boundary -- enforcement is server-side on every
+// /api/admin/* request.
+const AdminLayout = lazy(() => import('./pages/admin/AdminLayout'))
+const AdminSearch = lazy(() => import('./pages/admin/Search'))
+const AdminUserDetail = lazy(() => import('./pages/admin/UserDetail'))
+const AdminOrgDetail = lazy(() => import('./pages/admin/OrgDetail'))
+const AdminAuditLog = lazy(() => import('./pages/admin/AuditLog'))
 import { useAuth } from './contexts/AuthContext'
 import { Moon, Sun, Loader2, LogOut, KeyRound, Settings, MessageSquarePlus } from 'lucide-react'
 import { NAV_ITEMS, visibleNavItems, tabForPath, pathForTab, isKnownPath, type Tab } from './lib/nav'
@@ -240,6 +249,21 @@ export default function App() {
         {!isGuest && <Route path="/plays" element={<Strategy />} />}
         {!isGuest && <Route path="/plays/:playId" element={<Strategy />} />}
         {!isGuest && <Route path="/ai" element={<Chat />} />}
+        {!isGuest && (
+          <Route
+            path="/admin"
+            element={
+              <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading…</div>}>
+                <AdminLayout />
+              </Suspense>
+            }
+          >
+            <Route index element={<AdminSearch />} />
+            <Route path="user/:userId" element={<AdminUserDetail />} />
+            <Route path="org/:orgId" element={<AdminOrgDetail />} />
+            <Route path="audit" element={<AdminAuditLog />} />
+          </Route>
+        )}
       </Routes>
     </Suspense>
   )

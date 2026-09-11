@@ -9,22 +9,35 @@ function isGatewayOwnedPath(path: string): boolean {
   return path === '/auth' || path.startsWith('/auth/') || path === '/db' || path.startsWith('/db/')
 }
 
-// Express/Node middleware wrapper around the web-standard gateway.
-// Mount BEFORE body parsers so /db request bodies pass through untouched.
-export function nodeAdapter(gateway: Gateway) {
+// Generalized so a second web-standard handler (the admin console, which
+// holds the service-role key and therefore cannot live inside the gateway)
+// can be mounted the same way. The isOwned predicate is a parameter for the
+// same reason the drain below is conditional: draining the body for a path
+// this handler does not own leaves nothing for Express's body parser and
+// throws "stream is not readable".
+export function createNodeAdapter(
+  handler: (request: Request) => Promise<Response | null>,
+  isOwned: (path: string) => boolean
+) {
   return async (req: IncomingMessage, res: ServerResponse, next: (err?: unknown) => void) => {
     try {
       const path = new URL(req.url ?? '/', 'http://localhost').pathname
-      if (!isGatewayOwnedPath(path)) return next()
+      if (!isOwned(path)) return next()
 
       const request = await toWebRequest(req)
-      const response = await gateway(request)
+      const response = await handler(request)
       if (!response) return next()
       await writeWebResponse(response, res)
     } catch (err) {
       next(err)
     }
   }
+}
+
+// Express/Node middleware wrapper around the web-standard gateway.
+// Mount BEFORE body parsers so /db request bodies pass through untouched.
+export function nodeAdapter(gateway: Gateway) {
+  return createNodeAdapter(gateway, isGatewayOwnedPath)
 }
 
 async function toWebRequest(req: IncomingMessage): Promise<Request> {
