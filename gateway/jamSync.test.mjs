@@ -8,24 +8,31 @@ function check(name, cond) {
 
 // runJamSync runs under the service-role key, so the team filter is the only
 // thing standing between a caller and every team's data. These tests intercept
-// global fetch and assert on the URLs it actually builds.
+// global fetch: some assert on the URLs it builds, others drive per-call
+// responses (by URL, Range header, and attempt) to exercise retry and paging.
 const CONFIG = { supabaseUrl: 'http://stub.invalid', supabaseSecretKey: 'stub' }
 
-async function urlsFor(options) {
-  const urls = []
+const ok = (body) => ({ ok: true, status: 200, text: async () => (body == null ? '' : JSON.stringify(body)) })
+const fail = (status) => ({ ok: false, status, text: async () => 'boom' })
+
+async function runWith(handler, options) {
+  const calls = []
   const realFetch = globalThis.fetch
-  globalThis.fetch = async (url) => {
-    urls.push(String(url))
-    return { ok: true, status: 200, json: async () => [], text: async () => '' }
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init })
+    return handler(String(url), init)
   }
   try {
-    const result = await (options === undefined
-      ? runJamSync(CONFIG)
-      : runJamSync(CONFIG, options))
-    return { urls, result }
+    const result = await (options === undefined ? runJamSync(CONFIG) : runJamSync(CONFIG, options))
+    return { calls, result }
   } finally {
     globalThis.fetch = realFetch
   }
+}
+
+async function urlsFor(options) {
+  const { calls, result } = await runWith(() => ok([]), options)
+  return { urls: calls.map((c) => c.url), result }
 }
 
 // --- the fail-open case: an empty allow-list must grant nothing ---
@@ -78,6 +85,70 @@ check('no injected text reaches the query string',
 // unfiltered query has no filter in it either. Assert no request is made.
 const allJunk = await urlsFor({ teamIds: ['nope'] })
 check('all-invalid ids sync nothing rather than everything', allJunk.urls.length === 0)
+
+// --- retry + paging: a transient blip must not abort the whole run ---
+//
+// The reads run in one Promise.all, so before retries a single 504 on any of
+// them dropped the day's sync for every team.
+
+// A 504 on a read is retried and the run recovers.
+let gamesHits = 0
+const retried = await runWith((url) => {
+  if (!url.includes('/games')) return ok([])
+  gamesHits++
+  return gamesHits === 1 ? fail(504) : ok([])
+})
+check('a 504 on a read is retried, not fatal', gamesHits === 2)
+check('the run recovers from a transient 504', retried.result.errors.length === 0)
+
+// A network-level failure (no response at all) is retried too.
+let seasonHits = 0
+const netRetried = await runWith((url) => {
+  if (!url.includes('/seasons')) return ok([])
+  seasonHits++
+  if (seasonHits === 1) throw new Error('ECONNRESET')
+  return ok([])
+})
+check('a network error is retried', seasonHits === 2)
+check('the run recovers from a network error', netRetried.result.errors.length === 0)
+
+// A 4xx is a real error, not a transient one: no retry, and it aborts.
+let badHits = 0
+let aborted = false
+try {
+  await runWith((url) => {
+    if (!url.includes('/games')) return ok([])
+    badHits++
+    return fail(400)
+  })
+} catch {
+  aborted = true
+}
+check('a 4xx is not retried', badHits === 1)
+check('a 4xx aborts the run rather than looping', aborted)
+
+// The unbounded games read is paged: a full page asks for the next range.
+const fullPage = Array.from({ length: 1000 }, (_, i) => ({ id: i }))
+const ranges = []
+await runWith((url, init) => {
+  if (!url.includes('/games')) return ok([])
+  const range = init?.headers?.Range
+  ranges.push(range)
+  return ok(range === '0-999' ? fullPage : [{ id: 1000 }])
+})
+check('a full page triggers a second range request', ranges.length === 2)
+check('paging walks successive ranges', ranges[0] === '0-999' && ranges[1] === '1000-1999')
+
+// When the total is an exact multiple of the page size, the trailing range
+// answers 416 — that is "no next page", not an error.
+let exactHits = 0
+const exact = await runWith((url) => {
+  if (!url.includes('/games')) return ok([])
+  exactHits++
+  return exactHits === 1 ? ok(fullPage) : fail(416)
+})
+check('a 416 on the trailing page stops paging instead of throwing',
+  exactHits === 2 && exact.result.errors.length === 0)
 
 console.log(failed === 0 ? '\nall jamSync checks passed' : `\n${failed} FAILED`)
 process.exit(failed === 0 ? 0 : 1)
