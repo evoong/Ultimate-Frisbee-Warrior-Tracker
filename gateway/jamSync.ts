@@ -153,24 +153,92 @@ function parseJamCalendar(icsText: string): JamEvent[] {
   return events
 }
 
-async function supabaseFetch(config: JamSyncConfig, path: string, init?: RequestInit): Promise<any> {
-  const res = await fetch(`${config.supabaseUrl}/rest/v1${path}`, {
-    ...init,
-    headers: {
-      apikey: config.supabaseSecretKey,
-      Authorization: `Bearer ${config.supabaseSecretKey}`,
-      'Content-Type': 'application/json',
-      ...(init?.headers as Record<string, string> | undefined),
-    },
-  })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`Supabase request failed (${res.status}) ${path}: ${text}`)
+// A transient gateway blip must cost one retry, not the whole day's sync.
+// The top-level reads run in one Promise.all, so a single un-retried throw
+// aborts the run for every team at both cron call sites. Retry 5xx responses
+// and network failures with exponential backoff; 4xx is a real request error
+// and retrying it just repeats the same failure.
+const MAX_ATTEMPTS = 3
+const RETRY_BASE_MS = 300
+
+class SupabaseHttpError extends Error {
+  constructor(public status: number, message: string) {
+    super(message)
   }
-  // Prefer: return=minimal (used on writes) responds 200/201/204 with an
-  // empty body — only parse JSON when there's actually content to parse.
-  const text = await res.text()
-  return text ? JSON.parse(text) : null
+}
+
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+async function supabaseFetch(config: JamSyncConfig, path: string, init?: RequestInit): Promise<any> {
+  let lastError: Error | null = null
+  let backoffMs = RETRY_BASE_MS
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    if (attempt > 1) {
+      await delay(backoffMs)
+      backoffMs *= 2
+    }
+    let res: Response
+    try {
+      res = await fetch(`${config.supabaseUrl}/rest/v1${path}`, {
+        ...init,
+        headers: {
+          apikey: config.supabaseSecretKey,
+          Authorization: `Bearer ${config.supabaseSecretKey}`,
+          'Content-Type': 'application/json',
+          ...(init?.headers as Record<string, string> | undefined),
+        },
+      })
+    } catch (err) {
+      // No response at all (DNS, reset, abort) — retryable.
+      lastError = err instanceof Error ? err : new Error(String(err))
+      continue
+    }
+    if (!res.ok) {
+      // 5xx is transient (gateway timeout, upstream overload); 4xx is a real
+      // request error. Only read the body on the attempt we will surface —
+      // draining it on every retry of a sustained outage is wasted work.
+      const terminal = res.status < 500 || attempt === MAX_ATTEMPTS
+      const text = terminal ? await res.text().catch(() => '') : ''
+      lastError = new SupabaseHttpError(res.status, `Supabase request failed (${res.status}) ${path}: ${text}`)
+      if (terminal) throw lastError
+      continue
+    }
+    // Prefer: return=minimal (used on writes) responds 200/201/204 with an
+    // empty body — only parse JSON when there's actually content to parse.
+    const text = await res.text()
+    return text ? JSON.parse(text) : null
+  }
+  throw lastError!
+}
+
+// PostgREST returns every matching row when no Range is set. On the cron path
+// the games and conflicts reads are unscoped, and both grow one row per game
+// and per unresolved conflict forever (conflicts are status-flipped, never
+// deleted) — one slow query the gateway can time out on. Page these with Range
+// headers so each request returns at most PAGE_SIZE rows. The caller must pass
+// an explicit order: without a stable order PostgREST's row order can shift
+// between requests, so a row could be skipped or read twice across pages.
+const PAGE_SIZE = 1000
+
+async function supabaseFetchPaged(config: JamSyncConfig, path: string): Promise<any[]> {
+  const rows: any[] = []
+  for (let from = 0; ; from += PAGE_SIZE) {
+    let page: any
+    try {
+      page = await supabaseFetch(config, path, {
+        headers: { 'Range-Unit': 'items', Range: `${from}-${from + PAGE_SIZE - 1}` },
+      })
+    } catch (err) {
+      // A range whose start is past the last row (total is an exact multiple
+      // of PAGE_SIZE) answers 416 — that just means there is no next page.
+      if (err instanceof SupabaseHttpError && err.status === 416) break
+      throw err
+    }
+    if (!Array.isArray(page) || page.length === 0) break
+    rows.push(...page)
+    if (page.length < PAGE_SIZE) break
+  }
+  return rows
 }
 
 function timeToMinutes(t: string): number {
@@ -337,9 +405,9 @@ export async function runJamSync(
   // would leave wide open.
   const [sources, allGames, allSeasons, existingConflicts] = await Promise.all([
     supabaseFetch(config, `/calendar_sources?select=organizer,calendar_url,organization_id&enabled=eq.true${scope}`),
-    supabaseFetch(config, `/games?select=id,season_id,opponent,game_date,game_time,jam_uid${scope}`),
+    supabaseFetchPaged(config, `/games?select=id,season_id,opponent,game_date,game_time,jam_uid&order=id${scope}`),
     supabaseFetch(config, `/seasons?select=id,organizer,start_date,end_date${scope}`),
-    supabaseFetch(config, `/jam_sync_conflicts?select=jam_uid${scope}`),
+    supabaseFetchPaged(config, `/jam_sync_conflicts?select=jam_uid&order=jam_uid${scope}`),
   ])
 
   const knownConflictUids = new Set<string>((existingConflicts ?? []).map((c: any) => c.jam_uid))
