@@ -104,9 +104,9 @@ These are deliberately the **same sharp azure cyan** as the schedule ledger's
 sets are one accent expressed in two scopes, so **retune them together or not
 at all**. Use them only for state: the active nav item's rail and icon, the
 active bottom-nav cell, and the current team's monogram/check in the switcher.
-Never for a logo, a heading, or decoration -- the brand tile is deliberately
-neutral (`--sidebar-primary`) for exactly this reason. Add a second accent and
-both stop meaning anything.
+Never for a logo, a heading, or decoration -- the team crest at the top of the
+sidebar is deliberately neutral for exactly this reason. Add a second accent
+and both stop meaning anything.
 
 Cyan, and not the deep olive that was here before: the olive sat at 31% L on a
 light sidebar and 46% on a dark one, so it read as a muddy neutral in both,
@@ -137,6 +137,26 @@ them if you touch a value.
 **Nav shell (`frontend/components/nav/`, `components/AppSidebar.tsx`).** Not a
 scoped system -- it is the global one, plus the tokens above.
 
+- **The workspace switcher leads with the team, and its crest is quiet**
+  (`nav/WorkspaceSwitcher.tsx`). The crest is a real `<Avatar>` -- squircle at
+  7px, `--muted` fill, a `--border` hairline as an inset ring, the team's
+  monogram in Geist Mono as the fallback -- so a populated
+  `TeamMembership.logo_url` drops a logo in and the row does not move, exactly
+  as `MatchData.crestUrl` works in the ledger. It used to be a
+  `--sidebar-primary` square holding the product's disc glyph, which is 97% L
+  in dark and 9% in light: a near-white chip, the highest-contrast object in a
+  sidebar whose whole palette exists to leave the cyan rail as the only thing
+  that shouts. **Do not light a brand mark like it is state.** What defines the
+  tile is its hairline, one step off its own fill, which is also why it
+  survives the row's hover -- the hover fills with `--sidebar-accent`, the same
+  fill the nav rows take, so the header reads as the top of that list rather
+  than a widget parked above it.
+  The type is the team name at 15px/600 in full ink with the product name as a
+  9.5px mono overline above it, not the 9-over-13.5 pair it was, which read as
+  a label with a caption rather than as an answer to "whose dashboard is this".
+  The switcher's own popover is the one place the accent belongs here: the
+  current team's tile, because that is state. Every other tile in the list
+  takes the same quiet crest.
 - **The account card is the only thing in the sidebar footer.** Theme,
   organization settings, passkeys, feedback and sign-out used to be five
   sibling rows there, each carrying the same visual weight as Schedule. They
