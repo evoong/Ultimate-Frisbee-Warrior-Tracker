@@ -9,6 +9,8 @@
     "mcp": "tsx mcp-server/index.ts",
     "frontend": "cd frontend && npm run dev",
     "build": "cd frontend && npm ci && npm run build",
+    "test:frontend": "cd frontend && npm run test",
+    "typecheck:frontend": "cd frontend && npm run typecheck",
     "start": "npm run server",
     "deploy": "wrangler deploy --config wrangler.jsonc",
     "deploy:dev": "wrangler deploy --config wrangler.jsonc --env development",
