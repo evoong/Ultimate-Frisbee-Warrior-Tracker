@@ -313,6 +313,39 @@ Structure and behaviour:
   primary action and is that same square with its **ink inverted**, not a
   coloured button: a lone tinted chip on the end of a toolbar reads as a stray
   control rather than as the end of the row.
+- **The season switcher is a ghost control on the title line, not a field**
+  (`components/schedule/SeasonPicker.tsx`). It was a full-width bordered
+  `SeasonMultiSelect` on a row of its own under the header -- 40px plus a
+  gap spent on a form input asking you to fill it in, when what it reports
+  is *which schedule you are looking at*. That is part of the page's title,
+  so it sits beside the `<h1>` with no surface, no border and no radius at
+  rest; chrome appears on hover and while the menu is open, on the same
+  34px box and 5px radius as `.sch-icon-btn` opposite it. It is deliberately
+  not Stats' `Picker`, which carries a hairline frame to match the segmented
+  controls beside it -- the same object here puts a box back next to the
+  heading. `SeasonMultiSelect` itself is untouched: Roster still renders it.
+  Four things are load-bearing:
+  - **It wraps below `sm`, it does not shrink.** The utility cluster is a
+    fixed 196px and the heading is 95px, so a 360px viewport leaves ~90px of
+    label -- "JAM Summer 202…", which is worse than no season name at all.
+    The picker is `w-full` and ordered last there, which forces it onto its
+    own line; from `sm` up it is `w-auto` with `mr-auto`, and the auto margin
+    eats the free space before `justify-between` can.
+  - **The -8px optical offset goes on the wrapper, never on the button.** On
+    the button it also shrinks that button's own max-content width, so the
+    wrapper's shrink-to-fit lands 8px under it and `max-width: 100%` clamps
+    the label short at *every* viewport -- the season name ellipsised on a
+    1400px screen with 900px of empty space beside it. `.sch-season`
+    therefore sets `min-width: 0` and no `max-width`.
+  - **Two or more seasons collapse to "3 seasons" with no count badge.**
+    Stats' `MultiPicker` prints both; here that is the label saying the same
+    number twice, six pixels from an `<h1>`.
+  - **The menu is the one floating layer in this scope and therefore the one
+    place a shadow is allowed** (`--sch-lift`), for the same reason Stats
+    allows one: a popover has no surface to seam against. Nothing in the
+    document flow gets one. It portals to `<body>`, so `PopoverContent`
+    carries `schedule-scope` itself or every `--sch-*` inside resolves to
+    nothing.
 - **shadcn primitives live in `frontend/lib/shadcn/`**, not `components/ui/`,
   and there is no `components.json`, so `npx shadcn add` will not work -- add the
   file by hand. Unused primitives are normal there (`separator`, `sheet` and
