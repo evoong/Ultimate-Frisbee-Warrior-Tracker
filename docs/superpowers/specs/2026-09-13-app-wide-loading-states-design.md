@@ -117,7 +117,8 @@ trades against a 1.86 second FCP improvement, but it is a real regression and
 PR 3 must measure it rather than assume it away.
 
 **The CLS readings in the table above are not evidence of anything, and that
-is itself the finding.** Both columns report 0, and at the time that was read
+is itself the finding.** Both columns originally reported 0, and at the time
+that was read
 as a fact about layout shift semantics: that removing a subtree and rendering a
 different one scores zero however bad it looks. That reasoning is plausible but
 it was not what produced these zeros.
@@ -568,9 +569,10 @@ CLS figure gathered without it is not evidence.
 - **`lib/shadcn/skeleton.tsx`.** Unchanged by decision 4.
 - **Five Stats panels still hard-swap rather than cross-fading.**
   `PerformanceChart.tsx`, `RankingsTable.tsx`, `ChemistryHub.tsx`,
-  `ProgressionChart.tsx` and `AssistMatrix.tsx` all gained `Swap` for the
-  height transition but were not also brought onto `Resolve` for the content
-  handover, so their skeletons still cut directly to content instead of
+  `ProgressionChart.tsx` and `AssistMatrix.tsx` keep their existing height
+  handling -- the first four through the `Swap` component, `AssistMatrix`
+  through a raw `.ufwt-swap` div, importing neither primitive -- but none was
+  brought onto `Resolve` for the content handover, so their skeletons still cut directly to content instead of
   cross-fading. Only the two KPI rows do both. This is a real gap against the
   "existing Stats panels already have `Swap` and gain `Resolve` inside it"
   statement above, noted here deliberately rather than fixed here: converting
