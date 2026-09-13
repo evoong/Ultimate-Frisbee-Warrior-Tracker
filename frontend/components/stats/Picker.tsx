@@ -14,7 +14,9 @@ import './stats-theme.css'
 // It replaced three different controls that were doing this job: a shadcn
 // <Select> under a <Label>, and two hand-rolled click-outside popovers
 // (SeasonMultiSelect, PlayerMultiSelect) with their own trigger styling and
-// their own lucide chevrons.
+// their own lucide chevrons. Both of those are gone now -- SeasonMultiSelect
+// when Roster moved to components/InlinePicker.tsx, the global-scope member
+// of this family (see CLAUDE.md).
 
 export type PickerItem = {
   id: number

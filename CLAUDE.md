@@ -89,10 +89,12 @@ Stats, Strategy, Login, dialogs, and the shadcn primitives in `lib/shadcn/`)
 is **still on lucide** -- that is a known, deliberate boundary, not an
 oversight; porting a page means porting all of its icons at once.
 `pages/Stats.tsx` imports no lucide at all any more, and neither does
-anything under `components/stats/`. The two shared components it still calls
-(`PlayerCombobox`, and `SeasonMultiSelect` via Schedule and Roster) are
+anything under `components/stats/`. The one shared component it still calls (`PlayerCombobox`) is
 lucide-based and shared with pages that have not been ported, which is why
-they were left alone -- porting one means porting every page that renders it.
+it was left alone -- porting one means porting every page that renders it.
+`components/InlinePicker.tsx` is the same situation seen from the other
+side: it is the *global*-scope switcher, so it is lucide on purpose, and a
+Phosphor glyph must not be smuggled into Roster or Strategy through it.
 
 The one addition to the shadcn tokens is the `--nav-accent*` family, defined
 in both theme blocks of `index.css`. The global palette has no accent at all
@@ -206,6 +208,60 @@ scoped system -- it is the global one, plus the tokens above.
   without adding a fetch to the app shell. A guest is anonymous and has no
   email at all, and is also a member of no team, which is why the switcher
   falls back to the product wordmark for them.
+
+**The ghost switcher, and the three copies of it.** The control that says
+*which* thing you are looking at -- which season's schedule, which season's
+roster, which play is on the board -- is a ghost button inline with the
+page's `<h1>` (or at the head of its toolbar), never a bordered select on a
+row of its own. A full-width bordered select reads as a form field waiting
+to be filled in; these are not fields, nothing is submitted, and the answer
+is already on screen in the list underneath. So: no surface, no border and
+no radius at rest, chrome on hover and while open, on the same 34px box and
+5px radius as the icon buttons beside it.
+
+There are **three implementations on purpose**, one per scope, and they
+share an anatomy rather than a file:
+
+| Scope | File | Tokens | Icons |
+|---|---|---|---|
+| Schedule | `components/schedule/SeasonPicker.tsx` | `--sch-*` | Phosphor |
+| Stats | `components/stats/Picker.tsx` | `--st-*` | Phosphor |
+| Global (Roster, Strategy) | `components/InlinePicker.tsx` | shadcn | lucide |
+
+Do not collapse them into one shared component: that is how a Phosphor
+glyph ends up inside a lucide page, which is the boundary the Icons section
+above exists to hold. Stats' is the one that keeps a permanent hairline
+frame, because it stands beside segmented controls and has to match them --
+the other two are next to a heading, where a frame is the thing being
+removed. A fourth page gets the picker for its own scope, or reuses
+`InlinePicker` if it is still on the global tokens.
+
+Rules that apply to all three:
+
+- **The -9px optical offset goes on the wrapper, never on the button.** It
+  cancels the trigger's 8px padding and 1px transparent border so the
+  label's box lands on the heading's own left edge. On the button, the
+  negative margin also shrinks that button's max-content width, so a
+  shrink-to-fit wrapper lands under it and the label ellipsises at *every*
+  viewport, not just narrow ones. Verify by measuring the label's and the
+  `<h1>`'s rects -- they must be equal.
+- **Below `sm` the header wraps; the picker does not shrink.** The action
+  cluster opposite is wider than the heading, so a 360px viewport leaves
+  ~90px of label -- "JAM Summer 202…", which is worse than no name at all.
+  The picker is `w-full` and ordered last there, which forces its own line;
+  from `sm` up it is `w-auto` with `mr-auto`, and the auto margin eats the
+  free space before `justify-between` can.
+- **The placeholder is never dimmed below the scope's muted token; the
+  *selected* state is what moves.** Global `--muted-foreground` is already
+  the dimmest passing value (5.7:1 light, 7.4:1 dark) and fading it to 60%
+  for a placeholder lands at ~2.5:1. So a live selection steps *up* to
+  `text-foreground/80` instead.
+- **Several selections collapse to a count with no badge beside it.** Stats'
+  `MultiPicker` prints both; "3 seasons 3" is the label saying the same
+  number twice, six pixels from an `<h1>`.
+- **An empty multi-selection means "all of them", not "nothing".** Every
+  caller reads it that way, which is why the reset in the panel head is
+  worded as the placeholder rather than as "Clear".
 
 **Schedule ledger (`frontend/components/schedule/`).** A scoped system under
 `.schedule-scope`, defined in `components/schedule/schedule-theme.css`.
@@ -323,7 +379,8 @@ Structure and behaviour:
   34px box and 5px radius as `.sch-icon-btn` opposite it. It is deliberately
   not Stats' `Picker`, which carries a hairline frame to match the segmented
   controls beside it -- the same object here puts a box back next to the
-  heading. `SeasonMultiSelect` itself is untouched: Roster still renders it.
+  heading. Roster and Strategy make the same move through
+  `components/InlinePicker.tsx`, the global-scope member of the family.
   Four things are load-bearing:
   - **It wraps below `sm`, it does not shrink.** The utility cluster is a
     fixed 196px and the heading is 95px, so a 360px viewport leaves ~90px of
@@ -331,10 +388,13 @@ Structure and behaviour:
     The picker is `w-full` and ordered last there, which forces it onto its
     own line; from `sm` up it is `w-auto` with `mr-auto`, and the auto margin
     eats the free space before `justify-between` can.
-  - **The -8px optical offset goes on the wrapper, never on the button.** On
-    the button it also shrinks that button's own max-content width, so the
-    wrapper's shrink-to-fit lands 8px under it and `max-width: 100%` clamps
-    the label short at *every* viewport -- the season name ellipsised on a
+  - **The -9px optical offset goes on the wrapper, never on the button.**
+    It cancels the trigger's 8px padding and its 1px transparent border, so
+    the label's box lands on the heading's own left edge -- verify that by
+    measuring both rects, they must be equal. On the *button* the negative
+    margin also shrinks that button's own max-content width, so the
+    wrapper's shrink-to-fit lands under it and `max-width: 100%` clamps the
+    label short at *every* viewport -- the season name ellipsised on a
     1400px screen with 900px of empty space beside it. `.sch-season`
     therefore sets `min-width: 0` and no `max-width`.
   - **Two or more seasons collapse to "3 seasons" with no count badge.**
@@ -552,9 +612,9 @@ these:
   `MultiPicker` / `SinglePicker`). It replaced three separate controls doing
   the same job: a shadcn `<Select>` under a `<Label>`, and two hand-rolled
   click-outside popovers (`SeasonMultiSelect`, `PlayerMultiSelect`) with their
-  own trigger styling and their own lucide chevrons. `PlayerMultiSelect` was
-  deleted with its last caller; `SeasonMultiSelect` stays because Schedule and
-  Roster still use it. Add a fourth dropdown here and it goes through Picker.
+  own trigger styling and their own lucide chevrons. Both were deleted with
+  their last callers -- `SeasonMultiSelect` when Roster moved to
+  `InlinePicker`. Add a fourth dropdown here and it goes through Picker.
 - **The assist matrix has two views of one data set -- a web and a table --
   and the web is the default** (`components/stats/AssistWeb.tsx`, chosen with
   a segmented control in the panel head, remembered per device in

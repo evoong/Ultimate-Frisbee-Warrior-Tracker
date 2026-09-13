@@ -8,7 +8,7 @@ import { isPastGame } from '../lib/gameOrder'
 import { SHOW_TURNOVERS } from '../lib/features'
 import { POSITIONS } from '../lib/positions'
 import { useAuth } from '../contexts/AuthContext'
-import SeasonMultiSelect from '../components/SeasonMultiSelect'
+import { InlineMultiPicker } from '../components/InlinePicker'
 import PlayerAvatar from '../components/PlayerAvatar'
 import GenderTag from '../components/GenderTag'
 import { Badge } from '../lib/shadcn/badge'
@@ -1185,9 +1185,31 @@ export default function Roster() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-foreground">Roster</h1>
-        <div className="flex items-center gap-2">
+      {/* Which season's roster you are looking at is part of what this page
+          is called, not a form field, so the switcher is a ghost control on
+          the title line rather than a full-width select on a row of its own
+          -- same move, same reasons, as the schedule's. It wraps below `sm`
+          instead of shrinking: the action cluster opposite is wider than the
+          heading, which leaves a phone nothing to put a season name in. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5">
+        <h1 className="order-1 shrink-0 text-2xl font-bold text-foreground">Roster</h1>
+        {/* The -9px offset goes on the wrapper, never on the button: on the button
+            it also shrinks that button's own max-content width, so the
+            wrapper's shrink-to-fit lands 8px under it and the label
+            ellipsises at every viewport. */}
+        <div className="order-3 -ml-[0.5625rem] flex w-full min-w-0 sm:order-2 sm:mr-auto sm:w-auto">
+          <InlineMultiPicker
+            items={allSeasonsArr.map(s => ({ id: s.id, label: seasonLabel(s) }))}
+            selectedIds={activeSeasonIds}
+            onChange={setRosterSeasonIds}
+            placeholder="All seasons"
+            unit="seasons"
+            emptyLabel="No seasons yet"
+            onCreateNew={() => setShowCreateSeason(true)}
+            createLabel="Create new season…"
+          />
+        </div>
+        <div className="order-2 flex shrink-0 items-center gap-2 sm:order-3">
           <span className="text-sm text-muted-foreground">{filteredPlayers?.length || 0} of {players?.length || 0}</span>
           {/* View mode toggle: cards (full detail) vs compact (dense rows,
               fits far more of a large roster on screen without scrolling). */}
@@ -1217,15 +1239,6 @@ export default function Roster() {
           )}
         </div>
       </div>
-
-      {/* Season filter */}
-      <SeasonMultiSelect
-        seasons={allSeasonsArr}
-        selectedIds={activeSeasonIds}
-        onChange={setRosterSeasonIds}
-        placeholder="All Seasons"
-        onCreateNew={() => setShowCreateSeason(true)}
-      />
 
       {/* Gender breakdown, doubling as a quick filter — click a count to
           narrow the list to just that gender, click again to clear it. */}
