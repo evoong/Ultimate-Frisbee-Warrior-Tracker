@@ -14,6 +14,7 @@ import { getLatestJamSeasonWithPlayedGame, getDefaultJamSeasonId } from '../lib/
 import { isPastGame } from '../lib/gameOrder'
 import { track } from '../lib/analytics'
 import { SHOW_TURNOVERS } from '../lib/features'
+import { isRangePending } from '../lib/loadingState'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
 import PlayerCombobox from '../components/PlayerCombobox'
 import { Skeleton } from '../lib/shadcn/skeleton'
@@ -338,8 +339,17 @@ function PlayerStatsView({
   // `settled` is written during render deliberately: it is derived from this
   // render's own data and is idempotent, and an effect would publish one
   // paint late -- which is the flash this exists to remove.
-  const rangePending = loading || (tab === 'overview' && pairingsLoading)
   const settled = useRef<{ stats?: PlayerStat[]; pairings?: PairingRow[] }>({})
+  // `settled.current.stats` rather than `stats`: the former is undefined only
+  // until the first commit, which is exactly the "not started" window. Note
+  // this reads the ref before the block below writes it, which is correct --
+  // on the first render there is nothing committed and the page is pending.
+  const rangePending = isRangePending({
+    settledStats: settled.current.stats,
+    loading,
+    readsPairings: tab === 'overview',
+    pairingsLoading,
+  })
   if (!rangePending) {
     settled.current = {
       stats: stats as PlayerStat[] | undefined,
@@ -759,7 +769,7 @@ function PlayerStatsView({
             onSeasonChange={setCumulativeSeasonId}
             stat={cumulativeStat}
             onStatChange={setCumulativeStat}
-            loading={cumulativeLoading}
+            loading={cumulativeLoading || cumulativeRaw === undefined}
           />
         </>
       )}
