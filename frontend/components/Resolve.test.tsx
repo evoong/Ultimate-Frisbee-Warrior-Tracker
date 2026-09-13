@@ -60,6 +60,29 @@ describe('Resolve', () => {
     expect(screen.queryByText('content')).not.toBeInTheDocument()
   })
 
+  it('does not let an abandoned timer cut short a later legitimate fade', () => {
+    // The previous test only checks that loading=true restores the skeleton
+    // immediately, which is true whether or not the first fade's timer was
+    // actually cancelled -- the unconditional early return for loading never
+    // reads `fading`, so a leaked timer is invisible there. This test forces
+    // the leak to matter: a second, legitimate fade must still be showing
+    // when the first (abandoned) fade's original deadline passes.
+    const { rerender } = render(<Fixture loading />)
+    rerender(<Fixture loading={false} />) // fade #1 begins, deadline at t = 180
+    act(() => { vi.advanceTimersByTime(RESOLVE_MS / 2) }) // t = 90, fade #1 in flight
+    rerender(<Fixture loading />) // restart: fade #1's timer must be cleared
+    rerender(<Fixture loading={false} />) // fade #2 begins, deadline at t = 90 + 180 = 270
+
+    // Past fade #1's original deadline (180) but short of fade #2's (270).
+    act(() => { vi.advanceTimersByTime(RESOLVE_MS / 2 + 10) }) // t = 190
+
+    // If fade #1's timer had leaked, it would fire here and strip the
+    // overlay that fade #2 is still legitimately showing.
+    expect(screen.getByText('content')).toBeInTheDocument()
+    expect(screen.getByText('skeleton')).toBeInTheDocument()
+    expect(screen.getByText('skeleton').closest('[aria-hidden="true"]')).not.toBeNull()
+  })
+
   it('never mounts the overlay under reduced motion', () => {
     setReducedMotion(true)
     const { rerender } = render(<Fixture loading />)
