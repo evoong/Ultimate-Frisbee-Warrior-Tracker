@@ -136,6 +136,33 @@ export function KpiRowSkeleton() {
   )
 }
 
+/**
+ * The Me tab's metric row before any data has landed. `MetricCard` has no
+ * crest row, no meter and no strip -- it is an overline, a hero figure and
+ * an optional hint, nothing else -- so this mirrors exactly that and no more.
+ * Reusing `KpiRowSkeleton` here would stand far taller than the row it
+ * stands in for and reintroduce the same jolt this exists to remove.
+ *
+ * `count` tracks `SHOW_TURNOVERS` at the call site: the Me tab is three
+ * cards with turnovers gated off and four with it on, and a skeleton pinned
+ * at four would reserve a slot that never arrives and then collapse.
+ */
+export function MetricCardSkeleton({ count }: { count: number }) {
+  return (
+    <>
+      {Array.from({ length: count }, (_, i) => (
+        <div key={i} className="st-panel st-kpi gap-2" aria-hidden="true">
+          <Skeleton className="h-2.5 w-16" />
+          <div className="flex items-baseline gap-2">
+            <Skeleton className="h-7 w-14" />
+            <Skeleton className="h-2.5 w-10" />
+          </div>
+        </div>
+      ))}
+    </>
+  )
+}
+
 function fmt(n: number | null | undefined, digits = 0): string {
   if (n == null || !Number.isFinite(n)) return '—'
   return n.toFixed(digits)
