@@ -1,7 +1,7 @@
 // Cumulative Layout Shift for a cold, throttled load, over CDP against real
 // headless Chrome.
 //
-// Four things here are load bearing:
+// Five things here are load bearing:
 //
 // 1. No --virtual-time-budget. It runs timers but produces no rendering steps,
 //    so rAF barely ticks, ResizeObserver never fires and layout-shift entries
@@ -10,7 +10,12 @@
 // 2. Observers are parked on a live reference. An unreferenced
 //    PerformanceObserver is collectable, and over a long settle it does get
 //    collected, after which the run reports nulls while
-//    performance.getEntriesByType() shows the entries plainly.
+//    performance.getEntriesByType() shows the entries plainly. Note that the
+//    accumulated s.cls / s.shifts these observers build up are never actually
+//    read -- the final evaluate below recomputes both straight from
+//    performance.getEntriesByType('layout-shift'). The observers exist only
+//    to keep those entries from being garbage collected before the script
+//    reads the timeline; they do not supply the reported number themselves.
 // 3. DOM work is deferred until document.documentElement exists.
 //    addScriptToEvaluateOnNewDocument runs before the document is parsed, so
 //    touching documentElement throws and takes the rest of the script with it.
@@ -22,6 +27,20 @@
 //    is none because there is nothing here that needs it yet.
 // 4. The tab is activated. A background tab suspends rAF even though painting
 //    still happens.
+// 5. cls: 0 is not proof of a stable layout. Headless Chrome without access to
+//    a real display server advertises 'layout-shift' in
+//    PerformanceObserver.supportedEntryTypes and accepts the observe() call
+//    below, but records nothing through it: a page that demonstrably shifts
+//    on screen still comes back with cls: 0 and an empty shift list, and
+//    Chrome's own stderr shows "CVDisplayLinkCreateWithCGDisplay failed" when
+//    this happens. The observer registration above also sits inside a
+//    try/catch, which would silently swallow a registration failure on top of
+//    that. So a cls: 0 reading from this script means nothing on its own --
+//    it is indistinguishable from an environment that cannot record shifts at
+//    all -- until this same harness has been run against a fixture built to
+//    shift and shown to report something non-zero. A CI job wired to this
+//    script must run that positive control first, or it will pass forever
+//    while catching nothing.
 import { spawn } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
