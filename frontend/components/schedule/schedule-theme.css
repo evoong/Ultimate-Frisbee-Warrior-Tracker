@@ -546,3 +546,176 @@
   color: hsl(var(--sch-ink));
   font-variant-numeric: tabular-nums;
 }
+
+/* ── Season switcher ────────────────────────────────────────────────────
+   A ghost control, inline beside the page's <h1>. It carries no surface,
+   no border and no radius at rest -- the only thing on screen is its label,
+   one step down the ink ramp from the heading it sits beside, so the pair
+   reads as "Schedule / of this season" rather than as a title next to a
+   form field. Chrome appears on hover and while the menu is open, which is
+   the only time it needs to look pressable.
+
+   It is the same 34px box as .sch-icon-btn and the same 5px radius, so the
+   hover state lands on the same shape as the utility cluster opposite it.
+   Height is fixed rather than derived from the label: a control that grows
+   when the season name is longer moves the heading row. */
+.sch-season {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  /* min-width:0 so the label ellipsises inside a flex row instead of the
+     heading beside it being pushed off. Deliberately no `max-width: 100%`:
+     the wrapper carries the row's negative offset, so its shrink-to-fit
+     width is 8px under this button's max-content, and a percentage
+     max-width resolved against that clamps the label 8px short at every
+     viewport -- "JAM Summer 2026" renders as "JAM Summer 202…" on a
+     1400px screen with 900px of free space beside it. Flex-shrink plus
+     min-width:0 is what keeps it inside its parent. */
+  min-width: 0;
+  height: 2.125rem;
+  padding: 0 0.4375rem 0 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.008em;
+  color: hsl(var(--sch-ink-mid));
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease;
+}
+.sch-season:hover,
+.sch-season[data-state='open'] {
+  color: hsl(var(--sch-ink));
+  background: hsl(var(--sch-overlay) / var(--sch-overlay-a));
+  border-color: hsl(var(--sch-rule-strong));
+}
+.sch-season:focus-visible {
+  outline: 2px solid hsl(var(--sch-accent));
+  outline-offset: 1px;
+}
+/* No filter applied. One more step down the ramp so a live filter is
+   visibly a statement and "all seasons" is visibly the resting state --
+   --sch-ink-faint is still 46% / 55% L, which clears 4.5:1 on both rows. */
+.sch-season[data-empty='true'] { color: hsl(var(--sch-ink-faint)); }
+
+.sch-season-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The caret is the only thing that says this is a menu, so it turns over
+   rather than just sitting there. */
+.sch-season-caret {
+  opacity: 0.55;
+  transition: transform 180ms cubic-bezier(0.3, 0, 0.2, 1);
+}
+.sch-season[data-state='open'] .sch-season-caret { transform: rotate(180deg); }
+
+/* ── Season menu ────────────────────────────────────────────────────────
+   The one floating layer in this scope, and therefore the one place a
+   shadow is allowed: a popover has no surface to seam against, so a
+   hairline alone leaves it pasted onto whatever it covers. Everything in
+   the document flow still uses rules, not shadows. */
+.schedule-scope { --sch-lift: 0 10px 30px -12px hsl(0 0% 0% / 0.28), 0 2px 8px -4px hsl(0 0% 0% / 0.16); }
+.dark .schedule-scope { --sch-lift: 0 12px 34px -12px hsl(0 0% 0% / 0.66), 0 2px 10px -4px hsl(0 0% 0% / 0.5); }
+
+.sch-menu {
+  border: 1px solid hsl(var(--sch-rule-strong));
+  border-radius: 6px;
+  background: hsl(var(--sch-row) / 0.92);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--sch-lift);
+}
+
+.sch-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.125rem 0.375rem 0.375rem;
+}
+.sch-menu-overline {
+  font-family: var(--sch-mono);
+  font-size: 0.625rem;
+  line-height: 1;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: hsl(var(--sch-ink-faint));
+}
+/* Radix moves focus into the panel on open, so this is reachable by
+   keyboard immediately and cannot fall back to the UA's default outline. */
+.sch-menu-link {
+  font-family: var(--sch-mono);
+  font-size: 0.6875rem;
+  line-height: 1.2;
+  letter-spacing: -0.005em;
+  color: hsl(var(--sch-ink-mid));
+  border-radius: 4px;
+  padding: 0.125rem 0.25rem;
+  margin: -0.125rem -0.25rem;
+  transition: color 160ms ease, background-color 160ms ease;
+}
+.sch-menu-link:hover {
+  color: hsl(var(--sch-accent-ink));
+  background: hsl(var(--sch-overlay) / var(--sch-overlay-a));
+}
+.sch-menu-link[data-active='true'] { color: hsl(var(--sch-accent-ink)); }
+.sch-menu-link:focus-visible {
+  outline: 2px solid hsl(var(--sch-accent));
+  outline-offset: 1px;
+}
+
+.sch-menu-empty {
+  padding: 0.75rem 0.625rem;
+  text-align: center;
+  font-size: 0.75rem;
+  color: hsl(var(--sch-ink-faint));
+}
+
+.sch-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5625rem;
+  width: 100%;
+  padding: 0.4375rem 0.625rem;
+  border-radius: 5px;
+  text-align: left;
+  font-size: 0.8125rem;
+  color: hsl(var(--sch-ink));
+  transition: background-color 140ms ease;
+}
+.sch-option:hover { background: hsl(var(--sch-overlay) / var(--sch-overlay-a)); }
+.sch-option:focus-visible {
+  outline: 2px solid hsl(var(--sch-accent));
+  outline-offset: -2px;
+}
+.sch-option-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 4px;
+  border: 1px solid hsl(var(--sch-rule-strong));
+  color: transparent;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+.sch-option[data-checked='true'] .sch-option-box {
+  background: hsl(var(--sch-accent));
+  border-color: hsl(var(--sch-accent));
+  color: hsl(var(--sch-row));
+}
+.dark .sch-option[data-checked='true'] .sch-option-box { color: hsl(0 0% 4%); }
+
+@media (prefers-reduced-motion: reduce) {
+  .sch-season,
+  .sch-season-caret,
+  .sch-menu-link,
+  .sch-option,
+  .sch-option-box {
+    transition-duration: 1ms;
+  }
+}
