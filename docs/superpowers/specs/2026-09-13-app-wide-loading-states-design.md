@@ -116,13 +116,35 @@ and is then replaced, which pushes the final LCP later. It is small and it
 trades against a 1.86 second FCP improvement, but it is a real regression and
 PR 3 must measure it rather than assume it away.
 
-**CLS stayed at 0 across a change that replaces the entire page.** Layout shift
-only counts elements that already exist moving. Removing a subtree and
-rendering a different one scores zero however bad it looks. CLS is therefore
-the right metric for the in page work, where a rendered leaderboard really is
-pushed down, and is blind to the boot handoff. The screenshot comparison in the
-verification section is not a nice to have; it is the only check that covers
-that seam.
+**The CLS readings in the table above are not evidence of anything, and that
+is itself the finding.** Both columns report 0, and at the time that was read
+as a fact about layout shift semantics: that removing a subtree and rendering a
+different one scores zero however bad it looks. That reasoning is plausible but
+it was not what produced these zeros.
+
+Re-tested directly afterwards against a page built to shift -- a 120px block
+inserted above existing content after 600ms, with a six second settle -- the
+same harness still reported `cls: 0` with an empty shift list while FCP and LCP
+came back normally at 204ms. A further probe found `layout-shift` present in
+`PerformanceObserver.supportedEntryTypes`, and the DOM mutation confirmed to
+have happened, and `performance.getEntriesByType('layout-shift')` still empty.
+Chrome's own stderr shows `CVDisplayLinkCreateWithCGDisplay failed` throughout.
+
+So headless Chrome in this environment advertises the Layout Instability API
+and records nothing through it. Every CLS number gathered here is a null
+reading wearing a plausible value, which is the most dangerous shape a
+measurement can take.
+
+Two consequences, both binding on the verification section below:
+
+- **CLS must be measured somewhere with display server access** -- a normal
+  terminal session on this machine, or Linux CI -- and never trusted from a
+  sandboxed shell. A run that reports 0 must first prove it can report
+  non-zero.
+- **The claim that CLS is blind to the boot handoff is now unproven rather
+  than established.** It may still be true on the semantics, and the screenshot
+  comparison is still worth having, but this document must not present it as a
+  measured result.
 
 ## Decisions
 
@@ -476,10 +498,11 @@ exist and the bug is invisible. Both themes, every route, cold cache.
    `el.getAnimations()` durations rather than sampled frames, per CLAUDE.md.
 4. **The boot to React handoff is a no-op.** Screenshot the last pre mount frame
    and the first post mount frame. They must be identical. This proves the
-   shared `BootShell` removed the seam rather than moving it, and as established
-   above it is the **only** check that covers this seam: CLS scored 0 across a
-   measured full page replacement, because layout shift counts existing elements
-   moving and a wholesale swap moves nothing.
+   shared `BootShell` removed the seam rather than moving it. Do not lean on CLS
+   here: the zeros this document reported for the boot handoff came from an
+   environment that records no layout shift at all, so whether CLS covers that
+   seam is an open question rather than a settled one. The screenshot comparison
+   is the check that does not depend on the answer.
 5. **LCP did not regress further than measured.** The spike moved it from
    3172 ms to 3300 ms. Treat 3300 ms as the ceiling; if PR 3 lands worse than
    that, the shell is holding the LCP candidate too long and the largest block
@@ -492,6 +515,14 @@ is necessary but not sufficient. The CDP script is checked into `scripts/` and
 added to `ci.yml` beside the existing frontend build at line 23, failing on a
 per route CLS regression. This is the only part of the design that prevents a
 repeat rather than fixing the current instance.
+
+One precondition, learned the hard way: **the job must first prove it can
+report a non-zero CLS.** Headless Chrome without display server access
+advertises the Layout Instability API and records nothing through it, so a
+guard running there would pass every future run while catching nothing, which
+is worse than having no guard. Give the CI job a fixture page that shifts on
+purpose and fail the build if that fixture reports zero. Linux CI runners
+generally do record layout shift; a sandboxed macOS shell does not.
 
 ## Sequencing
 
