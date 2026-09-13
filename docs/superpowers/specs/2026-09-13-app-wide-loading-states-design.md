@@ -466,6 +466,13 @@ samples. The target is effectively zero rather than the 0.1 "good" threshold,
 because with skeletons that land where content lands any residual shift is a bug
 with an address.
 
+**A zero is only meaningful once the harness has proved it can report non
+zero.** Headless Chrome without display server access advertises the Layout
+Instability API and records nothing through it, so every run reads zero however
+badly the page jumps. Before trusting any CLS figure, point the same harness at
+a fixture built to shift and confirm it reports a non zero value. See the
+measured-not-estimated section above for how this was learned.
+
 ### Driven over CDP against real headless Chrome
 
 Both traps documented in CLAUDE.md bite this work specifically.
@@ -543,7 +550,9 @@ attribution in commit messages or PR bodies.
    header and skeleton body. Largest diff, lowest risk.
 5. **Chat, PublicTeams, dialogs.** The tail.
 
-Each PR carries the CLS measurement for the routes it touches.
+Each PR carries the CLS measurement for the routes it touches, and each of
+those measurements is preceded by the positive-control run described above. A
+CLS figure gathered without it is not evidence.
 
 ## Out of scope
 
