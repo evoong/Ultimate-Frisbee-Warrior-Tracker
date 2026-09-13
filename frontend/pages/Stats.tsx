@@ -1006,7 +1006,15 @@ function Standings() {
         </div>
 
         {oppHistoryLoading && !oppHistory ? (
-          <p className="st-meta">Loading…</p>
+          <div className="space-y-2" aria-hidden="true">
+            {[0, 1, 2].map(i => (
+              <div key={i} className="flex items-center gap-2.5">
+                <Skeleton className="h-7 w-7 rounded-md" />
+                <Skeleton className="h-3 flex-1" />
+                <Skeleton className="h-3 w-10" />
+              </div>
+            ))}
+          </div>
         ) : (
           <>
             {allTimeH2h && (
