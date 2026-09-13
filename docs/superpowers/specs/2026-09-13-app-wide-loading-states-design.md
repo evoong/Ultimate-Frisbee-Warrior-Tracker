@@ -82,11 +82,47 @@ Critical path JavaScript before React can paint anything, including a
 | `index` | 67.5 KB |
 | `vendor-router` | 38.6 KB |
 
-About 1.44 MB uncompressed, roughly 400 to 450 KB gzipped. On a mid tier phone
-on 4G that is one and a half to three seconds during which the app is a blank
-white page in the wrong theme. This is the largest perceived performance defect
-in the product and it is an order of magnitude larger than anything else in
-this document.
+About 1.44 MB uncompressed. Measured transfer is 481 KB gzipped.
+
+### Measured, not estimated
+
+A throwaway spike measured this before any of the work was planned in detail.
+Real headless Chrome over CDP, cold cache, Lighthouse Slow 4G (1.6 Mbit/s,
+150ms RTT) and 4x CPU throttling, serving a production build over gzip. Three
+runs per configuration, all within a few milliseconds of each other. The
+patched column is a hand written approximation of section 1, built only to get
+a number and then deleted.
+
+| Metric | Baseline | With boot shell |
+| --- | --- | --- |
+| first-paint | 866 ms | 757 ms |
+| First Contentful Paint | 2604 ms | 740 ms |
+| Shell visible to the user | 2589 ms | 702 ms |
+| Light background shown to a dark mode user | 1725 ms | 0 ms |
+| Largest Contentful Paint | 3172 ms | 3300 ms |
+| CLS | 0 | 0 |
+| Transfer | 481 KB | 487 KB |
+| index.html, gzipped | 3344 B | 4801 B |
+
+So the app currently shows a dark mode user a near white empty page for 1.73
+seconds, and shows nobody any content at all for 2.6 seconds. Both numbers are
+removable. The cost is 1.4 KB of HTML.
+
+Two results from the spike are load bearing and are carried into the design
+below rather than left as trivia.
+
+**LCP moved the wrong way, by 128 ms.** The boot shell becomes an LCP candidate
+and is then replaced, which pushes the final LCP later. It is small and it
+trades against a 1.86 second FCP improvement, but it is a real regression and
+PR 3 must measure it rather than assume it away.
+
+**CLS stayed at 0 across a change that replaces the entire page.** Layout shift
+only counts elements that already exist moving. Removing a subtree and
+rendering a different one scores zero however bad it looks. CLS is therefore
+the right metric for the in page work, where a rendered leaderboard really is
+pushed down, and is blind to the boot handoff. The screenshot comparison in the
+verification section is not a nice to have; it is the only check that covers
+that seam.
 
 ## Decisions
 
@@ -205,6 +241,35 @@ standing rule for the field, not a one time check, because hints accrete fields.
 **Paint.** If `signedIn`, clone `<template data-boot="{route}">` into `#root`.
 If not, leave `#root` empty: a signed out visitor is usually a first time
 visitor with no hint to use, and Home and Login paint from React.
+
+Three mechanics here were established by measurement and each one silently
+costs the entire benefit if got wrong.
+
+**The clone runs during parse, from an inline script placed after the templates
+in the body. Never on `DOMContentLoaded`.** `type="module"` scripts are
+deferred, and `DOMContentLoaded` waits for every deferred script to execute, so
+hooking it makes the shell wait for the whole 481 KB bundle it exists to
+precede. Measured: the `DOMContentLoaded` version left FCP completely unchanged
+at 2.6 seconds while looking entirely correct in the source.
+
+**The shell carries real text, not only grey bars.** First Contentful Paint
+counts text, images, SVG and canvas. A `div` with a background colour is not
+contentful, so a skeleton built purely from bars leaves FCP pinned to React's
+first render however early the shell paints. Measured: bars only held FCP at
+2604 ms with the shell visible from 702 ms; adding the page heading and the
+team name moved FCP to 740 ms. The text is also the honest thing to show, and
+it is what section 3's rule already requires, since a page title does not
+depend on fetched data. So the shell renders:
+
+- the page's own `<h1>`, from a route to title map;
+- the team name and the product overline in the sidebar header, from the hint.
+
+**Render blocking stylesheets set the floor.** Nothing paints, shell included,
+until both `<link rel="stylesheet">` elements resolve: the built CSS chunk and
+a third party request to `fonts.googleapis.com`. That floor is the 757 ms
+first-paint above. Making the Google Fonts request non render blocking would
+lower it further and is listed as a follow up rather than done here, because it
+changes font loading behaviour for the whole app and deserves its own change.
 
 ### Templates are generated, not hand written
 
@@ -398,7 +463,12 @@ exist and the bug is invisible. Both themes, every route, cold cache.
 ### Assertions beyond CLS
 
 1. **Theme at first paint.** `<html>` carries the correct class before anything
-   from `/assets` executes. Binary, and it is the white flash fix.
+   from `/assets` executes. Binary, and it is the white flash fix. Measure the
+   flash as `darkClassAt - firstPaint`, never as `darkClassAt - FCP`.
+   first-paint is when the light background appears; FCP cannot happen until
+   React renders, and React sets the class in that same tick, so measuring
+   against FCP always reports approximately zero and hides the defect
+   completely. The baseline number is 1725 ms and it must go to 0.
 2. **FCP moves to the HTML.** Measured with and without the inline shell on a
    throttled cold cache. First Contentful Paint should stop waiting on 1.44 MB
    of JavaScript. This is the number that justifies section 1.
@@ -406,7 +476,14 @@ exist and the bug is invisible. Both themes, every route, cold cache.
    `el.getAnimations()` durations rather than sampled frames, per CLAUDE.md.
 4. **The boot to React handoff is a no-op.** Screenshot the last pre mount frame
    and the first post mount frame. They must be identical. This proves the
-   shared `BootShell` removed the seam rather than moving it.
+   shared `BootShell` removed the seam rather than moving it, and as established
+   above it is the **only** check that covers this seam: CLS scored 0 across a
+   measured full page replacement, because layout shift counts existing elements
+   moving and a wholesale swap moves nothing.
+5. **LCP did not regress further than measured.** The spike moved it from
+   3172 ms to 3300 ms. Treat 3300 ms as the ceiling; if PR 3 lands worse than
+   that, the shell is holding the LCP candidate too long and the largest block
+   in it should shrink.
 
 ### Regression guard
 
@@ -442,6 +519,10 @@ Each PR carries the CLS measurement for the routes it touches.
 - **The 797 KB `vendor` chunk.** Trimming it would shrink the boot window at the
   source rather than papering over it, and it is very likely the single highest
   leverage follow up. Not in this work.
+- **The render blocking `fonts.googleapis.com` stylesheet.** It sets the 757 ms
+  first-paint floor that even the boot shell cannot beat, and it is a third
+  party request on the critical path. Worth its own change, because making it
+  non blocking changes font swap behaviour across the whole app.
 - **Image and avatar CLS**, font swap reflow, route transition choreography, and
   optimistic UI for writes. All were offered and deliberately not selected.
 - **`lib/shadcn/skeleton.tsx`.** Unchanged by decision 4.
