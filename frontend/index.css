@@ -207,3 +207,33 @@
     transition-duration: 1ms;
   }
 }
+
+/* The handover itself: 180ms, opacity only, nothing moves. See
+   components/Resolve.tsx.
+
+   .ufwt-resolve-in is a dedicated wrapper and must stay one. Its entrance runs
+   with animation-fill-mode: both, so the animation keeps ownership of opacity
+   after it ends and any transition set on the same element silently never
+   runs. That is the documented reason the Stats dim goes on a wrapper rather
+   than on FadeIn; do not put .ufwt-swap on this element for the same reason. */
+.ufwt-resolve { position: relative; }
+
+.ufwt-resolve-in {
+  animation: ufwt-fade-in 180ms ease both;
+}
+.ufwt-resolve-out {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  animation: ufwt-fade-out 180ms ease both;
+}
+
+@keyframes ufwt-fade-in { from { opacity: 0 } to { opacity: 1 } }
+@keyframes ufwt-fade-out { from { opacity: 1 } to { opacity: 0 } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ufwt-resolve-in,
+  .ufwt-resolve-out {
+    animation-duration: 1ms;
+  }
+}
