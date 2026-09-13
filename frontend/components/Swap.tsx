@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, type ReactNode } from 'react'
-import './stats-theme.css'
+import './stats/stats-theme.css'
 
 // A panel body that changes its contents without changing them abruptly.
 //

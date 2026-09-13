@@ -3,7 +3,7 @@ import { CaretDown, CaretUp, CaretUpDown, Check, Plus, SlidersHorizontal, Trash 
 import { Popover, PopoverContent, PopoverTrigger } from '../../lib/shadcn/popover'
 import { Skeleton } from '../../lib/shadcn/skeleton'
 import { SinglePicker } from './Picker'
-import Swap from './Swap'
+import Swap from '../Swap'
 import Segmented, { type SegmentOption } from './Segmented'
 import {
   COLUMN_WIDTHS_KEY, CUSTOM_COLUMNS_KEY, DEFAULT_COLUMNS, HIDDEN_COLUMNS_KEY,

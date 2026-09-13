@@ -3,7 +3,7 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YA
 import { ChartLine } from '@phosphor-icons/react'
 import { SHOW_TURNOVERS } from '../../lib/features'
 import { Skeleton } from '../../lib/shadcn/skeleton'
-import Swap from './Swap'
+import Swap from '../Swap'
 import Segmented from './Segmented'
 import { MultiPicker, SinglePicker } from './Picker'
 import {
