@@ -33,6 +33,19 @@ type FadeInProps = React.HTMLAttributes<HTMLDivElement> & {
  * of `opacity` after it ends and any transition set on the same element never
  * runs -- which is why the Stats dim has to go on a wrapper. Without it this
  * component composes freely.
+ *
+ * A delayed instance carries `fill-mode-backwards` instead. `tailwindcss-
+ * animate`'s `enter` keyframe is a bare `from { opacity: var(--tw-enter-
+ * opacity, 1) }` and `.animate-in` sets no fill mode of its own, so with no
+ * fill mode at all a delayed element renders at its natural opacity for the
+ * whole delay, then snaps to 0 the instant the animation starts, then fades
+ * in -- which is exactly what happened to Roster's staggered lists (delays up
+ * to `index * 20` / `index * 40`) before this existed: the later rows sat
+ * fully visible for over a second, blinked out, and faded back in.
+ * `backwards` fills only the delay phase, holding the element at opacity 0
+ * before the animation starts, and -- unlike `both` -- it does not retain
+ * ownership of `opacity` once the animation ends, so it does not reintroduce
+ * the hazard described above. Do not swap this back to `both`.
  */
 export default function FadeIn({ delay = 0, as = 'div', slide = false, className, style, children, ...props }: FadeInProps) {
   const Tag = as
@@ -41,6 +54,7 @@ export default function FadeIn({ delay = 0, as = 'div', slide = false, className
       className={cn(
         'animate-in fade-in duration-200',
         slide && 'slide-in-from-bottom-2',
+        delay && 'fill-mode-backwards',
         className,
       )}
       style={delay ? { animationDelay: `${delay}ms`, ...style } : style}

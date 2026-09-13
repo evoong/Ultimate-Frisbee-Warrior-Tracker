@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { Avatar, AvatarFallback, AvatarImage } from '../../lib/shadcn/avatar'
+import { Skeleton } from '../../lib/shadcn/skeleton'
 import { crestInitials, type PlayerLine, type SeriesKey, type TeamLine } from './types'
 import './stats-theme.css'
 
@@ -18,6 +19,148 @@ const SERIES_CLASS: Record<SeriesKey, string> = {
   goals: 'st-goals',
   assists: 'st-assists',
   turnovers: 'st-turnovers',
+}
+
+/**
+ * Stands in for a `LeaderCard`: overline row, crest row, meter block, a
+ * two-cell strip. Mirrors `LeaderCard`'s own elements one for one so the
+ * skeleton's height matches by construction.
+ */
+function LeaderCardSkeleton() {
+  return (
+    <div className="st-panel st-kpi" aria-hidden="true">
+      <div className="flex items-center justify-between gap-2">
+        <Skeleton className="h-2.5 w-20" />
+        <Skeleton className="h-4 w-12" />
+      </div>
+
+      <div className="flex items-center gap-2.5">
+        <Skeleton className="h-9 w-9 rounded-lg" />
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <Skeleton className="h-3.5 w-28" />
+          <Skeleton className="h-2.5 w-16" />
+        </div>
+        <Skeleton className="h-7 w-10 shrink-0" />
+      </div>
+
+      <div className="space-y-1.5 pt-0.5">
+        <div className="flex items-baseline justify-between gap-2">
+          <Skeleton className="h-2.5 w-12" />
+          <Skeleton className="h-2.5 w-16" />
+        </div>
+        {/* The real meter, empty. Its 3px height and radius come from the
+            stylesheet, so the row cannot drift from the card. */}
+        <div className="st-meter" />
+      </div>
+
+      <div className="st-strip">
+        <div className="st-strip-cell">
+          <Skeleton className="h-2.5 w-10" />
+          <Skeleton className="h-4 w-8" />
+        </div>
+        <div className="st-strip-cell">
+          <Skeleton className="h-2.5 w-10" />
+          <Skeleton className="h-4 w-8" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Stands in for `TeamCard` -- no crest row and no meter, but a four-cell
+ * strip that wraps to two rows under `.st-strip`'s two-column grid. That
+ * second strip row is what makes the real `TeamCard` the tallest of the
+ * three cards in the row: a skeleton built only from the leader shape would
+ * stand a row short of the real one and reintroduce a smaller jolt when the
+ * cards land.
+ */
+function TeamCardSkeleton() {
+  return (
+    <div className="st-panel st-kpi" aria-hidden="true">
+      <div className="flex items-center justify-between gap-2">
+        <Skeleton className="h-2.5 w-16" />
+        <Skeleton className="h-4 w-14" />
+      </div>
+
+      <div className="flex items-end gap-2.5">
+        <Skeleton className="h-7 w-10" />
+        <Skeleton className="h-3 w-16" />
+        <Skeleton className="ml-auto h-2.5 w-16" />
+      </div>
+
+      <div className="st-strip">
+        <div className="st-strip-cell">
+          <Skeleton className="h-2.5 w-10" />
+          <Skeleton className="h-4 w-8" />
+        </div>
+        <div className="st-strip-cell">
+          <Skeleton className="h-2.5 w-10" />
+          <Skeleton className="h-4 w-8" />
+        </div>
+        <div className="st-strip-cell">
+          <Skeleton className="h-2.5 w-10" />
+          <Skeleton className="h-4 w-8" />
+        </div>
+        <div className="st-strip-cell">
+          <Skeleton className="h-2.5 w-10" />
+          <Skeleton className="h-4 w-8" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The Overview tab's three-card row before any data has landed: two
+ * `LeaderCard`-shaped placeholders and one `TeamCard`-shaped one, in the
+ * same order the real row renders them.
+ *
+ * Built from `.st-panel .st-kpi` and each real card's own inner classes
+ * rather than from free standing boxes at hand picked heights, so it stands
+ * exactly as tall as what replaces it. Without it the row is simply absent
+ * on a cold load and then inserted above the leaderboard, which pushes the
+ * entire page down.
+ *
+ * This is the Overview row only. The Me tab's metric row is a different
+ * shape (`MetricCard` has no crest, no meter and no strip) and gets its own
+ * skeleton rather than a parameterised version of this one.
+ */
+export function KpiRowSkeleton() {
+  return (
+    <>
+      <LeaderCardSkeleton />
+      <LeaderCardSkeleton />
+      <TeamCardSkeleton />
+    </>
+  )
+}
+
+/**
+ * The Me tab's metric row before any data has landed. `MetricCard` has no
+ * crest row, no meter and no strip -- it is an overline, a hero figure and
+ * an optional hint, nothing else -- so this mirrors exactly that and no more.
+ * Reusing `KpiRowSkeleton` here would stand far taller than the row it
+ * stands in for and reintroduce the same jolt this exists to remove.
+ *
+ * `count` tracks `SHOW_TURNOVERS` at the call site: the Me tab is three
+ * cards with turnovers gated off and four with it on, and a skeleton pinned
+ * at four would reserve a slot that never arrives and then collapse.
+ */
+export function MetricCardSkeleton({ count }: { count: number }) {
+  return (
+    <>
+      {Array.from({ length: count }, (_, i) => (
+        <div key={i} className="st-panel st-kpi gap-2" aria-hidden="true">
+          <Skeleton className="h-2.5 w-16" />
+          <div className="flex items-baseline gap-2">
+            <Skeleton className="h-7 w-14" />
+            <Skeleton className="h-2.5 w-10" />
+          </div>
+        </div>
+      ))}
+    </>
+  )
 }
 
 function fmt(n: number | null | undefined, digits = 0): string {

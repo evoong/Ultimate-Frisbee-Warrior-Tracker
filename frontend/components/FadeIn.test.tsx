@@ -28,4 +28,22 @@ describe('FadeIn', () => {
     render(<FadeIn delay={120} data-testid="f">x</FadeIn>)
     expect(screen.getByTestId('f')).toHaveStyle({ animationDelay: '120ms' })
   })
+
+  it('carries fill-mode-backwards when delayed, and never fill-mode-both', () => {
+    // Regression: with no fill mode at all, a delayed element renders at its
+    // natural opacity during the delay, then snaps to 0 when the animation
+    // starts, then fades in -- Roster's staggered lists blinking after up to
+    // 1.2s of being fully visible. `backwards` holds it at 0 through the
+    // delay without retaining ownership of opacity afterward, so it must not
+    // regress to `both` either.
+    render(<FadeIn delay={80} data-testid="f">x</FadeIn>)
+    const el = screen.getByTestId('f')
+    expect(el.className).toContain('fill-mode-backwards')
+    expect(el.className).not.toContain('fill-mode-both')
+  })
+
+  it('does not carry fill-mode-backwards with no delay', () => {
+    render(<FadeIn data-testid="f">x</FadeIn>)
+    expect(screen.getByTestId('f').className).not.toContain('fill-mode-backwards')
+  })
 })
