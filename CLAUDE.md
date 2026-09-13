@@ -826,11 +826,16 @@ The two tables -- Player Rankings and League Standings -- add these:
   standings `DialogContent` carries `stats-scope` itself; without it every
   `--st-*` inside resolves to nothing.
 
-Verifying a visual change: there is no test harness checked in. Render the
-component against mock data from a throwaway Vite entry at the `frontend/` root
-(an `harness.html` + `harness.tsx` pair; Vite dev serves it directly),
+Verifying a visual change: there is a unit test harness (vitest + jsdom +
+Testing Library, `npm test` in `frontend/`, `npm run test:frontend` at the
+repo root, and a CI step) but it covers component logic and behaviour --
+render output, class names, ARIA attributes, state transitions -- not what a
+change looks like. It does not replace rendering the component for visual
+verification, which is still done the way the rest of this section describes:
+against mock data from a throwaway Vite entry at the `frontend/` root (an
+`harness.html` + `harness.tsx` pair; Vite dev serves it directly),
 screenshot it in both themes, then delete the harness and revert the temporary
-`tailwind.config.js` `content` entry it needed. Two traps:
+`tailwind.config.js` `content` entry it needed. Three traps:
 
 - Headless Chrome's `--virtual-time-budget` does not advance the CSS animation
   clock, so transitions read as stuck at their start value -- assert on
@@ -841,6 +846,16 @@ screenshot it in both themes, then delete the harness and revert the temporary
   is not one. Verify narrow layouts by measuring instead -- dump geometry into
   the DOM and read it back with `--dump-dom` -- and check `scrollWidth ===
   clientWidth` rather than eyeballing a cropped PNG.
+- **Headless Chrome without access to a real display server advertises
+  `layout-shift` in `PerformanceObserver.supportedEntryTypes` and records
+  nothing through it.** A page that demonstrably shifts on screen still
+  reports `cls: 0` with an empty shift list, and Chrome's stderr shows
+  `CVDisplayLinkCreateWithCGDisplay failed` when this happens. A `cls: 0`
+  reading is indistinguishable from "did not shift" until the same harness has
+  been shown to report a non-zero value against a fixture built to shift --
+  see `scripts/measure-cls.mjs`'s header comment for the full detail. Run that
+  positive control before trusting any CLS number out of headless Chrome, in
+  CI or locally.
 
 ## References
 - Bugs and feature requests are tracked as GitHub issues in this repo (`gh issue list`), not in a separate tracker.

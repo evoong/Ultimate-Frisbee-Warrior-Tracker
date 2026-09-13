@@ -32,7 +32,15 @@ export default function Resolve({ loading, skeleton, className, children }: {
    *  one that directly holds `skeleton`) in every state -- never on an
    *  ancestor of it. A layout class like `grid` only lays out its own direct
    *  children, so putting it one level up leaves `children` collapsed into a
-   *  single grid item instead of laid out across the row it names. */
+   *  single grid item instead of laid out across the row it names.
+   *
+   *  That box (`.ufwt-resolve-in` / `.ufwt-resolve-out`) is the animated one:
+   *  it runs its entrance and exit with `animation-fill-mode: both`, so it
+   *  keeps ownership of `opacity` after the animation ends and a transition
+   *  on the same element never runs. This className therefore must not carry
+   *  `.ufwt-swap` -- the dim would silently never fire. Put `Swap` on the
+   *  outside instead, wrapping this whole `Resolve`, which is the
+   *  composition the Stats page already uses. */
   className?: string
   children: ReactNode
 }) {

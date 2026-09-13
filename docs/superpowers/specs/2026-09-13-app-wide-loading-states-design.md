@@ -100,7 +100,7 @@ a number and then deleted.
 | Shell visible to the user | 2589 ms | 702 ms |
 | Light background shown to a dark mode user | 1725 ms | 0 ms |
 | Largest Contentful Paint | 3172 ms | 3300 ms |
-| CLS | 0 | 0 |
+| CLS | not recorded (see below) | not recorded (see below) |
 | Transfer | 481 KB | 487 KB |
 | index.html, gzipped | 3344 B | 4801 B |
 
@@ -566,6 +566,15 @@ CLS figure gathered without it is not evidence.
 - **Image and avatar CLS**, font swap reflow, route transition choreography, and
   optimistic UI for writes. All were offered and deliberately not selected.
 - **`lib/shadcn/skeleton.tsx`.** Unchanged by decision 4.
+- **Five Stats panels still hard-swap rather than cross-fading.**
+  `PerformanceChart.tsx`, `RankingsTable.tsx`, `ChemistryHub.tsx`,
+  `ProgressionChart.tsx` and `AssistMatrix.tsx` all gained `Swap` for the
+  height transition but were not also brought onto `Resolve` for the content
+  handover, so their skeletons still cut directly to content instead of
+  cross-fading. Only the two KPI rows do both. This is a real gap against the
+  "existing Stats panels already have `Swap` and gain `Resolve` inside it"
+  statement above, noted here deliberately rather than fixed here: converting
+  five panels is its own change and is deferred to a later PR.
 
 ## Risks
 

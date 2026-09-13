@@ -14,7 +14,7 @@ import { getLatestJamSeasonWithPlayedGame, getDefaultJamSeasonId } from '../lib/
 import { isPastGame } from '../lib/gameOrder'
 import { track } from '../lib/analytics'
 import { SHOW_TURNOVERS } from '../lib/features'
-import { isRangePending } from '../lib/loadingState'
+import { settleRange } from '../lib/loadingState'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
 import PlayerCombobox from '../components/PlayerCombobox'
 import { Skeleton } from '../lib/shadcn/skeleton'
@@ -342,25 +342,21 @@ function PlayerStatsView({
   // render's own data and is idempotent, and an effect would publish one
   // paint late -- which is the flash this exists to remove.
   const settled = useRef<{ stats?: PlayerStat[]; pairings?: PairingRow[] }>({})
-  // `settled.current.stats` rather than `stats`: the former is undefined only
-  // until the first commit, which is exactly the "not started" window. Note
-  // this reads the ref before the block below writes it, which is correct --
-  // on the first render there is nothing committed and the page is pending.
-  const rangePending = isRangePending({
-    settledStats: settled.current.stats,
+  // The write gate reads only the in-flight terms (`loading` /
+  // `pairingsLoading`), never `rangePending` itself. `isRangePending` reports
+  // pending while `settled.current.stats` is undefined, so gating the write
+  // on it would mean the write never runs, the ref stays undefined forever,
+  // and the page renders skeletons permanently. See `settleRange`'s doc
+  // comment in lib/loadingState.ts for the full trace.
+  const { nextSettled, rangePending } = settleRange({
+    previous: settled.current,
+    statsIn: stats as PlayerStat[] | undefined,
+    pairingsIn: pairings as PairingRow[] | undefined,
     loading,
     readsPairings: tab === 'overview',
     pairingsLoading,
   })
-  if (!rangePending) {
-    settled.current = {
-      stats: stats as PlayerStat[] | undefined,
-      // On a tab that does not read pairings, keep whatever was last
-      // committed rather than publishing a half-loaded set to a tab the user
-      // may be about to switch to.
-      pairings: pairingsLoading ? settled.current.pairings : (pairings as PairingRow[] | undefined),
-    }
-  }
+  settled.current = nextSettled
   const statsArr = settled.current.stats
 
   // "Me" tab: the claimed player's own row from the exact same `stats`
