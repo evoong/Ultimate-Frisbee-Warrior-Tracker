@@ -283,6 +283,31 @@ Rules that apply to all three:
   caller reads it that way, which is why the reset in the panel head is
   worded as the placeholder rather than as "Clear".
 
+**Loading primitives (`frontend/components/`).** Three pieces, shared by every
+scope, and they carry behaviour but never colour -- that is the whole reason
+they are allowed to live outside the three visual systems. If one of them ever
+needs a colour, it belongs in that scope's own stylesheet instead.
+
+- **`Swap`** owns a panel's *height* change. A ResizeObserver measures the
+  inner box and transitions an explicit height on the outer one. Two traps are
+  load bearing and documented in the file: a width change is treated as a
+  window resize and lands instantly, because animated it visibly lags a drag;
+  and the `-1` first measurement seed makes the first measurement count as a
+  resize, without which every panel glides up from zero on first paint.
+  Padding goes on the inner box, never the outer -- an explicit height on a
+  padded outer box clips.
+- **`Resolve`** owns a panel's *content* change: the skeleton and the content
+  are both mounted, in one box, for a single 180ms opacity handover. It only
+  reads as the placeholder becoming the thing if the skeleton is laid out where
+  the content lands; a skeleton of a different shape cross fades into a jump.
+  The two compose -- `Resolve` goes inside `Swap`.
+- **`FadeIn`** is opacity only. Its `slide` prop is off by default and has
+  exactly one caller, Chat's message list, where a message rising into a log is
+  a real convention. Do not add a second without a reason of that kind.
+
+`.ufwt-swap` and `.ufwt-reveal` in `index.css` are the CSS half of `Swap`; they
+were `.st-*` inside the stats scope until every page turned out to need them.
+
 **Schedule ledger (`frontend/components/schedule/`).** A scoped system under
 `.schedule-scope`, defined in `components/schedule/schedule-theme.css`.
 Everything is namespaced `--sch-*` and `.sch-*` so it cannot leak into
@@ -559,7 +584,7 @@ below are the ones that are specific to a page whose subject is numbers.
   "Games" -- stale data wearing a fresh label. Same reasoning as Season mode
   reinstating the default season rather than showing all of them.
 - **A panel that already has rows keeps them while the next range loads.**
-  `.st-swap` + `data-busy`: the skeleton is for a *cold* panel, one with
+  `.ufwt-swap` + `data-busy`: the skeleton is for a *cold* panel, one with
   nothing to show yet, and every panel computes `cold` / `busy` from whether
   it currently has data. Swapping ~500px of leaderboard for ~150px of
   skeleton and back is two full-page reflows per click on the filter, and the
@@ -595,16 +620,17 @@ below are the ones that are specific to a page whose subject is numbers.
   - **A width change is treated as a window resize and lands instantly.**
     Animated, the panel visibly lags a drag. Only a height change at a stable
     width is a new range arriving.
-  The assist matrix deliberately keeps the plain `.st-swap`: its web is
+  The assist matrix deliberately keeps the plain `.ufwt-swap`: its web is
   `aspect-ratio: 1`, so its height barely moves, and the web's svg is
   `overflow: visible` by design -- an `overflow: hidden` ancestor would clip
   the names that sit outside the ring.
-- **The dim goes on a wrapper, never on a `FadeIn`.** `FadeIn` runs its
-  entrance with `animation-fill-mode: both`, so the animation keeps ownership
-  of `opacity` after it ends and a transition on the same element never runs.
-  Put `.st-swap` on the element itself and the KPI card row snaps to 40% and
-  back in a single frame while every panel below it fades over 180ms --
-  which looks exactly like the bug this whole section exists to fix.
+- **The dim goes on a wrapper, never on the animated element itself.**
+  `FadeIn` used to run with `animation-fill-mode: both`, which kept the
+  animation owning `opacity` after it ended so a transition on the same element
+  never ran -- the KPI card row snapped to 40% and back in a single frame while
+  every panel below it faded over 180ms. `FadeIn` no longer sets that, but
+  `Resolve`'s own `.ufwt-resolve-in` still does, deliberately, so the rule
+  stands for it: never put `.ufwt-swap` on a `.ufwt-resolve-in`.
 - **Verify all of this by measuring, and not under `--virtual-time-budget`.**
   Virtual time runs timers but produces no rendering steps, so `rAF` barely
   ticks and **ResizeObserver never fires** -- every `Swap` reads as stuck at

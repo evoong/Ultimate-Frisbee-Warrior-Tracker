@@ -1,7 +1,7 @@
 import { CaretDoubleRight, Users } from '@phosphor-icons/react'
 import { Avatar, AvatarFallback, AvatarImage } from '../../lib/shadcn/avatar'
 import { Skeleton } from '../../lib/shadcn/skeleton'
-import Swap from './Swap'
+import Swap from '../Swap'
 import { crestInitials, shortName, type ChemistryPair } from './types'
 import './stats-theme.css'
 

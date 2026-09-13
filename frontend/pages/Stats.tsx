@@ -652,7 +652,7 @@ function PlayerStatsView({
                   four: with turnovers gated off, a lg:grid-cols-4 leaves a
                   quarter of the row empty. */}
               {/* Wrapper, not FadeIn -- see the card row on the Overview tab. */}
-              <div className="st-swap" data-busy={rangePending}>
+              <div className="ufwt-swap" data-busy={rangePending}>
                 <FadeIn className={`grid gap-3 ${SHOW_TURNOVERS ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3'}`}>
                   <MetricCard label="Goals" value={mine.goals} series="goals" hint={perGame(mine.goals, mine.games_played)} />
                   <MetricCard label="Assists" value={mine.assists} series="assists" hint={perGame(mine.assists, mine.games_played)} />
@@ -684,7 +684,7 @@ function PlayerStatsView({
                animation keeps ownership of `opacity` after it ends and a
                transition on the same element never runs -- the card row would
                snap to 40% and back while every panel below it faded. */
-            <div className="st-swap" data-busy={rangePending && playerLines.length > 0}>
+            <div className="ufwt-swap" data-busy={rangePending && playerLines.length > 0}>
               <FadeIn className="grid grid-cols-1 gap-3 md:grid-cols-3">
                 <LeaderCard
                   overline="Top finisher"

@@ -164,7 +164,7 @@ export default function AssistMatrix({
         </div>
       </div>
 
-      <div className="st-swap" data-busy={busy}>
+      <div className="ufwt-swap" data-busy={busy}>
         {cold ? (
           <div className="space-y-3 p-4">
             <Skeleton className="h-8 w-52" />

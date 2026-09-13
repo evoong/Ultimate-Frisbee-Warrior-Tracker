@@ -5,7 +5,7 @@ import {
 import { ChartBar, TrendUp } from '@phosphor-icons/react'
 import { SHOW_TURNOVERS } from '../../lib/features'
 import { Skeleton } from '../../lib/shadcn/skeleton'
-import Swap from './Swap'
+import Swap from '../Swap'
 import { useMediaQuery } from '../../lib/shadcn/use-media-query'
 import type { PlayerLine, SeriesKey } from './types'
 import './stats-theme.css'

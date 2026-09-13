@@ -1,10 +1,9 @@
 import { useLayoutEffect, useRef, type ReactNode } from 'react'
-import './stats-theme.css'
 
 // A panel body that changes its contents without changing them abruptly.
 //
 // Two things happen when a new range lands, and both of them used to be a
-// hard cut. The content swaps -- handled by `.st-swap`, which dims through
+// hard cut. The content swaps -- handled by `.ufwt-swap`, which dims through
 // the change so the numbers cross-fade rather than flicking over. And the
 // panel's height changes, often by a couple of hundred pixels: a leaderboard
 // is 12 rows all-time and 7 in one season, a chemistry list is 8 pairings or
@@ -57,7 +56,7 @@ export default function Swap({ busy, className, children }: {
   }, [])
 
   return (
-    <div ref={outer} className="st-swap st-reveal" data-busy={busy}>
+    <div ref={outer} className="ufwt-swap ufwt-reveal" data-busy={busy}>
       <div ref={inner} className={className}>{children}</div>
     </div>
   )
