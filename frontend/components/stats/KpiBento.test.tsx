@@ -17,8 +17,20 @@ describe('KpiRowSkeleton', () => {
     expect(card.querySelector('.st-meter')).not.toBeNull()
   })
 
-  it('can size itself for a different card count', () => {
-    const { container } = render(<KpiRowSkeleton count={4} />)
-    expect(container.querySelectorAll('.st-panel.st-kpi')).toHaveLength(4)
+  it('models the team card as the tallest of the three, not a third leader card', () => {
+    // The real TeamCard has no crest and no meter, but a four cell strip that
+    // wraps to two rows -- that is what makes it the tallest card in the row.
+    // A skeleton built only from the leader shape stands a row short of the
+    // real one and reintroduces a smaller version of the jolt this exists to
+    // remove.
+    const { container } = render(<KpiRowSkeleton />)
+    const cards = container.querySelectorAll('.st-panel.st-kpi')
+    expect(cards).toHaveLength(3)
+
+    const [first, second, third] = Array.from(cards)
+    expect(first.querySelector('.st-meter')).not.toBeNull()
+    expect(second.querySelector('.st-meter')).not.toBeNull()
+    expect(third.querySelector('.st-meter')).toBeNull()
+    expect(third.querySelectorAll('.st-strip-cell')).toHaveLength(4)
   })
 })

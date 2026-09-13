@@ -93,4 +93,40 @@ describe('Resolve', () => {
     expect(screen.getByText('content')).toBeInTheDocument()
     expect(screen.queryByText('skeleton')).not.toBeInTheDocument()
   })
+
+  it('applies a layout className to the box that directly holds the children, not an ancestor', () => {
+    // A grid className on an ancestor of the real layout box does nothing for
+    // the children inside it -- e.g. `.grid` on `Resolve`'s outer box while
+    // `.ufwt-resolve-in` is a plain block div leaves the three children
+    // stacked in a single grid item instead of laid out three across.
+    function GridFixture({ loading }: { loading: boolean }) {
+      return (
+        <Resolve
+          loading={loading}
+          className="grid"
+          skeleton={
+            <>
+              <p>sk-a</p>
+              <p>sk-b</p>
+              <p>sk-c</p>
+            </>
+          }
+        >
+          <p>a</p>
+          <p>b</p>
+          <p>c</p>
+        </Resolve>
+      )
+    }
+
+    const { container, rerender } = render(<GridFixture loading />)
+    const loadingGrid = container.querySelector('.grid')!
+    expect(loadingGrid).not.toBeNull()
+    expect(loadingGrid.children).toHaveLength(3)
+
+    rerender(<GridFixture loading={false} />)
+    const settledGrid = container.querySelector('.ufwt-resolve-in.grid')!
+    expect(settledGrid).not.toBeNull()
+    expect(settledGrid.children).toHaveLength(3)
+  })
 })

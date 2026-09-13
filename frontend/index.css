@@ -215,7 +215,15 @@
    with animation-fill-mode: both, so the animation keeps ownership of opacity
    after it ends and any transition set on the same element silently never
    runs. That is the documented reason the Stats dim goes on a wrapper rather
-   than on FadeIn; do not put .ufwt-swap on this element for the same reason. */
+   than on FadeIn; do not put .ufwt-swap on this element for the same reason.
+
+   Resolve also appends the caller's own layout className (e.g. `grid`) to
+   this element and to .ufwt-resolve-out, because both are the box that
+   directly holds the caller's children -- a layout class one level up, on
+   .ufwt-resolve itself, would only arrange its own single child rather than
+   the children inside it. Do not switch this element to `display: contents`
+   to "simplify" that: an element with no box of its own cannot be animated,
+   which would silently kill the cross fade above. */
 .ufwt-resolve { position: relative; }
 
 .ufwt-resolve-in {

@@ -696,7 +696,7 @@ function PlayerStatsView({
               <Resolve
                 loading={rangePending && playerLines.length === 0}
                 className="grid grid-cols-1 gap-3 md:grid-cols-3"
-                skeleton={<KpiRowSkeleton count={3} />}
+                skeleton={<KpiRowSkeleton />}
               >
                 <LeaderCard
                   overline="Top finisher"
