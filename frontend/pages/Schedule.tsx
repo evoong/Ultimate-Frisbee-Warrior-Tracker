@@ -2346,16 +2346,17 @@ export default function Schedule() {
           `mr-auto`, and the auto margin eats the free space before
           justify-between can, keeping it tucked against the heading.
 
-          The -ml-2 pulls the button's padding back so its label sits on the
-          heading's left edge in both states. It belongs on the wrapper, not
-          on the button: a negative margin on the button also shrinks that
-          button's own max-content width, so the wrapper's shrink-to-fit
-          lands 8px under it and clamps the label short at every viewport --
+          The -9px offset pulls the button's 8px padding and 1px transparent
+          border back so the label's box sits on the heading's left edge in
+          both states. It belongs on the wrapper, not on the button: a
+          negative margin on the button also shrinks that button's own
+          max-content width, so the wrapper's shrink-to-fit lands under it
+          and clamps the label short at every viewport --
           "JAM Summer 2026" rendering as "JAM Summer 202…" on a 1400px
           screen with 900px of empty space beside it. */}
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5">
         <h1 className="order-1 shrink-0 text-[1.375rem] font-semibold tracking-[-0.022em] text-foreground">Schedule</h1>
-        <div className="order-3 -ml-2 flex w-full min-w-0 sm:order-2 sm:mr-auto sm:w-auto">
+        <div className="order-3 -ml-[0.5625rem] flex w-full min-w-0 sm:order-2 sm:mr-auto sm:w-auto">
           <SeasonPicker
             seasons={(seasons as Season[] | undefined) ?? []}
             selectedIds={scheduleSeasonIds}
