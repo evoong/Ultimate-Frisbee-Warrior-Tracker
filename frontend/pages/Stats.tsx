@@ -19,9 +19,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/
 import PlayerCombobox from '../components/PlayerCombobox'
 import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
+import Swap from '../components/Swap'
+import Resolve from '../components/Resolve'
 import StatsHeader from '../components/stats/StatsHeader'
 import FilterBar from '../components/stats/FilterBar'
-import { LeaderCard, TeamCard, MetricCard } from '../components/stats/KpiBento'
+import { LeaderCard, TeamCard, MetricCard, KpiRowSkeleton } from '../components/stats/KpiBento'
 import PerformanceChart from '../components/stats/PerformanceChart'
 import RankingsTable from '../components/stats/RankingsTable'
 import StandingsTable, { type StandingsRow, type StandingsSortKey } from '../components/stats/StandingsTable'
@@ -683,19 +685,19 @@ function PlayerStatsView({
 
       {tab === 'overview' && (
         <>
-          {/* The three cards that open the page. They render whenever the
-              filter covers any games at all -- the leader cards carry their
-              own "no player data" state, so a range with games but no
-              recorded stats still shows the team's record rather than
-              collapsing the whole row. */}
-          {(playerLines.length > 0 || gamesInFilter > 0) && (
-            /* The dim goes on a wrapper, never on FadeIn itself: FadeIn's
-               entrance runs with `animation-fill-mode: both`, so the
-               animation keeps ownership of `opacity` after it ends and a
-               transition on the same element never runs -- the card row would
-               snap to 40% and back while every panel below it faded. */
-            <div className="ufwt-swap" data-busy={rangePending && playerLines.length > 0}>
-              <FadeIn className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          {/* The three cards that open the page. On a cold load this row used
+              to be absent from the DOM entirely and then appear above the
+              leaderboard, pushing the whole page down -- the jolt this panel
+              row exists to remove. It is inside Swap so the height settles
+              rather than cutting, and inside Resolve so the skeleton cross
+              fades into the cards rather than being swapped for them. */}
+          {(rangePending || playerLines.length > 0 || gamesInFilter > 0) && (
+            <Swap busy={rangePending && playerLines.length > 0}>
+              <Resolve
+                loading={rangePending && playerLines.length === 0}
+                className="grid grid-cols-1 gap-3 md:grid-cols-3"
+                skeleton={<KpiRowSkeleton count={3} />}
+              >
                 <LeaderCard
                   overline="Top finisher"
                   icon={<Trophy className="h-3.5 w-3.5" weight="bold" />}
@@ -717,8 +719,8 @@ function PlayerStatsView({
                   secondary={secondaryFor('assists', topPlaymaker)}
                 />
                 <TeamCard icon={<Scales className="h-3.5 w-3.5" weight="bold" />} team={teamLine} />
-              </FadeIn>
-            </div>
+              </Resolve>
+            </Swap>
           )}
 
           {/* The leaderboard. Everything it needs is already parsed into

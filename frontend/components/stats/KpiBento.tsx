@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { Avatar, AvatarFallback, AvatarImage } from '../../lib/shadcn/avatar'
+import { Skeleton } from '../../lib/shadcn/skeleton'
 import { crestInitials, type PlayerLine, type SeriesKey, type TeamLine } from './types'
 import './stats-theme.css'
 
@@ -18,6 +19,62 @@ const SERIES_CLASS: Record<SeriesKey, string> = {
   goals: 'st-goals',
   assists: 'st-assists',
   turnovers: 'st-turnovers',
+}
+
+/**
+ * The card row before any data has landed.
+ *
+ * Built from `.st-panel .st-kpi` and the card's own inner classes rather than
+ * from free standing boxes at hand picked heights, so it stands exactly as tall
+ * as what replaces it. Without it the row is simply absent on a cold load and
+ * then inserted above the leaderboard, which pushes the entire page down.
+ *
+ * `count` tracks the number of real cards, which is not always three: the Me
+ * tab's metric row is three or four depending on SHOW_TURNOVERS.
+ */
+export function KpiRowSkeleton({ count = 3 }: { count?: number }) {
+  return (
+    <>
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="st-panel st-kpi" aria-hidden="true">
+          <div className="flex items-center justify-between gap-2">
+            <Skeleton className="h-2.5 w-20" />
+            <Skeleton className="h-4 w-12" />
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            <Skeleton className="h-9 w-9 rounded-lg" />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <Skeleton className="h-3.5 w-28" />
+              <Skeleton className="h-2.5 w-16" />
+            </div>
+            <Skeleton className="h-7 w-10 shrink-0" />
+          </div>
+
+          <div className="space-y-1.5 pt-0.5">
+            <div className="flex items-baseline justify-between gap-2">
+              <Skeleton className="h-2.5 w-12" />
+              <Skeleton className="h-2.5 w-16" />
+            </div>
+            {/* The real meter, empty. Its 3px height and radius come from the
+                stylesheet, so the row cannot drift from the card. */}
+            <div className="st-meter" />
+          </div>
+
+          <div className="st-strip">
+            <div className="st-strip-cell">
+              <Skeleton className="h-2.5 w-10" />
+              <Skeleton className="h-4 w-8" />
+            </div>
+            <div className="st-strip-cell">
+              <Skeleton className="h-2.5 w-10" />
+              <Skeleton className="h-4 w-8" />
+            </div>
+          </div>
+        </div>
+      ))}
+    </>
+  )
 }
 
 function fmt(n: number | null | undefined, digits = 0): string {
