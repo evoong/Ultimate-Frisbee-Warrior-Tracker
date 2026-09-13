@@ -23,7 +23,7 @@ import Swap from '../components/Swap'
 import Resolve from '../components/Resolve'
 import StatsHeader from '../components/stats/StatsHeader'
 import FilterBar from '../components/stats/FilterBar'
-import { LeaderCard, TeamCard, MetricCard, KpiRowSkeleton } from '../components/stats/KpiBento'
+import { LeaderCard, TeamCard, MetricCard, KpiRowSkeleton, MetricCardSkeleton } from '../components/stats/KpiBento'
 import PerformanceChart from '../components/stats/PerformanceChart'
 import RankingsTable from '../components/stats/RankingsTable'
 import StandingsTable, { type StandingsRow, type StandingsSortKey } from '../components/stats/StandingsTable'
@@ -648,32 +648,31 @@ function PlayerStatsView({
                 before your stats show up here.
               </p>
             </section>
-          ) : statsArr === undefined ? (
-            // Same shape as the gate above: `mine` is derived from `link`
-            // (resolved by this point) AND `statsArr`, fetched by a separate
-            // effect. Without this check, `mine` would read as undefined
-            // while stats are still loading and fall through to the "no
-            // stats yet" case below -- a wrong, if momentary, message.
-            <section className="st-panel p-4">
-              <Skeleton className="h-9 w-full" />
-            </section>
-          ) : mine ? (
+          ) : mine || rangePending ? (
             <>
-              <h2 className="st-name text-lg">{mine.player_name}</h2>
+              {/* The heading is real as soon as there is a name for it, and a
+                  skeleton only while there is not -- the page identifies
+                  itself rather than showing four grey bars. */}
+              {mine ? <h2 className="st-name text-lg">{mine.player_name}</h2> : <Skeleton className="h-6 w-40" />}
               {/* The grid tracks the card count rather than being pinned at
                   four: with turnovers gated off, a lg:grid-cols-4 leaves a
-                  quarter of the row empty. */}
-              {/* Wrapper, not FadeIn -- see the card row on the Overview tab. */}
-              <div className="ufwt-swap" data-busy={rangePending}>
-                <FadeIn className={`grid gap-3 ${SHOW_TURNOVERS ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3'}`}>
-                  <MetricCard label="Goals" value={mine.goals} series="goals" hint={perGame(mine.goals, mine.games_played)} />
-                  <MetricCard label="Assists" value={mine.assists} series="assists" hint={perGame(mine.assists, mine.games_played)} />
+                  quarter of the row empty. Swap owns the panel's height
+                  change and Resolve owns the cross fade from skeleton to
+                  cards, the same pairing the Overview row uses. */}
+              <Swap busy={rangePending && mine != null}>
+                <Resolve
+                  loading={rangePending && mine == null}
+                  className={`grid gap-3 ${SHOW_TURNOVERS ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3'}`}
+                  skeleton={<MetricCardSkeleton count={SHOW_TURNOVERS ? 4 : 3} />}
+                >
+                  <MetricCard label="Goals" value={mine?.goals ?? 0} series="goals" hint={mine ? perGame(mine.goals, mine.games_played) : undefined} />
+                  <MetricCard label="Assists" value={mine?.assists ?? 0} series="assists" hint={mine ? perGame(mine.assists, mine.games_played) : undefined} />
                   {SHOW_TURNOVERS && (
-                    <MetricCard label="Turnovers" value={mine.turnovers} series="turnovers" hint={perGame(mine.turnovers, mine.games_played)} />
+                    <MetricCard label="Turnovers" value={mine?.turnovers ?? 0} series="turnovers" hint={mine ? perGame(mine.turnovers, mine.games_played) : undefined} />
                   )}
-                  <MetricCard label="Games played" value={mine.games_played} />
-                </FadeIn>
-              </div>
+                  <MetricCard label="Games played" value={mine?.games_played ?? 0} />
+                </Resolve>
+              </Swap>
             </>
           ) : (
             <section className="st-panel">

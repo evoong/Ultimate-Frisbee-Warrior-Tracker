@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
-import { KpiRowSkeleton } from './KpiBento'
+import { KpiRowSkeleton, MetricCardSkeleton } from './KpiBento'
 
 describe('KpiRowSkeleton', () => {
   it('renders one card per real card', () => {
@@ -32,5 +32,28 @@ describe('KpiRowSkeleton', () => {
     expect(second.querySelector('.st-meter')).not.toBeNull()
     expect(third.querySelector('.st-meter')).toBeNull()
     expect(third.querySelectorAll('.st-strip-cell')).toHaveLength(4)
+  })
+})
+
+describe('MetricCardSkeleton', () => {
+  it('renders one card per requested count', () => {
+    const { container } = render(<MetricCardSkeleton count={4} />)
+    expect(container.querySelectorAll('.st-panel.st-kpi')).toHaveLength(4)
+  })
+
+  it('tracks a different count for the turnovers-off row', () => {
+    const { container } = render(<MetricCardSkeleton count={3} />)
+    expect(container.querySelectorAll('.st-panel.st-kpi')).toHaveLength(3)
+  })
+
+  it('has no crest, no meter and no strip -- MetricCard has none of those', () => {
+    // This is what keeps the skeleton from standing taller than the row it
+    // stands in for. MetricCard is an overline and a figure, nothing else;
+    // reusing the Overview row's skeleton here would reintroduce the jolt
+    // this component exists to remove.
+    const { container } = render(<MetricCardSkeleton count={3} />)
+    expect(container.querySelector('.st-meter')).toBeNull()
+    expect(container.querySelector('.st-strip')).toBeNull()
+    expect(container.querySelector('.st-crest')).toBeNull()
   })
 })
