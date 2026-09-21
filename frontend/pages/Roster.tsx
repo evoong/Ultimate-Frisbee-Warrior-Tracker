@@ -7,6 +7,7 @@ import { getDefaultJamSeasonId, getDefaultSeasonForPlayer } from '../lib/seasonU
 import { orderRosterPlayers } from '../lib/rosterOrder'
 import { useMyPlayerLink, useMyPlayerSeasonIds } from '../hooks/backend/playerLink'
 import { isPastGame } from '../lib/gameOrder'
+import { bestGame } from '../lib/bestGame'
 import { SHOW_TURNOVERS } from '../lib/features'
 import { POSITIONS } from '../lib/positions'
 import { useAuth } from '../contexts/AuthContext'
@@ -658,6 +659,7 @@ export default function Roster() {
 
   const avgGoals = summary.games > 0 ? (summary.goals / summary.games).toFixed(1) : '-'
   const avgAssists = summary.games > 0 ? (summary.assists / summary.games).toFixed(1) : '-'
+  const bestStat = bestGame((gameStats as GameStat[] | undefined) ?? [])
 
   const formatDate = (dateStr: string) => new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 
@@ -962,6 +964,25 @@ export default function Roster() {
             </Card>
           )}
         </div>
+
+        {bestStat && (
+          <Card className="bg-card text-card-foreground border-border">
+            <CardHeader>
+              <CardTitle className="text-base">Best Game</CardTitle>
+            </CardHeader>
+            <CardContent className="flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-foreground text-sm truncate">vs {bestStat.opponent}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">{formatDate(bestStat.game_date)}</div>
+              </div>
+              <div className="flex gap-3 text-center shrink-0">
+                <div><div className="font-bold text-green-600 dark:text-green-400">{bestStat.goals}</div><div className="text-xs text-muted-foreground">G</div></div>
+                <div><div className="font-bold text-blue-600 dark:text-blue-400">{bestStat.assists}</div><div className="text-xs text-muted-foreground">A</div></div>
+                {SHOW_TURNOVERS && <div><div className="font-bold text-orange-600 dark:text-orange-400">{bestStat.turnovers}</div><div className="text-xs text-muted-foreground">TO</div></div>}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Avg per game */}
         {summary.games > 0 && (
