@@ -9,6 +9,7 @@ import { useGetJamSyncConflicts, useSyncJamNow, useCreateGameFromConflict, useLi
 import { useGetLeagueTeams } from '../hooks/backend/league'
 import { getDefaultJamSeasonId, getDefaultSeasonForPlayer } from '../lib/seasonUtils'
 import { useMyPlayerLink, useMyPlayerSeasonIds } from '../hooks/backend/playerLink'
+import { useGameEventPolling } from '../hooks/useGameEventPolling'
 import { track } from '../lib/analytics'
 import { POSITIONS } from '../lib/positions'
 import { isTurnoverEvent } from '../lib/eventUtils'
@@ -620,6 +621,8 @@ export default function Schedule() {
       else navigate('/schedule', { replace: true })
     })
   }, [gameIdParam, games, currentTeamId])
+
+  useGameEventPolling(selectedGame?.id ?? null, fetchEvents)
 
   const handleSeasonSelect = (value: string) => {
     if (value === '__new__') { setShowNewSeason(true); setFormData(f => ({ ...f, season_id: '' })) }
