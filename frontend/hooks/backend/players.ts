@@ -391,7 +391,7 @@ export function useUploadPlayerPhoto() {
     // (with the session cookie the proxy needs) on the origin it was uploaded
     // from — viewed from any other deployment it's a cross-origin request with
     // no cookie, so the gateway 401s and the image never loads.
-    const photo_url = `/db/storage/v1/object/public/player-photos/${data.path}`
+    const photo_url = `/db/storage/v1/object/authenticated/player-photos/${data.path}`
 
     const { data: updated, error: updateError } = await supabase
       .from('players')

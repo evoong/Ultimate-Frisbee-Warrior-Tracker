@@ -190,8 +190,10 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
     // (Vercel + Cloudflare), and the storage client's public-URL helper would
     // bake in whichever origin the uploader was on. See players.ts's
     // useUploadPlayerPhoto for the full explanation of why an absolute URL
-    // breaks on other origins.
-    const photo_url = `/db/storage/v1/object/public/team-photos/${path}`
+    // breaks on other origins. object/authenticated, not object/public: the
+    // bucket is private (20260905000100_private_photo_buckets.sql), and the
+    // /db proxy injects the session JWT the storage SELECT policy checks.
+    const photo_url = `/db/storage/v1/object/authenticated/team-photos/${path}`
     // As above: if persisting the URL fails, the file is still in storage but
     // never linked to the team. That failure surfaces via `updateTeam.error`
     // in JSX, not via a thrown exception here.
