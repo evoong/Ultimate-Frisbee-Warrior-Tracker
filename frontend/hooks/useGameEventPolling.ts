@@ -9,6 +9,11 @@ export function useGameEventPolling(gameId: number | null, fetchEvents: (params:
     }
 
     const intervalId = window.setInterval(refresh, 2_000)
-    return () => window.clearInterval(intervalId)
+    document.addEventListener('visibilitychange', refresh)
+
+    return () => {
+      window.clearInterval(intervalId)
+      document.removeEventListener('visibilitychange', refresh)
+    }
   }, [gameId, fetchEvents])
 }

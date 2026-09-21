@@ -13,6 +13,7 @@ import { useGameEventPolling } from '../hooks/useGameEventPolling'
 import { track } from '../lib/analytics'
 import { POSITIONS } from '../lib/positions'
 import { isTurnoverEvent } from '../lib/eventUtils'
+import { shouldShowEventsLoading } from '../lib/eventLoading'
 import { SHOW_TURNOVERS } from '../lib/features'
 import { sortGamesUpcomingFirst, isPastGame } from '../lib/gameOrder'
 import { todayLocalStr } from '../lib/seasonUtils'
@@ -1590,7 +1591,7 @@ export default function Schedule() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {eventsLoading ? (
+              {shouldShowEventsLoading(eventsLoading, events) ? (
                 <div className="text-center py-8 text-muted-foreground text-sm">Loading events...</div>
               ) : gameEvents.length ? (
                 <div className="space-y-2">

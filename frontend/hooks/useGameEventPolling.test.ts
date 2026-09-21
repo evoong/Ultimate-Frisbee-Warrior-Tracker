@@ -31,6 +31,19 @@ describe('useGameEventPolling', () => {
     expect(refresh).not.toHaveBeenCalled()
   })
 
+  it('refreshes immediately when document becomes visible', () => {
+    vi.useFakeTimers()
+    const refresh = vi.fn()
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(true)
+
+    renderHook(() => useGameEventPolling(81, refresh))
+
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
+    act(() => document.dispatchEvent(new Event('visibilitychange')))
+
+    expect(refresh).toHaveBeenCalledExactlyOnceWith({ gameId: 81 })
+  })
+
   it('stops when game detail closes', () => {
     vi.useFakeTimers()
     const refresh = vi.fn()
