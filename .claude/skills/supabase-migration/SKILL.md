@@ -34,7 +34,7 @@ workflow; do not add files there. See `supabase-migrations/README.md`.
 
 ## 3. Apply
 
-- Apply locally and test:    `npm run db:reset && npm run db:test`
+- Apply locally: This project uses direct connection to Supabase instead of a local container. Configure `.env` in the root with your project's credentials.
 - Apply to production:       `supabase db push --db-url "$DATABASE_URL"`
 - Do not run `supabase db push` without an explicit MCP tool call or the
   user's direct instruction. Confirm project/environment first if there is
