@@ -4,6 +4,7 @@ import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlaye
 import { track } from '../lib/analytics'
 import { useGetAllSeasons, useGetSeasons, useCreateSeason } from '../hooks/backend/stats'
 import { getDefaultJamSeasonId, getDefaultSeasonForPlayer } from '../lib/seasonUtils'
+import { orderRosterPlayers } from '../lib/rosterOrder'
 import { useMyPlayerLink, useMyPlayerSeasonIds } from '../hooks/backend/playerLink'
 import { isPastGame } from '../lib/gameOrder'
 import { SHOW_TURNOVERS } from '../lib/features'
@@ -608,15 +609,17 @@ export default function Roster() {
     }
   }
 
-  // Subs sort to the bottom (stable otherwise, so the existing
-  // alphabetical-by-name order from useGetPlayers is preserved within each
-  // group) — they're on the roster but not part of the regular lineup, so
-  // scanning for who's actually playing shouldn't require scrolling past them.
-  const filteredPlayers = players?.filter(p =>
-    (p.display_name ?? '').toLowerCase().includes(searchQuery.toLowerCase()) &&
-    (genderFilter === 'all' || p.gender_match === genderFilter) &&
-    (positionFilter === 'all' || p.position === positionFilter)
-  ).sort((a, b) => Number(a.is_sub) - Number(b.is_sub))
+  const linkedPlayerId = playerLink.data?.team_id === currentTeamId && playerLink.data.status === 'approved'
+    ? playerLink.data.player_id
+    : undefined
+  const filteredPlayers = players && orderRosterPlayers(
+    players.filter(p =>
+      (p.display_name ?? '').toLowerCase().includes(searchQuery.toLowerCase()) &&
+      (genderFilter === 'all' || p.gender_match === genderFilter) &&
+      (positionFilter === 'all' || p.position === positionFilter)
+    ),
+    linkedPlayerId
+  )
   const allSeasonsArr = (allSeasons as Season[] | undefined) ?? []
 
   // Gender composition of the current season filter, excluding subs (unaffected
