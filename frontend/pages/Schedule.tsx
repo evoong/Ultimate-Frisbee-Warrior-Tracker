@@ -15,7 +15,7 @@ import { POSITIONS } from '../lib/positions'
 import { isTurnoverEvent } from '../lib/eventUtils'
 import { shouldShowEventsLoading } from '../lib/eventLoading'
 import { SHOW_TURNOVERS } from '../lib/features'
-import { sortGamesUpcomingFirst, isPastGame } from '../lib/gameOrder'
+import { sortGamesUpcomingFirst, isPastGame, isWithinLivePollWindow } from '../lib/gameOrder'
 import { todayLocalStr } from '../lib/seasonUtils'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
@@ -623,7 +623,7 @@ export default function Schedule() {
     })
   }, [gameIdParam, games, currentTeamId])
 
-  useGameEventPolling(selectedGame?.id ?? null, fetchEvents)
+  useGameEventPolling(selectedGame && isWithinLivePollWindow(selectedGame) ? selectedGame.id : null, fetchEvents)
 
   const handleSeasonSelect = (value: string) => {
     if (value === '__new__') { setShowNewSeason(true); setFormData(f => ({ ...f, season_id: '' })) }
