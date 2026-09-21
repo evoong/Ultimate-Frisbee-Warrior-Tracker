@@ -42,18 +42,16 @@ export function getDefaultSeasonForPlayer(
   playerSeasonIds: number[] | null | undefined,
   fallbackId: number
 ): number {
-  if (!playerSeasonIds || playerSeasonIds.length === 0) {
-    return getDefaultJamSeasonId(allSeasons, fallbackId)
-  }
-  const rosterSeasons = allSeasons.filter(s => playerSeasonIds.includes(s.id))
-  if (rosterSeasons.length === 0) {
-    return getDefaultJamSeasonId(allSeasons, fallbackId)
-  }
+  const rosterSeasons = playerSeasonIds?.length
+    ? allSeasons.filter(s => playerSeasonIds.includes(s.id))
+    : allSeasons
+  const candidates = rosterSeasons.length > 0 ? rosterSeasons : allSeasons
   const today = todayLocalStr()
-  const active = rosterSeasons.find(s => s.start_date && s.start_date <= today && (s.end_date == null || today <= s.end_date))
-  const upcoming = rosterSeasons.filter(s => s.start_date && s.start_date > today).sort((a, b) => a.start_date!.localeCompare(b.start_date!))[0]
-  const ended = rosterSeasons.filter(s => s.end_date && s.end_date < today).sort((a, b) => b.end_date!.localeCompare(a.end_date!))[0]
-  return (active ?? upcoming ?? ended ?? rosterSeasons[0])?.id ?? fallbackId
+  const active = candidates.filter(s => s.start_date && s.start_date <= today && (s.end_date == null || today <= s.end_date))
+    .sort((a, b) => b.start_date!.localeCompare(a.start_date!))[0]
+  const upcoming = candidates.filter(s => s.start_date && s.start_date > today).sort((a, b) => a.start_date!.localeCompare(b.start_date!))[0]
+  const ended = candidates.filter(s => s.end_date && s.end_date < today).sort((a, b) => b.end_date!.localeCompare(a.end_date!))[0]
+  return (active ?? upcoming ?? ended ?? candidates[0])?.id ?? fallbackId
 }
 
 type GameLike = { season_id: number | null; game_date: string }

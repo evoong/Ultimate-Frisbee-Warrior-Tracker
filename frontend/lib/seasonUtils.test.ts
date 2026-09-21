@@ -6,7 +6,7 @@ describe('getDefaultSeasonForPlayer', () => {
     { id: 1, organizer: 'Jam', start_date: '2026-05-01', end_date: '2026-08-31' }, // ended
     { id: 2, organizer: 'Jam', start_date: '2026-09-01', end_date: '2026-12-31' }, // active
     { id: 3, organizer: 'Jam', start_date: '2027-01-01', end_date: '2027-04-30' }, // upcoming
-    { id: 4, organizer: 'Other', start_date: '2026-09-01', end_date: '2026-12-31' }, // active other
+    { id: 4, organizer: 'Other', start_date: '2026-09-20', end_date: '2026-12-31' }, // latest active other
   ]
 
   it('picks active season the player is part of', () => {
@@ -35,15 +35,14 @@ describe('getDefaultSeasonForPlayer', () => {
     expect(getDefaultSeasonForPlayer(seasons, [1], 999)).toBe(1)
   })
 
-  it('falls back to default jam season if player has no seasons or empty array', () => {
+  it('falls back to latest active team season if player has no seasons', () => {
     const result = getDefaultSeasonForPlayer(seasons, [], 999)
-    // Season 2 is active Jam season
-    expect(result).toBe(2)
+    expect(result).toBe(4)
   })
 
-  it('falls back to default jam season if playerSeasonIds is null or undefined', () => {
-    expect(getDefaultSeasonForPlayer(seasons, null, 999)).toBe(2)
-    expect(getDefaultSeasonForPlayer(seasons, undefined, 999)).toBe(2)
+  it('falls back to latest active team season if player is not linked', () => {
+    expect(getDefaultSeasonForPlayer(seasons, null, 999)).toBe(4)
+    expect(getDefaultSeasonForPlayer(seasons, undefined, 999)).toBe(4)
   })
 
   it('picks active non-Jam season over player upcoming Jam season', () => {
