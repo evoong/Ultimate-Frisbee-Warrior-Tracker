@@ -46,7 +46,7 @@ describe('getDefaultSeasonForPlayer', () => {
     expect(getDefaultSeasonForPlayer(seasons, undefined, 999)).toBe(2)
   })
 
-  it('falls back to fallbackId if no seasons match at all', () => {
-    expect(getDefaultSeasonForPlayer([], [1, 2], 999)).toBe(999)
+  it('picks active non-Jam season over player upcoming Jam season', () => {
+    expect(getDefaultSeasonForPlayer(seasons, [1, 3, 4], 999)).toBe(4)
   })
 })
