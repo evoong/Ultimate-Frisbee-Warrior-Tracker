@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { cn } from '../lib/shadcn/utils'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
+import { authenticatedStorageUrl } from '../lib/storageUrl'
 import { track } from '../lib/analytics'
 import type { TeamRole } from '../lib/authClient'
 import {
@@ -193,7 +194,7 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
     // breaks on other origins. object/authenticated, not object/public: the
     // bucket is private (20260905000100_private_photo_buckets.sql), and the
     // /db proxy injects the session JWT the storage SELECT policy checks.
-    const photo_url = `/db/storage/v1/object/authenticated/team-photos/${path}`
+    const photo_url = authenticatedStorageUrl('team-photos', path)
     // As above: if persisting the URL fails, the file is still in storage but
     // never linked to the team. That failure surfaces via `updateTeam.error`
     // in JSX, not via a thrown exception here.
