@@ -35,7 +35,7 @@ const FEATURES = [
     icon: BarChart3,
     title: 'Stats & standings',
     description:
-      'Goals, assists, turnovers, and custom computed columns, sortable and filterable by season, plus league standings computed automatically from results.',
+      'Goals, assists, and custom computed columns, sortable and filterable by season, plus league standings computed automatically from results.',
   },
   {
     icon: ClipboardList,

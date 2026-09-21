@@ -1,0 +1,721 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   Schedule ledger — a design system scoped to the schedule list only.
+
+   Everything here lives under `.schedule-scope`, so none of it leaks into
+   Roster / Stats / Strategy, which keep the app's global shadcn tokens.
+
+   Two colour families and nothing else:
+
+   1. A genuinely neutral ink ramp (hue 0, saturation 0). Not warm, not
+      Tailwind slate/zinc — those carry a hue, and a hue in the neutrals is
+      what makes an interface read as a template. Pure grey lets the two
+      colours below be the only colour on screen.
+   2. One accent, a sharp azure cyan, reserved for state. It is the same cyan
+      as the nav shell's --nav-accent in index.css; the two are one accent
+      expressed in two scopes, so retune them together.
+
+   Plus a third, semantic and separate: win / loss / tie. Those are not
+   decoration and never borrow the accent.
+   ──────────────────────────────────────────────────────────────────────── */
+
+.schedule-scope {
+  /* Surfaces */
+  --sch-page: 0 0% 97.5%;
+  --sch-row: 0 0% 100%;
+
+  /* Hover is an overlay, not a second surface colour. One token pair means a
+     row lands on the same value whether it sits on the ledger's white, on
+     the featured row's cyan tint, or on whatever a future variant paints
+     underneath — a hardcoded --sch-row-hover could only ever be right on
+     one of them. */
+  --sch-overlay: 0 0% 0%;
+  --sch-overlay-a: 0.035;
+
+  /* Ink. --sch-ink-mid is deliberately much darker than the app's global
+     --muted-foreground (40% L). At 32% L it clears 8:1 on the row and on its
+     hover state, which is what a light theme actually needs: more contrast,
+     not more brightness. */
+  --sch-ink: 0 0% 9%;
+  --sch-ink-mid: 0 0% 32%;
+  --sch-ink-faint: 0 0% 46%;
+
+  /* Structure. Hairlines and one crisp 1px frame carry the hierarchy — there
+     is no box-shadow anywhere in this component and no radius above 6px.
+     Written as ink at low alpha rather than as a light grey so a rule reads
+     as a seam in the surface instead of a stripe painted on top of it; hsl()
+     takes the alpha inline, so `hsl(var(--sch-rule))` still works unchanged.
+     Never add a second alpha to these at the call site. */
+  --sch-rule: 0 0% 0% / 0.07;
+  --sch-rule-strong: 0 0% 0% / 0.12;
+
+  /* Accent. --sch-accent draws solid shapes (the travelling rail, focus
+     outlines) and clears 4.8:1 on the row; --sch-accent-ink is the glyph and
+     text variant (the caret, the "next" chip's label), deeper again at
+     6.1:1. --sch-accent-wash exists because a deep cyan at 6-14% alpha just
+     reads as grey — the wash is lighter and more saturated so a tint still
+     looks cyan. Never draw a solid shape with the wash. */
+  --sch-accent: 193 95% 30%;
+  --sch-accent-ink: 193 95% 26%;
+  --sch-accent-wash: 193 92% 44%;
+
+  /* Result. One token per outcome, used three ways: as the chip's text, as
+     the chip's field at 10% and its edge at 22%, and as the ink of our own
+     number in the score. A single token for all three is what keeps a chip
+     and the score beside it obviously the same statement.
+
+     Light needs the deep end of each hue (green-700 / red-700 / amber-700):
+     a 500-weight green on a 10% tint over white is ~1.5:1, which is a colour
+     you can see but not read. Dark takes the 500s, which clear 6:1 on the
+     same tint over a near-black row. Same recipe, opposite direction — the
+     rule is contrast, not brightness. */
+  --sch-win: 142 72% 29%;
+  --sch-loss: 0 74% 42%;
+  --sch-tie: 26 90% 37%;
+
+  --sch-mono: 'Geist Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+
+  color: hsl(var(--sch-ink));
+}
+
+/* Deep near-black, matching the app shell. A 4% page under 6.5% rows gives
+   the ledger an edge without a border doing all the work, and gives the
+   accent something to actually be bright against. */
+.dark .schedule-scope {
+  --sch-page: 0 0% 4%;
+  --sch-row: 0 0% 6.5%;
+
+  --sch-overlay: 0 0% 100%;
+  --sch-overlay-a: 0.045;
+
+  /* Here "more contrast" is literally brighter: 72% L against a 6.5% L row
+     is ~10.8:1, a clear step up from the global 63% muted-foreground, while
+     staying short of pure white so a long list doesn't glare. */
+  --sch-ink: 0 0% 97%;
+  --sch-ink-mid: 0 0% 72%;
+  --sch-ink-faint: 0 0% 55%;
+
+  --sch-rule: 0 0% 100% / 0.07;
+  --sch-rule-strong: 0 0% 100% / 0.13;
+
+  /* Same inversion as the ink ramp: a 30% cyan vanishes on a 6.5% row, so
+     the accent lifts to a bright azure (9:1) and the ink lifts past it. */
+  --sch-accent: 193 92% 56%;
+  --sch-accent-ink: 193 92% 64%;
+  --sch-accent-wash: 193 90% 52%;
+
+  /* The 500-weights. On a 10% tint of themselves over a near-black row these
+     land at 8.2 / 6.4 / 9.6 to 1. */
+  --sch-win: 142 71% 45%;
+  --sch-loss: 0 84% 60%;
+  --sch-tie: 38 92% 50%;
+}
+
+/* ── Ledger frame ───────────────────────────────────────────────────────
+   One border around the whole list, hairlines between rows. Rows are not
+   individually floating cards, so nothing here gets a shadow. */
+.sch-ledger {
+  position: relative;
+  background: hsl(var(--sch-row));
+  border: 1px solid hsl(var(--sch-rule-strong));
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.sch-ledger > * + *:not(.sch-rail) {
+  border-top: 1px solid hsl(var(--sch-rule));
+}
+
+/* One 2px accent rail for the whole list, slid between rows by GameLedger.
+   It is a 1px bar scaled to the row height rather than a sized box, so the
+   whole travel — position and length — is a single compositor transform. */
+.sch-rail {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  height: 1px;
+  background: hsl(var(--sch-accent));
+  transform-origin: top left;
+  transform: translateY(var(--rail-y, 0px)) scaleY(var(--rail-h, 0));
+  opacity: var(--rail-o, 0);
+  pointer-events: none;
+  will-change: transform;
+  transition:
+    transform 260ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 200ms ease;
+  z-index: 1;
+}
+
+/* ── Row ────────────────────────────────────────────────────────────────
+   Grid, not a flex stack: `--sch-cols-sm` / `--sch-cols-md` are supplied per
+   row by GameRow, so a new Supabase field (venue, duration, referee…)
+   becomes one more track and one more cell rather than a nested flexbox.
+
+   Track order is the F-pattern the eye actually walks: crest, then who,
+   then the drop-in fields, then the number, then the verdict. */
+.sch-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--sch-cols-sm);
+  align-items: center;
+  column-gap: 0.6875rem;
+  width: 100%;
+  padding: 0.75rem 0.875rem;
+  text-align: left;
+  background: transparent;
+  transition: background-color 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (min-width: 768px) {
+  .sch-row {
+    grid-template-columns: var(--sch-cols-md);
+    column-gap: 1.125rem;
+    padding: 0.8125rem 1.125rem;
+  }
+}
+
+/* The whole hover treatment: one translucent wash lifting off the surface
+   underneath. No border change, no shadow, no scale — the travelling rail
+   and the caret carry the rest. */
+.sch-row:hover,
+.sch-row:focus-visible,
+.sch-row:active {
+  background: hsl(var(--sch-overlay) / var(--sch-overlay-a));
+}
+
+.sch-row:focus-visible {
+  outline: 2px solid hsl(var(--sch-accent));
+  outline-offset: -2px;
+}
+
+/* Staggered follow-through. Each element trails the rail by a beat so the
+   row resolves in sequence instead of everything snapping at once. */
+.sch-stagger {
+  transition: transform 340ms cubic-bezier(0.22, 1, 0.36, 1),
+              color 340ms cubic-bezier(0.22, 1, 0.36, 1),
+              opacity 340ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.sch-stagger-1 { transition-delay: 40ms; }
+.sch-stagger-2 { transition-delay: 90ms; }
+.sch-stagger-3 { transition-delay: 140ms; }
+
+.sch-row:hover .sch-shift,
+.sch-row:focus-visible .sch-shift {
+  transform: translateX(3px);
+}
+
+/* The chevron only exists on hover — it is the row telling you it is a link. */
+.sch-caret {
+  opacity: 0;
+  transform: translateX(-6px);
+  color: hsl(var(--sch-accent-ink));
+}
+.sch-row:hover .sch-caret,
+.sch-row:focus-visible .sch-caret {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sch-row,
+  .sch-rail,
+  .sch-stagger,
+  .sch-caret,
+  .sch-crest {
+    transition-duration: 1ms;
+    transition-delay: 0ms;
+  }
+  .sch-row:hover .sch-shift {
+    transform: none;
+  }
+}
+
+/* ── Crest ──────────────────────────────────────────────────────────────
+   The opponent's monogram, leading the row. It is the anchor the eye lands
+   on before it reads anything, and it is the slot a real crest image drops
+   into later without the grid moving — which is why it is a shadcn <Avatar>
+   with a fallback rather than a styled <span>.
+
+   Squared off at 8px, not a circle: every other tile in this product (the
+   account card, the workspace switcher, the team monogram in the team list)
+   is a squircle at 6-7px, and a lone circle in the schedule would read as
+   borrowed from a different app. */
+.sch-crest {
+  width: 2.125rem;
+  height: 2.125rem;
+  border-radius: 8px;
+  background: hsl(var(--sch-ink) / 0.055);
+  border: 1px solid hsl(var(--sch-rule));
+  transition: background-color 200ms ease, border-color 200ms ease, color 200ms ease;
+}
+
+.dark .sch-crest {
+  background: hsl(var(--sch-ink) / 0.07);
+}
+
+@media (min-width: 768px) {
+  .sch-crest { width: 2.25rem; height: 2.25rem; }
+}
+
+.sch-crest-text {
+  font-family: var(--sch-mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: hsl(var(--sch-ink-mid));
+  background: transparent;
+  border-radius: inherit;
+}
+
+/* The next fixture's crest is the one place the accent touches the crest —
+   the same "this row is live" signal the rail and the wash carry. */
+.sch-row--featured .sch-crest {
+  background: hsl(var(--sch-accent-wash) / 0.16);
+  border-color: hsl(var(--sch-accent-wash) / 0.4);
+}
+.sch-row--featured .sch-crest-text {
+  color: hsl(var(--sch-accent-ink));
+}
+
+/* ── Typography ─────────────────────────────────────────────────────────
+   Team names: heavy, optically tightened. Metadata: mono, small, tracked in
+   rather than out, with an explicit line-height so it never inherits the
+   loose default that makes secondary text drift away from its heading. */
+.sch-team {
+  font-weight: 620;
+  font-size: 0.9375rem;
+  line-height: 1.15;
+  letter-spacing: -0.014em;
+  color: hsl(var(--sch-ink));
+}
+
+@media (min-width: 768px) {
+  .sch-team { font-size: 0.9688rem; }
+  .sch-score { font-size: 1.5rem; }
+}
+
+.sch-meta {
+  font-family: var(--sch-mono);
+  font-size: 0.6875rem;
+  line-height: 1;
+  letter-spacing: -0.005em;
+  color: hsl(var(--sch-ink-mid));
+  font-variant-numeric: tabular-nums;
+}
+
+.sch-meta-sep {
+  color: hsl(var(--sch-ink-faint));
+}
+
+/* A results column that does not line up is not a results column. The score
+   is its own three-track grid — ours right-aligned, dash centred, theirs
+   left-aligned — so the dash forms a spine down the list no matter whether
+   a score is one digit or two. tabular-nums keeps the ch unit honest. */
+.sch-score {
+  display: inline-grid;
+  grid-template-columns: 2ch 1.5ch 2ch;
+  align-items: baseline;
+  font-family: var(--sch-mono);
+  font-weight: 700;
+  font-size: 1.25rem;
+  line-height: 1;
+  letter-spacing: -0.045em;
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--sch-ink));
+}
+
+/* Result tint. Each modifier rebinds one variable, so the three parts of the
+   score below stay one rule each and a fourth outcome is two lines, not six.
+   The fallback is the neutral ramp, which is what an untinted score (no
+   outcome recorded) still renders as.
+
+   Only *our* number takes the colour. The opponent's stays neutral at
+   --sch-ink-mid: two saturated numbers facing each other down a long list is
+   a scoreboard, and the pair has to read as one figure with ours on top. */
+.schedule-scope .sch-score--win { --sch-out: var(--sch-win); }
+.schedule-scope .sch-score--loss { --sch-out: var(--sch-loss); }
+.schedule-scope .sch-score--tie { --sch-out: var(--sch-tie); }
+
+.sch-score-our {
+  text-align: right;
+  color: hsl(var(--sch-out, var(--sch-ink)));
+}
+
+.sch-score-them {
+  text-align: left;
+  color: hsl(var(--sch-ink-mid));
+}
+
+.sch-score-dash {
+  text-align: center;
+  color: hsl(var(--sch-ink-faint) / 0.6);
+  font-weight: 400;
+}
+
+.sch-label {
+  font-family: var(--sch-mono);
+  font-size: 0.625rem;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: hsl(var(--sch-ink-faint));
+}
+
+/* ── Outcome chip ───────────────────────────────────────────────────────
+   A tinted field, not a block: the outcome's own colour at 10% behind it, a
+   22% edge, and the full-strength colour as text. Saturated fills and neon
+   borders shout the same result at you from every row and turn a list into
+   a set of warning lights; a tint states it once and lets the score carry
+   the detail.
+
+   Square-ish on purpose: 4px, not a pill. */
+.sch-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1875rem;
+  border-radius: 4px;
+  border-width: 1px;
+  padding: 0.25rem 0.4375rem;
+  font-family: var(--sch-mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* The verdict track is a FIXED width and the chip fills it. Not a nicety:
+   the identity track is the row's only `1fr`, so it absorbs all the slack,
+   which means a content-sized chip drags the score column left with it every
+   time a label is longer than "Win". One "Default Win" in the list and the
+   dash spine every other row aligns on is gone. Sized to the longest label
+   the data actually carries -- "DEFAULT WIN" is 11 characters, ~73px at
+   11px mono, plus 14px of padding -- so nothing has to truncate on desktop.
+
+   It grows sideways only: at 11px over 4px of padding the chip is ~19px
+   against the ~34px the crest already claims, so the row height never moves
+   with it. Check that sum before adding padding here. */
+.schedule-scope .sch-chip--outcome {
+  width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* Every outcome modifier is written as `.schedule-scope .sch-chip--*` for
+   specificity, not for scoping — the `.sch-chip` above is already inside the
+   scope. The chips render through shadcn's <Badge>, whose default variant
+   carries `bg-primary text-primary-foreground`. That is a single utility
+   class, exactly the weight of a bare `.sch-chip--win`, so which one won came
+   down to stylesheet order — and the utility was winning. Every chip painted
+   `--primary`: one flat black block in light, one flat white block in dark,
+   with win, loss and tie completely indistinguishable. Two classes beats one
+   utility class regardless of order. Drop the extra `.schedule-scope` and the
+   chips silently go blank again. */
+.schedule-scope .sch-chip--win {
+  background: hsl(var(--sch-win) / 0.1);
+  border-color: hsl(var(--sch-win) / 0.22);
+  color: hsl(var(--sch-win));
+}
+.schedule-scope .sch-chip--loss {
+  background: hsl(var(--sch-loss) / 0.1);
+  border-color: hsl(var(--sch-loss) / 0.22);
+  color: hsl(var(--sch-loss));
+}
+.schedule-scope .sch-chip--tie {
+  background: hsl(var(--sch-tie) / 0.1);
+  border-color: hsl(var(--sch-tie) / 0.22);
+  color: hsl(var(--sch-tie));
+}
+.schedule-scope .sch-chip--next {
+  background: hsl(var(--sch-accent-wash) / 0.12);
+  border-color: hsl(var(--sch-accent-wash) / 0.32);
+  color: hsl(var(--sch-accent-ink));
+}
+
+/* ── Section rule ───────────────────────────────────────────────────────*/
+.sch-section-rule {
+  font-family: var(--sch-mono);
+  font-size: 0.625rem;
+  line-height: 1;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: hsl(var(--sch-ink-mid));
+}
+
+/* ── Utility icon cluster ───────────────────────────────────────────────
+   One shape, one size, one glyph weight for every icon in the header. */
+.sch-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.125rem;
+  height: 2.125rem;
+  flex: none;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  color: hsl(var(--sch-ink-mid));
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease;
+}
+.sch-icon-btn:hover:not(:disabled) {
+  color: hsl(var(--sch-ink));
+  background: hsl(var(--sch-overlay) / var(--sch-overlay-a));
+  border-color: hsl(var(--sch-rule-strong));
+}
+.sch-icon-btn:disabled { opacity: 0.45; }
+.sch-icon-btn:focus-visible {
+  outline: 2px solid hsl(var(--sch-accent));
+  outline-offset: 1px;
+}
+.sch-icon-btn[data-active='true'] {
+  color: hsl(var(--sch-ink));
+  background: hsl(var(--sch-overlay) / var(--sch-overlay-a));
+  border-color: hsl(var(--sch-rule-strong));
+}
+
+/* The primary action is the *same button* — same 34px square, same 5px
+   radius, same 1px border, same glyph — inverted. It used to be the one
+   control in the cluster wearing a colour, which made "add a game" look
+   like a stray coloured chip parked next to a toolbar rather than the end
+   of it. Inverting the ink is the highest-contrast move available and the
+   only one that keeps the row reading as one instrument. */
+.sch-icon-btn--accent {
+  color: hsl(var(--sch-row));
+  background: hsl(var(--sch-ink));
+  border-color: hsl(var(--sch-ink));
+}
+.sch-icon-btn--accent:hover:not(:disabled) {
+  color: hsl(var(--sch-row));
+  background: hsl(var(--sch-ink-mid));
+  border-color: hsl(var(--sch-ink-mid));
+}
+
+.sch-icon-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+  padding: 0.125rem;
+  border: 1px solid hsl(var(--sch-rule-strong));
+  border-radius: 6px;
+}
+
+/* ── Featured row ───────────────────────────────────────────────────────
+   The next match up. Its rail is already down, so hovering the rest of the
+   list reads as "these could be it too" rather than as a separate idiom.
+   The tint is the accent's wash, deliberately below the hover overlay's
+   weight so hovering the featured row still visibly changes it. */
+.sch-row--featured {
+  background: hsl(var(--sch-accent-wash) / 0.06);
+}
+.sch-row--featured:hover,
+.sch-row--featured:focus-visible {
+  background: hsl(var(--sch-accent-wash) / 0.12);
+}
+.dark .sch-row--featured {
+  background: hsl(var(--sch-accent-wash) / 0.07);
+}
+.dark .sch-row--featured:hover,
+.dark .sch-row--featured:focus-visible {
+  background: hsl(var(--sch-accent-wash) / 0.13);
+}
+
+/* Date block used by upcoming rows in the score track, so an unplayed
+   fixture still lands a number where every played row lands one. */
+.sch-datemark {
+  display: grid;
+  justify-items: center;
+  gap: 0.1875rem;
+  padding: 0.3125rem 0.5rem;
+  border: 1px solid hsl(var(--sch-rule-strong));
+  border-radius: 5px;
+  font-family: var(--sch-mono);
+  min-width: 2.75rem;
+}
+.sch-datemark-month {
+  font-size: 0.5625rem;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: hsl(var(--sch-ink-mid));
+}
+.sch-datemark-day {
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: hsl(var(--sch-ink));
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Season switcher ────────────────────────────────────────────────────
+   A ghost control, inline beside the page's <h1>. It carries no surface,
+   no border and no radius at rest -- the only thing on screen is its label,
+   one step down the ink ramp from the heading it sits beside, so the pair
+   reads as "Schedule / of this season" rather than as a title next to a
+   form field. Chrome appears on hover and while the menu is open, which is
+   the only time it needs to look pressable.
+
+   It is the same 34px box as .sch-icon-btn and the same 5px radius, so the
+   hover state lands on the same shape as the utility cluster opposite it.
+   Height is fixed rather than derived from the label: a control that grows
+   when the season name is longer moves the heading row. */
+.sch-season {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  /* min-width:0 so the label ellipsises inside a flex row instead of the
+     heading beside it being pushed off. Deliberately no `max-width: 100%`:
+     the wrapper carries the row's negative offset, so its shrink-to-fit
+     width is 8px under this button's max-content, and a percentage
+     max-width resolved against that clamps the label 8px short at every
+     viewport -- "JAM Summer 2026" renders as "JAM Summer 202…" on a
+     1400px screen with 900px of free space beside it. Flex-shrink plus
+     min-width:0 is what keeps it inside its parent. */
+  min-width: 0;
+  height: 2.125rem;
+  padding: 0 0.4375rem 0 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.008em;
+  color: hsl(var(--sch-ink-mid));
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease;
+}
+.sch-season:hover,
+.sch-season[data-state='open'] {
+  color: hsl(var(--sch-ink));
+  background: hsl(var(--sch-overlay) / var(--sch-overlay-a));
+  border-color: hsl(var(--sch-rule-strong));
+}
+.sch-season:focus-visible {
+  outline: 2px solid hsl(var(--sch-accent));
+  outline-offset: 1px;
+}
+/* No filter applied. One more step down the ramp so a live filter is
+   visibly a statement and "all seasons" is visibly the resting state --
+   --sch-ink-faint is still 46% / 55% L, which clears 4.5:1 on both rows. */
+.sch-season[data-empty='true'] { color: hsl(var(--sch-ink-faint)); }
+
+.sch-season-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The caret is the only thing that says this is a menu, so it turns over
+   rather than just sitting there. */
+.sch-season-caret {
+  opacity: 0.55;
+  transition: transform 180ms cubic-bezier(0.3, 0, 0.2, 1);
+}
+.sch-season[data-state='open'] .sch-season-caret { transform: rotate(180deg); }
+
+/* ── Season menu ────────────────────────────────────────────────────────
+   The one floating layer in this scope, and therefore the one place a
+   shadow is allowed: a popover has no surface to seam against, so a
+   hairline alone leaves it pasted onto whatever it covers. Everything in
+   the document flow still uses rules, not shadows. */
+.schedule-scope { --sch-lift: 0 10px 30px -12px hsl(0 0% 0% / 0.28), 0 2px 8px -4px hsl(0 0% 0% / 0.16); }
+.dark .schedule-scope { --sch-lift: 0 12px 34px -12px hsl(0 0% 0% / 0.66), 0 2px 10px -4px hsl(0 0% 0% / 0.5); }
+
+.sch-menu {
+  border: 1px solid hsl(var(--sch-rule-strong));
+  border-radius: 6px;
+  background: hsl(var(--sch-row) / 0.92);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--sch-lift);
+}
+
+.sch-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.125rem 0.375rem 0.375rem;
+}
+.sch-menu-overline {
+  font-family: var(--sch-mono);
+  font-size: 0.625rem;
+  line-height: 1;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: hsl(var(--sch-ink-faint));
+}
+/* Radix moves focus into the panel on open, so this is reachable by
+   keyboard immediately and cannot fall back to the UA's default outline. */
+.sch-menu-link {
+  font-family: var(--sch-mono);
+  font-size: 0.6875rem;
+  line-height: 1.2;
+  letter-spacing: -0.005em;
+  color: hsl(var(--sch-ink-mid));
+  border-radius: 4px;
+  padding: 0.125rem 0.25rem;
+  margin: -0.125rem -0.25rem;
+  transition: color 160ms ease, background-color 160ms ease;
+}
+.sch-menu-link:hover {
+  color: hsl(var(--sch-accent-ink));
+  background: hsl(var(--sch-overlay) / var(--sch-overlay-a));
+}
+.sch-menu-link[data-active='true'] { color: hsl(var(--sch-accent-ink)); }
+.sch-menu-link:focus-visible {
+  outline: 2px solid hsl(var(--sch-accent));
+  outline-offset: 1px;
+}
+
+.sch-menu-empty {
+  padding: 0.75rem 0.625rem;
+  text-align: center;
+  font-size: 0.75rem;
+  color: hsl(var(--sch-ink-faint));
+}
+
+.sch-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5625rem;
+  width: 100%;
+  padding: 0.4375rem 0.625rem;
+  border-radius: 5px;
+  text-align: left;
+  font-size: 0.8125rem;
+  color: hsl(var(--sch-ink));
+  transition: background-color 140ms ease;
+}
+.sch-option:hover { background: hsl(var(--sch-overlay) / var(--sch-overlay-a)); }
+.sch-option:focus-visible {
+  outline: 2px solid hsl(var(--sch-accent));
+  outline-offset: -2px;
+}
+.sch-option-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 4px;
+  border: 1px solid hsl(var(--sch-rule-strong));
+  color: transparent;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+.sch-option[data-checked='true'] .sch-option-box {
+  background: hsl(var(--sch-accent));
+  border-color: hsl(var(--sch-accent));
+  color: hsl(var(--sch-row));
+}
+.dark .sch-option[data-checked='true'] .sch-option-box { color: hsl(0 0% 4%); }
+
+@media (prefers-reduced-motion: reduce) {
+  .sch-season,
+  .sch-season-caret,
+  .sch-menu-link,
+  .sch-option,
+  .sch-option-box {
+    transition-duration: 1ms;
+  }
+}

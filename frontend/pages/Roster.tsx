@@ -3,11 +3,14 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlayer, useGetPlayerGameStats, useSetGameAttendance, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer, useGetSeasonRoster, useCopyPlayersToSeason, useRemovePlayersFromSeason, useGetPlayerAssistPairings, useGetPlayerTurnoverBreakdown, useGetPlayerPrivate, useUpsertPlayerPrivate, type AssistPairingRow, type TurnoverBreakdownRow, type PlayerPrivate } from '../hooks/backend/players'
 import { track } from '../lib/analytics'
 import { useGetAllSeasons, useGetSeasons, useCreateSeason } from '../hooks/backend/stats'
-import { getDefaultJamSeasonId } from '../lib/seasonUtils'
+import { getDefaultJamSeasonId, getDefaultSeasonForPlayer } from '../lib/seasonUtils'
+import { orderRosterPlayers } from '../lib/rosterOrder'
+import { useMyPlayerLink, useMyPlayerSeasonIds } from '../hooks/backend/playerLink'
 import { isPastGame } from '../lib/gameOrder'
+import { SHOW_TURNOVERS } from '../lib/features'
 import { POSITIONS } from '../lib/positions'
 import { useAuth } from '../contexts/AuthContext'
-import SeasonMultiSelect from '../components/SeasonMultiSelect'
+import { InlineMultiPicker } from '../components/InlinePicker'
 import PlayerAvatar from '../components/PlayerAvatar'
 import GenderTag from '../components/GenderTag'
 import { Badge } from '../lib/shadcn/badge'
@@ -164,7 +167,7 @@ function PlayerEgoNetworkGraph({ centerName, received, given }: {
 }
 
 export default function Roster() {
-  const { can, currentTeamId } = useAuth()
+  const { can, currentTeamId, isGuest, user } = useAuth()
   const navigate = useNavigate()
   // The selected player mirrors this URL segment (see the effect near
   // handleSelectPlayer below), so a reload, browser back/forward, or a
@@ -196,6 +199,8 @@ export default function Roster() {
   // via playerPrivateError below and is NOT swallowed as if it were absence.
   const { data: playerPrivateRaw, error: playerPrivateError, trigger: fetchPlayerPrivate } = useGetPlayerPrivate()
   const { trigger: upsertPlayerPrivate, error: phoneError } = useUpsertPlayerPrivate()
+  const playerLink = useMyPlayerLink()
+  const playerSeasonIds = useMyPlayerSeasonIds()
 
   const phoneByPlayerId = useMemo(
     () => new Map(((playerPrivateRaw as PlayerPrivate[] | undefined) ?? []).map(p => [p.player_id, p.phone])),
@@ -222,7 +227,20 @@ export default function Roster() {
   // Empty array means "All Seasons"
   const [seasonFilters, setSeasonFilters] = useState<string[]>([])
   const [assistView, setAssistView] = useState<'list' | 'network'>('list')
-  const [rosterSeasonIds, setRosterSeasonIds] = useState<number[]>([])
+  // null until the season default resolves; [] means "All Seasons". That
+  // third state is what stops the page firing an unfiltered all-players query
+  // on mount and then immediately refiring for the default season -- two
+  // answers to the same question, with the roster visibly reshuffling from one
+  // to the other. Everything below reads activeSeasonIds; only the resolving
+  // effect and the season picker touch the nullable state itself.
+  const [rosterSeasonIds, setRosterSeasonIds] = useState<number[] | null>(null)
+  const activeSeasonIds = rosterSeasonIds ?? []
+  // The default season is applied exactly once. "Nothing is selected yet" is
+  // not a usable guard: it is equally true the moment someone deliberately
+  // picks All Seasons, so any later refetch of seasons would drag them back
+  // into a season.
+  const seasonDefaultApplied = useRef(false)
+  const rosterSeasonManual = useRef(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
 
@@ -267,6 +285,18 @@ export default function Roster() {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
+    seasonDefaultApplied.current = false
+    rosterSeasonManual.current = false
+    setRosterSeasonIds(null)
+    if (currentTeamId == null || isGuest || !user) return
+    playerLink.trigger({ teamId: currentTeamId, userId: user.id })
+  }, [currentTeamId, isGuest, user])
+
+  useEffect(() => {
+    if (playerLink.data?.team_id === currentTeamId && playerLink.data.status === 'approved') playerSeasonIds.trigger({ playerId: playerLink.data.player_id })
+  }, [playerLink.data])
+
+  useEffect(() => {
     if (currentTeamId == null) return
     fetchAllSeasons({ organizationId: currentTeamId })
     fetchSeasonsWithGames({ organizationId: currentTeamId })
@@ -275,14 +305,21 @@ export default function Roster() {
   useEffect(() => {
     const s = seasonsWithGames as { id: number }[] | undefined
     const allS = allSeasons as Season[] | undefined
-    if (!s || s.length === 0 || !allS || allS.length === 0 || rosterSeasonIds.length > 0) return
-    const defaultId = getDefaultJamSeasonId(allS, s[0]!.id)
-    setRosterSeasonIds([defaultId])
-  }, [seasonsWithGames, allSeasons])
+    if (!s || !allS || rosterSeasonManual.current) return
+    const ids = playerLink.data?.team_id === currentTeamId && playerLink.data.status === 'approved' ? playerSeasonIds.data : undefined
+    if (seasonDefaultApplied.current && ids === undefined) return
+    seasonDefaultApplied.current = true
+    // Both queries have answered by here. A team with no seasons at all
+    // resolves to All Seasons rather than staying null, or the roster would
+    // sit on skeletons waiting for a default that is never coming.
+    if (s.length === 0 || allS.length === 0) { setRosterSeasonIds([]); return }
+    const fallbackId = getDefaultJamSeasonId(allS, s[0]!.id)
+    setRosterSeasonIds([getDefaultSeasonForPlayer(allS, ids, fallbackId)])
+  }, [seasonsWithGames, allSeasons, playerLink.data, playerSeasonIds.data])
 
   useEffect(() => {
-    if (currentTeamId == null) return
-    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
+    if (currentTeamId == null || rosterSeasonIds === null) return
+    fetchPlayers({ seasonIds: activeSeasonIds.length > 0 ? activeSeasonIds : undefined, organizationId: currentTeamId })
   }, [rosterSeasonIds, currentTeamId])
 
   useEffect(() => {
@@ -336,7 +373,9 @@ export default function Roster() {
     setEditingSeasons(false)
     fetchGameStats({ playerId: player.id })
     fetchPlayerSeasons({ playerId: player.id })
-    fetchTurnoverBreakdown({ playerId: player.id })
+    // Skipped while turnovers are hidden: nothing renders the breakdown, so
+    // the query is a round trip for a card that cannot appear.
+    if (SHOW_TURNOVERS) fetchTurnoverBreakdown({ playerId: player.id })
     // Assist Connections is fetched by the seasonFilters-driven effect
     // below, once playerSeasons loads and seeds seasonFilters — not here,
     // since seasonFilters isn't populated yet at selection time.
@@ -409,7 +448,7 @@ export default function Roster() {
       // fetchPlayerPrivate's refetch will update that map on its own.
       setSelectedPlayer({ ...selectedPlayer, ...updated })
       track('player_updated', { player_id: selectedPlayer.id })
-      fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
+      fetchPlayers({ seasonIds: activeSeasonIds.length > 0 ? activeSeasonIds : undefined, organizationId: currentTeamId })
       if (currentTeamId != null) fetchPlayerPrivate({ teamId: currentTeamId })
       // Keep the form open when the phone save failed, so the error banner
       // rendered next to the Phone field (bound to upsertPlayerPrivate's
@@ -434,7 +473,7 @@ export default function Roster() {
     await updatePlayerSeasons({ playerId: selectedPlayer.id, seasonIds: selectedSeasonIds, subsBySeasonId: selectedSeasonSubs, organizationId: currentTeamId })
     track('player_seasons_updated', { player_id: selectedPlayer.id, season_count: selectedSeasonIds.length })
     await fetchPlayerSeasons({ playerId: selectedPlayer.id })
-    const refreshed = await fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
+    const refreshed = await fetchPlayers({ seasonIds: activeSeasonIds.length > 0 ? activeSeasonIds : undefined, organizationId: currentTeamId })
     // fetchPlayers' own return value is the raw `players` row -- no phone
     // field at all (that column no longer exists there). Not a problem:
     // the detail view derives phone from phoneByPlayerId at render time
@@ -450,7 +489,7 @@ export default function Roster() {
     track('player_deleted', { player_id: selectedPlayer.id })
     setDeleteConfirm(false)
     handleBack()
-    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
+    fetchPlayers({ seasonIds: activeSeasonIds.length > 0 ? activeSeasonIds : undefined, organizationId: currentTeamId })
   }
 
   const handlePositionChange = async (player: Player, position: string) => {
@@ -458,7 +497,7 @@ export default function Roster() {
     setSelectedPlayer({ ...player, position: newPos })
     await updatePosition({ playerId: player.id, position: newPos })
     track('player_role_updated', { player_id: player.id, position: newPos })
-    fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
+    fetchPlayers({ seasonIds: activeSeasonIds.length > 0 ? activeSeasonIds : undefined, organizationId: currentTeamId })
   }
 
   const handlePhotoClick = () => fileInputRef.current?.click()
@@ -472,7 +511,7 @@ export default function Roster() {
       const updated = { ...selectedPlayer, photo_url: result.photo_url }
       setSelectedPlayer(updated)
       track('player_photo_uploaded', { player_id: selectedPlayer.id })
-      fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
+      fetchPlayers({ seasonIds: activeSeasonIds.length > 0 ? activeSeasonIds : undefined, organizationId: currentTeamId })
     } else setUploadError('Upload failed. Please try again.')
     e.target.value = ''
   }
@@ -515,7 +554,7 @@ export default function Roster() {
   }
 
   const handleOpenManageRoster = () => {
-    setManageSeasonId(rosterSeasonIds.length === 1 ? rosterSeasonIds[0]! : (allSeasonsArr[0]?.id ?? null))
+    setManageSeasonId(activeSeasonIds.length === 1 ? activeSeasonIds[0]! : (allSeasonsArr[0]?.id ?? null))
     setManageSearch('')
     setShowCreateForm(false)
     setShowManageRoster(true)
@@ -565,20 +604,22 @@ export default function Roster() {
     setManageSaving(false)
     setShowManageRoster(false)
     fetchAllOrgPlayers({ organizationId: currentTeamId })
-    if (rosterSeasonIds.length === 0 || rosterSeasonIds.includes(manageSeasonId)) {
-      fetchPlayers({ seasonIds: rosterSeasonIds.length > 0 ? rosterSeasonIds : undefined, organizationId: currentTeamId })
+    if (activeSeasonIds.length === 0 || activeSeasonIds.includes(manageSeasonId)) {
+      fetchPlayers({ seasonIds: activeSeasonIds.length > 0 ? activeSeasonIds : undefined, organizationId: currentTeamId })
     }
   }
 
-  // Subs sort to the bottom (stable otherwise, so the existing
-  // alphabetical-by-name order from useGetPlayers is preserved within each
-  // group) — they're on the roster but not part of the regular lineup, so
-  // scanning for who's actually playing shouldn't require scrolling past them.
-  const filteredPlayers = players?.filter(p =>
-    (p.display_name ?? '').toLowerCase().includes(searchQuery.toLowerCase()) &&
-    (genderFilter === 'all' || p.gender_match === genderFilter) &&
-    (positionFilter === 'all' || p.position === positionFilter)
-  ).sort((a, b) => Number(a.is_sub) - Number(b.is_sub))
+  const linkedPlayerId = playerLink.data?.team_id === currentTeamId && playerLink.data.status === 'approved'
+    ? playerLink.data.player_id
+    : undefined
+  const filteredPlayers = players && orderRosterPlayers(
+    players.filter(p =>
+      (p.display_name ?? '').toLowerCase().includes(searchQuery.toLowerCase()) &&
+      (genderFilter === 'all' || p.gender_match === genderFilter) &&
+      (positionFilter === 'all' || p.position === positionFilter)
+    ),
+    linkedPlayerId
+  )
   const allSeasonsArr = (allSeasons as Season[] | undefined) ?? []
 
   // Gender composition of the current season filter, excluding subs (unaffected
@@ -893,7 +934,7 @@ export default function Roster() {
         </Card>
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-4 gap-2">
+        <div className={`grid gap-2 ${SHOW_TURNOVERS ? 'grid-cols-4' : 'grid-cols-3'}`}>
           <Card className="bg-muted/40 border-border">
             <CardContent className="pt-4 pb-3 text-center">
               <div className="text-2xl font-bold text-foreground">{summary.games}</div>
@@ -912,12 +953,14 @@ export default function Roster() {
               <div className="text-xs text-muted-foreground mt-0.5">Assists</div>
             </CardContent>
           </Card>
-          <Card className="bg-orange-500/5 border-orange-500/20">
-            <CardContent className="pt-4 pb-3 text-center">
-              <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">{summary.turnovers}</div>
-              <div className="text-xs text-muted-foreground mt-0.5">TOs</div>
-            </CardContent>
-          </Card>
+          {SHOW_TURNOVERS && (
+            <Card className="bg-orange-500/5 border-orange-500/20">
+              <CardContent className="pt-4 pb-3 text-center">
+                <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">{summary.turnovers}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">TOs</div>
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         {/* Avg per game */}
@@ -1013,7 +1056,7 @@ export default function Roster() {
         </Card>
 
         {/* Turnovers by Type */}
-        {(turnoverBreakdown as TurnoverBreakdownRow[] | undefined)?.length ? (
+        {SHOW_TURNOVERS && (turnoverBreakdown as TurnoverBreakdownRow[] | undefined)?.length ? (
           <Card className="bg-card text-card-foreground border-border">
             <CardHeader>
               <CardTitle className="text-base">Turnovers by Type</CardTitle>
@@ -1049,7 +1092,7 @@ export default function Roster() {
                   <div className="w-6 text-center">In</div>
                   <div className="w-8 text-center text-green-600 dark:text-green-400">G</div>
                   <div className="w-8 text-center text-blue-600 dark:text-blue-400">A</div>
-                  <div className="w-8 text-center text-orange-600 dark:text-orange-400">TO</div>
+                  {SHOW_TURNOVERS && <div className="w-8 text-center text-orange-600 dark:text-orange-400">TO</div>}
                 </div>
                 {filteredStats.map(stat => (
                   <div key={stat.game_id} className={`flex items-center gap-3 px-3 py-2.5 rounded-lg ${stat.in ? 'bg-background' : 'bg-muted/40 opacity-60'}`}>
@@ -1074,7 +1117,7 @@ export default function Roster() {
                     </div>
                     <div className="w-8 text-center font-bold text-green-600 dark:text-green-400">{stat.in ? stat.goals : '-'}</div>
                     <div className="w-8 text-center font-bold text-blue-600 dark:text-blue-400">{stat.in ? stat.assists : '-'}</div>
-                    <div className="w-8 text-center font-bold text-orange-600 dark:text-orange-400">{stat.in ? stat.turnovers : '-'}</div>
+                    {SHOW_TURNOVERS && <div className="w-8 text-center font-bold text-orange-600 dark:text-orange-400">{stat.in ? stat.turnovers : '-'}</div>}
                   </div>
                 ))}
               </div>
@@ -1100,7 +1143,7 @@ export default function Roster() {
                   <div className="w-10 text-center">GP</div>
                   <div className="w-10 text-center text-green-600 dark:text-green-400">G</div>
                   <div className="w-10 text-center text-blue-600 dark:text-blue-400">A</div>
-                  <div className="w-10 text-center text-orange-600 dark:text-orange-400">TO</div>
+                  {SHOW_TURNOVERS && <div className="w-10 text-center text-orange-600 dark:text-orange-400">TO</div>}
                 </div>
                 {seasonTrend.map(row => (
                   <div key={row.seasonId} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-background">
@@ -1108,7 +1151,7 @@ export default function Roster() {
                     <div className="w-10 text-center text-sm text-muted-foreground">{row.games}</div>
                     <div className="w-10 text-center font-bold text-green-600 dark:text-green-400">{row.goals}</div>
                     <div className="w-10 text-center font-bold text-blue-600 dark:text-blue-400">{row.assists}</div>
-                    <div className="w-10 text-center font-bold text-orange-600 dark:text-orange-400">{row.turnovers}</div>
+                    {SHOW_TURNOVERS && <div className="w-10 text-center font-bold text-orange-600 dark:text-orange-400">{row.turnovers}</div>}
                   </div>
                 ))}
               </div>
@@ -1134,9 +1177,12 @@ export default function Roster() {
   }
 
   // ── Roster List View ──────────────────────────────────────────────────────────
-  // Show skeleton player cards until the first players fetch resolves. Gating on
-  // players === undefined keeps skeletons out of later refetches once we have data.
-  if (loading && players === undefined) {
+  // Show skeleton player cards until the first players fetch resolves --
+  // including the window before it fires at all, while the season default is
+  // still resolving, so the list appears once, already in its final order.
+  // Gating on players === undefined keeps skeletons out of later refetches.
+  const awaitingSeasonDefault = currentTeamId != null && rosterSeasonIds === null
+  if (players === undefined && (loading || awaitingSeasonDefault)) {
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-between">
@@ -1161,9 +1207,34 @@ export default function Roster() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-foreground">Roster</h1>
-        <div className="flex items-center gap-2">
+      {/* Which season's roster you are looking at is part of what this page
+          is called, not a form field, so the switcher is a ghost control on
+          the title line rather than a full-width select on a row of its own
+          -- same move, same reasons, as the schedule's. It wraps below `sm`
+          instead of shrinking: the action cluster opposite is wider than the
+          heading, which leaves a phone nothing to put a season name in. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5">
+        <h1 className="order-1 shrink-0 text-2xl font-bold text-foreground">Roster</h1>
+        {/* The -9px offset goes on the wrapper, never on the button: on the button
+            it also shrinks that button's own max-content width, so the
+            wrapper's shrink-to-fit lands 8px under it and the label
+            ellipsises at every viewport. */}
+        <div className="order-3 -ml-[0.5625rem] flex w-full min-w-0 sm:order-2 sm:mr-auto sm:w-auto">
+          <InlineMultiPicker
+            items={allSeasonsArr.map(s => ({ id: s.id, label: seasonLabel(s) }))}
+            selectedIds={activeSeasonIds}
+            onChange={ids => {
+              rosterSeasonManual.current = true
+              setRosterSeasonIds(ids)
+            }}
+            placeholder="All seasons"
+            unit="seasons"
+            emptyLabel="No seasons yet"
+            onCreateNew={() => setShowCreateSeason(true)}
+            createLabel="Create new season…"
+          />
+        </div>
+        <div className="order-2 flex shrink-0 items-center gap-2 sm:order-3">
           <span className="text-sm text-muted-foreground">{filteredPlayers?.length || 0} of {players?.length || 0}</span>
           {/* View mode toggle: cards (full detail) vs compact (dense rows,
               fits far more of a large roster on screen without scrolling). */}
@@ -1193,15 +1264,6 @@ export default function Roster() {
           )}
         </div>
       </div>
-
-      {/* Season filter */}
-      <SeasonMultiSelect
-        seasons={allSeasonsArr}
-        selectedIds={rosterSeasonIds}
-        onChange={setRosterSeasonIds}
-        placeholder="All Seasons"
-        onCreateNew={() => setShowCreateSeason(true)}
-      />
 
       {/* Gender breakdown, doubling as a quick filter — click a count to
           narrow the list to just that gender, click again to clear it. */}

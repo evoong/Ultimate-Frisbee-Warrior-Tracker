@@ -3,69 +3,131 @@
 @tailwind utilities;
 
 @layer base {
+  /* The neutral ramp is genuinely neutral: hue 0, saturation 0.
+     It used to be hue 240 at 4-6% saturation -- shadcn's stock "zinc/slate"
+     default -- which is the single most recognisable tell of an unstyled
+     shadcn app, and it put a faint blue cast under every surface in the
+     product. A true grey lets the one accent below be the only colour on
+     screen, which is the whole point of having one. */
   :root {
-    --background: 0 0% 98%;
-    --foreground: 240 5.9% 10%;
+    --background: 0 0% 97.5%;
+    --foreground: 0 0% 9%;
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
+    --card-foreground: 0 0% 9%;
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 10% 3.9%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 10% 3.9%;
-    --destructive: 15 68.6% 56.3%;
-    --destructive-foreground: 0 0% 98%;
-    --gender-man: 212 60% 46%;
-    --gender-woman: 338 58% 48%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
+    --popover-foreground: 0 0% 9%;
+    --primary: 0 0% 9%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 95.5%;
+    --secondary-foreground: 0 0% 9%;
+    --muted: 0 0% 95.5%;
+    --muted-foreground: 0 0% 40%;
+    --accent: 0 0% 95.5%;
+    --accent-foreground: 0 0% 9%;
+    --destructive: 0 74% 42%;
+    --destructive-foreground: 0 0% 100%;
+    --gender-man: 212 60% 44%;
+    --gender-woman: 338 58% 46%;
+    --border: 0 0% 89%;
+    --input: 0 0% 89%;
+    --ring: 193 95% 30%;
     --radius: 0.5rem;
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 240 5.9% 10%;
-    --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 240 4.8% 95.9%;
-    --sidebar-accent-foreground: 240 5.9% 10%;
-    --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 0 0% 25%;
+    --sidebar-primary: 0 0% 9%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 0 0% 95.5%;
+    --sidebar-accent-foreground: 0 0% 9%;
+    --sidebar-border: 0 0% 91%;
+    --sidebar-ring: 193 95% 30%;
+
+    /* Nav accent -- a sharp azure cyan. The neutral palette above has no
+       colour in it at all (--accent is a grey, --primary is black), which is
+       deliberate: it leaves exactly one hue free to mean "this is the active
+       thing", and nothing else on screen competes with it.
+
+       Cyan specifically, and not the deep olive that used to be here: the
+       olive sat at 31% lightness on a light sidebar and 46% on a dark one,
+       so it read as a muddy neutral in both, and it shared a hue family with
+       the win/loss result colours below, which are semantic and must not be
+       confusable with "selected". Cyan is clear of green, red and amber, and
+       clears 9:1 on the dark shell without needing to be neon.
+
+       It is the same cyan the schedule ledger uses (--sch-accent in
+       components/schedule/schedule-theme.css), so one colour keeps meaning
+       one thing across the whole app. Change one and change the other.
+
+       Four roles, and they are not interchangeable:
+       --nav-accent       solid shapes -- the 2px active rail, the bottom-nav
+                          bar, a filled monogram tile. 4.8:1 on the sidebar.
+       --nav-accent-ink   glyphs and text on a pale ground (active icon, the
+                          current-team check). Deeper again, 6.1:1 on white.
+       --nav-accent-on    what sits *on* a filled tile. In light the tile is
+                          a deep cyan, so this is white -- the opposite of
+                          dark, where the tile is a bright cyan.
+       --nav-accent-wash  the tint source, used only at low alpha. A deep
+                          cyan at 10% goes grey; this is lighter and more
+                          saturated so the wash keeps its colour. Never draw
+                          a solid shape with it. */
+    --nav-accent: 193 95% 30%;
+    --nav-accent-ink: 193 95% 26%;
+    --nav-accent-on: 0 0% 100%;
+    --nav-accent-wash: 193 92% 44%;
   }
 
+  /* Deep, near-black dark mode -- 4% ground, 7% panels -- rather than the
+     stock 10%/16% charcoal. The old dark theme was a mid grey pretending to
+     be dark: it flattened every surface into the same value, so a card, the
+     page and the sidebar were indistinguishable, and it gave the accent
+     nothing to be bright against. */
   .dark {
-    --background: 240 5.9% 10%;
-    --foreground: 0 0% 98%;
-    --card: 240 3.7% 15.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 3.7% 15.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 10% 3.9%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 15 68.6% 56.3%;
-    --destructive-foreground: 0 0% 98%;
-    --gender-man: 212 70% 66%;
-    --gender-woman: 338 65% 68%;
-    --border: 240 5.3% 26.1%;
-    --input: 240 5.3% 26.1%;
-    --ring: 0 0% 98%;
-    --sidebar-background: 240 3.7% 15.9%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 0 0% 98%;
-    --sidebar-primary-foreground: 240 5.9% 10%;
-    --sidebar-accent: 240 3.7% 20%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 20%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --background: 0 0% 4%;
+    --foreground: 0 0% 97%;
+    --card: 0 0% 6.5%;
+    --card-foreground: 0 0% 97%;
+    --popover: 0 0% 8%;
+    --popover-foreground: 0 0% 97%;
+    --primary: 0 0% 97%;
+    --primary-foreground: 0 0% 6%;
+    --secondary: 0 0% 12%;
+    --secondary-foreground: 0 0% 97%;
+    --muted: 0 0% 12%;
+    --muted-foreground: 0 0% 63%;
+    --accent: 0 0% 13%;
+    --accent-foreground: 0 0% 97%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 6%;
+    --gender-man: 212 72% 68%;
+    --gender-woman: 338 66% 70%;
+    /* Hairlines, not stripes. These are the composited value of white at
+       ~8-13% over the panels above, which is the `border-white/5` look this
+       theme is after, expressed as a solid so that Tailwind opacity
+       modifiers (`divide-border/60`) still resolve -- an inline `/ 0.09`
+       inside the token would make those emit invalid colour. The scoped
+       schedule tokens do use real alpha, because every call site there is
+       hand-written. */
+    --border: 0 0% 15%;
+    --input: 0 0% 19%;
+    --ring: 193 92% 56%;
+    --sidebar-background: 0 0% 6%;
+    --sidebar-foreground: 0 0% 92%;
+    --sidebar-primary: 0 0% 97%;
+    --sidebar-primary-foreground: 0 0% 6%;
+    --sidebar-accent: 0 0% 11%;
+    --sidebar-accent-foreground: 0 0% 97%;
+    --sidebar-border: 0 0% 14%;
+    --sidebar-ring: 193 92% 56%;
+
+    /* Dark counterparts. Same rule the ledger follows: contrast is the goal,
+       not brightness, and which direction that means depends on the ground.
+       A 30% cyan is invisible on a 6% panel, so here it lifts to a bright
+       azure at 9:1 and the ink lifts past it. --nav-accent-on inverts with
+       the tile it sits on: the tile is bright here, so its text goes to a
+       cyan-black. */
+    --nav-accent: 193 92% 56%;
+    --nav-accent-ink: 193 92% 64%;
+    --nav-accent-on: 196 90% 7%;
+    --nav-accent-wash: 193 90% 52%;
   }
 }
 
@@ -75,6 +137,111 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    /* Geist -- a geometric grotesk with flat terminals and a tall x-height,
+       loaded in index.html. Everything here used to fall through to Inter or
+       whatever the OS supplied, which meant the app had no typeface of its
+       own and rendered differently on every machine. */
+    font-family: Geist, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@layer components {
+  /* The nav shell's overlines and role chips are set in Geist Mono, the same
+     face the schedule ledger uses for every number and every piece of
+     metadata (--sch-mono). Reusing it is what makes the sidebar and the
+     ledger read as one product rather than two designs sharing a viewport,
+     and it costs nothing: the font is already loaded in index.html.
+     Tailwind's own `font-mono` maps to the generic system stack, so this has
+     to be its own class. */
+  .nav-mono {
+    font-family: 'Geist Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* ── Loading choreography ────────────────────────────────────────────────
+   Promoted out of .stats-scope, where these lived as .st-swap / .st-reveal.
+   They carry no colour at all -- only opacity, height and timing -- which is
+   what lets one copy serve all three visual systems without any of them
+   leaking into another. Do not add a colour here; if a rule needs one it
+   belongs in that scope's own stylesheet.
+
+   A panel that already has rows keeps them while the next range loads and
+   dims, rather than collapsing into its skeleton. Swapping ~500px of chart
+   for ~150px of skeleton and back is two full page reflows per click, and the
+   second one throws whatever you were reading somewhere else on screen. The
+   skeleton is for a cold panel, one with nothing to show yet.
+
+   The delay is on the way IN only: a fetch that resolves inside 140ms never
+   dims at all, so a fast range change is a straight cross fade of the numbers
+   rather than a flicker. Coming back out is immediate. */
+.ufwt-swap {
+  transition: opacity 180ms ease;
+}
+.ufwt-swap[data-busy='true'] {
+  opacity: 0.4;
+  pointer-events: none;
+  transition-delay: 140ms;
+}
+
+/* The same dim plus a measured height, for a panel whose contents change size
+   between ranges. See components/Swap.tsx. The delay list is per property on
+   purpose: the dim waits 140ms so a fast fetch never flickers, but the height
+   must start the instant the new content is in, or the panel holds the old
+   size for a beat and then lurches. */
+.ufwt-reveal {
+  overflow: hidden;
+  transition-property: opacity, height;
+  transition-duration: 180ms, 340ms;
+  transition-timing-function: ease, cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ufwt-reveal[data-busy='true'] {
+  transition-delay: 140ms, 0ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ufwt-swap,
+  .ufwt-reveal {
+    transition-duration: 1ms;
+  }
+}
+
+/* The handover itself: 180ms, opacity only, nothing moves. See
+   components/Resolve.tsx.
+
+   .ufwt-resolve-in is a dedicated wrapper and must stay one. Its entrance runs
+   with animation-fill-mode: both, so the animation keeps ownership of opacity
+   after it ends and any transition set on the same element silently never
+   runs. That is the documented reason the Stats dim goes on a wrapper rather
+   than on FadeIn; do not put .ufwt-swap on this element for the same reason.
+
+   Resolve also appends the caller's own layout className (e.g. `grid`) to
+   this element and to .ufwt-resolve-out, because both are the box that
+   directly holds the caller's children -- a layout class one level up, on
+   .ufwt-resolve itself, would only arrange its own single child rather than
+   the children inside it. Do not switch this element to `display: contents`
+   to "simplify" that: an element with no box of its own cannot be animated,
+   which would silently kill the cross fade above. */
+.ufwt-resolve { position: relative; }
+
+.ufwt-resolve-in {
+  animation: ufwt-fade-in 180ms ease both;
+}
+.ufwt-resolve-out {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  animation: ufwt-fade-out 180ms ease both;
+}
+
+@keyframes ufwt-fade-in { from { opacity: 0 } to { opacity: 1 } }
+@keyframes ufwt-fade-out { from { opacity: 1 } to { opacity: 0 } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ufwt-resolve-in,
+  .ufwt-resolve-out {
+    animation-duration: 1ms;
   }
 }

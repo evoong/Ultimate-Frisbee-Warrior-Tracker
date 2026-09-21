@@ -1,0 +1,26 @@
+- generic [ref=f2e7]:
+  - link "Warrior Tracker" [ref=f2e9] [cursor=pointer]:
+    - /url: /
+  - generic [ref=f2e10]:
+    - generic [ref=f2e11]:
+      - heading "Sign in" [level=3] [ref=f2e12]
+      - paragraph [ref=f2e13]: Use your email to continue.
+    - generic [ref=f2e14]:
+      - generic [ref=f2e15]:
+        - generic [ref=f2e16]:
+          - text: Email
+          - textbox "Email" [ref=f2e17]: ericxvoong@gmail.com
+        - generic [ref=f2e18]:
+          - text: Password
+          - generic [ref=f2e19]:
+            - textbox "Password" [ref=f2e20]: BlckPnk39!@!
+            - button "Show password" [ref=f2e21] [cursor=pointer]
+        - button "Sign in" [disabled]
+      - generic [ref=f2e26]: or
+      - button "Continue with Google" [disabled]
+      - generic [ref=f2e32]: or
+      - button "Continue as a guest" [disabled]
+      - paragraph [ref=f2e38]: Browse public teams and league schedules. You won't be able to change anything.
+      - generic [ref=f2e39]:
+        - button "Create account" [ref=f2e40] [cursor=pointer]
+        - button "Forgot password?" [ref=f2e41] [cursor=pointer]
