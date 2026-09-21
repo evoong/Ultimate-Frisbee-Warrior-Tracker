@@ -50,10 +50,9 @@ export function getDefaultSeasonForPlayer(
     return getDefaultJamSeasonId(allSeasons, fallbackId)
   }
   const today = todayLocalStr()
-  const jam = rosterSeasons.filter(s => s.organizer === 'Jam')
-  const active = jam.find(s => s.start_date && s.start_date <= today && (s.end_date == null || today <= s.end_date))
-  const upcoming = jam.filter(s => s.start_date && s.start_date > today).sort((a, b) => a.start_date!.localeCompare(b.start_date!))[0]
-  const ended = jam.filter(s => s.end_date && s.end_date < today).sort((a, b) => b.end_date!.localeCompare(a.end_date!))[0]
+  const active = rosterSeasons.find(s => s.start_date && s.start_date <= today && (s.end_date == null || today <= s.end_date))
+  const upcoming = rosterSeasons.filter(s => s.start_date && s.start_date > today).sort((a, b) => a.start_date!.localeCompare(b.start_date!))[0]
+  const ended = rosterSeasons.filter(s => s.end_date && s.end_date < today).sort((a, b) => b.end_date!.localeCompare(a.end_date!))[0]
   return (active ?? upcoming ?? ended ?? rosterSeasons[0])?.id ?? fallbackId
 }
 
