@@ -41,6 +41,11 @@ select is_empty(
 -- zero-policy for the same reason: the admin console reaches them only through
 -- /api/admin/* handlers holding the service-role key, so no client role is
 -- meant to reach these rows.
+--
+-- deleted_rows_archive (20260910120000_deleted_row_recovery.sql) is
+-- zero-policy for the same reason again: it holds full-row snapshots of
+-- deleted data (including player_private columns), reachable only via
+-- restore_deleted_row() under the service-role key, never a client role.
 select is_empty(
   $$ select c.relname::text
        from pg_class c
@@ -48,7 +53,7 @@ select is_empty(
       where n.nspname = 'public'
         and c.relkind in ('r', 'p')
         and c.relname not in ('standings', 'feedback_clusters', 'feedback_reports',
-                              'platform_admins', 'admin_audit_log')
+                              'platform_admins', 'admin_audit_log', 'deleted_rows_archive')
         and not exists (select 1 from pg_policy p where p.polrelid = c.oid) $$,
   'every table in public has at least one policy'
 );
