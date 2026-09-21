@@ -33,6 +33,30 @@ export function getDefaultJamSeasonId(allSeasons: SeasonLike[], fallbackId?: num
   return (active ?? upcoming ?? ended)?.id ?? fallbackId
 }
 
+/**
+ * Resolves the default season for a specific player based on the seasons they are rostered in.
+ * If playerSeasonIds is empty or null, falls back to the default Jam season.
+ */
+export function getDefaultSeasonForPlayer(
+  allSeasons: SeasonLike[],
+  playerSeasonIds: number[] | null | undefined,
+  fallbackId: number
+): number {
+  if (!playerSeasonIds || playerSeasonIds.length === 0) {
+    return getDefaultJamSeasonId(allSeasons, fallbackId)
+  }
+  const rosterSeasons = allSeasons.filter(s => playerSeasonIds.includes(s.id))
+  if (rosterSeasons.length === 0) {
+    return getDefaultJamSeasonId(allSeasons, fallbackId)
+  }
+  const today = todayLocalStr()
+  const jam = rosterSeasons.filter(s => s.organizer === 'Jam')
+  const active = jam.find(s => s.start_date && s.start_date <= today && (s.end_date == null || today <= s.end_date))
+  const upcoming = jam.filter(s => s.start_date && s.start_date > today).sort((a, b) => a.start_date!.localeCompare(b.start_date!))[0]
+  const ended = jam.filter(s => s.end_date && s.end_date < today).sort((a, b) => b.end_date!.localeCompare(a.end_date!))[0]
+  return (active ?? upcoming ?? ended ?? rosterSeasons[0])?.id ?? fallbackId
+}
+
 type GameLike = { season_id: number | null; game_date: string }
 
 /**

@@ -89,10 +89,12 @@ Stats, Strategy, Login, dialogs, and the shadcn primitives in `lib/shadcn/`)
 is **still on lucide** -- that is a known, deliberate boundary, not an
 oversight; porting a page means porting all of its icons at once.
 `pages/Stats.tsx` imports no lucide at all any more, and neither does
-anything under `components/stats/`. The two shared components it still calls
-(`PlayerCombobox`, and `SeasonMultiSelect` via Schedule and Roster) are
+anything under `components/stats/`. The one shared component it still calls (`PlayerCombobox`) is
 lucide-based and shared with pages that have not been ported, which is why
-they were left alone -- porting one means porting every page that renders it.
+it was left alone -- porting one means porting every page that renders it.
+`components/InlinePicker.tsx` is the same situation seen from the other
+side: it is the *global*-scope switcher, so it is lucide on purpose, and a
+Phosphor glyph must not be smuggled into Roster or Strategy through it.
 
 The one addition to the shadcn tokens is the `--nav-accent*` family, defined
 in both theme blocks of `index.css`. The global palette has no accent at all
@@ -102,9 +104,9 @@ These are deliberately the **same sharp azure cyan** as the schedule ledger's
 sets are one accent expressed in two scopes, so **retune them together or not
 at all**. Use them only for state: the active nav item's rail and icon, the
 active bottom-nav cell, and the current team's monogram/check in the switcher.
-Never for a logo, a heading, or decoration -- the brand tile is deliberately
-neutral (`--sidebar-primary`) for exactly this reason. Add a second accent and
-both stop meaning anything.
+Never for a logo, a heading, or decoration -- the team crest at the top of the
+sidebar is deliberately neutral for exactly this reason. Add a second accent
+and both stop meaning anything.
 
 Cyan, and not the deep olive that was here before: the olive sat at 31% L on a
 light sidebar and 46% on a dark one, so it read as a muddy neutral in both,
@@ -135,6 +137,26 @@ them if you touch a value.
 **Nav shell (`frontend/components/nav/`, `components/AppSidebar.tsx`).** Not a
 scoped system -- it is the global one, plus the tokens above.
 
+- **The workspace switcher leads with the team, and its crest is quiet**
+  (`nav/WorkspaceSwitcher.tsx`). The crest is a real `<Avatar>` -- squircle at
+  7px, `--muted` fill, a `--border` hairline as an inset ring, the team's
+  monogram in Geist Mono as the fallback -- so a populated
+  `TeamMembership.logo_url` drops a logo in and the row does not move, exactly
+  as `MatchData.crestUrl` works in the ledger. It used to be a
+  `--sidebar-primary` square holding the product's disc glyph, which is 97% L
+  in dark and 9% in light: a near-white chip, the highest-contrast object in a
+  sidebar whose whole palette exists to leave the cyan rail as the only thing
+  that shouts. **Do not light a brand mark like it is state.** What defines the
+  tile is its hairline, one step off its own fill, which is also why it
+  survives the row's hover -- the hover fills with `--sidebar-accent`, the same
+  fill the nav rows take, so the header reads as the top of that list rather
+  than a widget parked above it.
+  The type is the team name at 15px/600 in full ink with the product name as a
+  9.5px mono overline above it, not the 9-over-13.5 pair it was, which read as
+  a label with a caption rather than as an answer to "whose dashboard is this".
+  The switcher's own popover is the one place the accent belongs here: the
+  current team's tile, because that is state. Every other tile in the list
+  takes the same quiet crest.
 - **The account card is the only thing in the sidebar footer.** Theme,
   organization settings, passkeys, feedback and sign-out used to be five
   sibling rows there, each carrying the same visual weight as Schedule. They
@@ -206,6 +228,85 @@ scoped system -- it is the global one, plus the tokens above.
   without adding a fetch to the app shell. A guest is anonymous and has no
   email at all, and is also a member of no team, which is why the switcher
   falls back to the product wordmark for them.
+
+**The ghost switcher, and the three copies of it.** The control that says
+*which* thing you are looking at -- which season's schedule, which season's
+roster, which play is on the board -- is a ghost button inline with the
+page's `<h1>` (or at the head of its toolbar), never a bordered select on a
+row of its own. A full-width bordered select reads as a form field waiting
+to be filled in; these are not fields, nothing is submitted, and the answer
+is already on screen in the list underneath. So: no surface, no border and
+no radius at rest, chrome on hover and while open, on the same 34px box and
+5px radius as the icon buttons beside it.
+
+There are **three implementations on purpose**, one per scope, and they
+share an anatomy rather than a file:
+
+| Scope | File | Tokens | Icons |
+|---|---|---|---|
+| Schedule | `components/schedule/SeasonPicker.tsx` | `--sch-*` | Phosphor |
+| Stats | `components/stats/Picker.tsx` | `--st-*` | Phosphor |
+| Global (Roster, Strategy) | `components/InlinePicker.tsx` | shadcn | lucide |
+
+Do not collapse them into one shared component: that is how a Phosphor
+glyph ends up inside a lucide page, which is the boundary the Icons section
+above exists to hold. Stats' is the one that keeps a permanent hairline
+frame, because it stands beside segmented controls and has to match them --
+the other two are next to a heading, where a frame is the thing being
+removed. A fourth page gets the picker for its own scope, or reuses
+`InlinePicker` if it is still on the global tokens.
+
+Rules that apply to all three:
+
+- **The -9px optical offset goes on the wrapper, never on the button.** It
+  cancels the trigger's 8px padding and 1px transparent border so the
+  label's box lands on the heading's own left edge. On the button, the
+  negative margin also shrinks that button's max-content width, so a
+  shrink-to-fit wrapper lands under it and the label ellipsises at *every*
+  viewport, not just narrow ones. Verify by measuring the label's and the
+  `<h1>`'s rects -- they must be equal.
+- **Below `sm` the header wraps; the picker does not shrink.** The action
+  cluster opposite is wider than the heading, so a 360px viewport leaves
+  ~90px of label -- "JAM Summer 202…", which is worse than no name at all.
+  The picker is `w-full` and ordered last there, which forces its own line;
+  from `sm` up it is `w-auto` with `mr-auto`, and the auto margin eats the
+  free space before `justify-between` can.
+- **The placeholder is never dimmed below the scope's muted token; the
+  *selected* state is what moves.** Global `--muted-foreground` is already
+  the dimmest passing value (5.7:1 light, 7.4:1 dark) and fading it to 60%
+  for a placeholder lands at ~2.5:1. So a live selection steps *up* to
+  `text-foreground/80` instead.
+- **Several selections collapse to a count with no badge beside it.** Stats'
+  `MultiPicker` prints both; "3 seasons 3" is the label saying the same
+  number twice, six pixels from an `<h1>`.
+- **An empty multi-selection means "all of them", not "nothing".** Every
+  caller reads it that way, which is why the reset in the panel head is
+  worded as the placeholder rather than as "Clear".
+
+**Loading primitives (`frontend/components/`).** Three pieces, shared by every
+scope, and they carry behaviour but never colour -- that is the whole reason
+they are allowed to live outside the three visual systems. If one of them ever
+needs a colour, it belongs in that scope's own stylesheet instead.
+
+- **`Swap`** owns a panel's *height* change. A ResizeObserver measures the
+  inner box and transitions an explicit height on the outer one. Two traps are
+  load bearing and documented in the file: a width change is treated as a
+  window resize and lands instantly, because animated it visibly lags a drag;
+  and the `-1` first measurement seed makes the first measurement count as a
+  resize, without which every panel glides up from zero on first paint.
+  Padding goes on the inner box, never the outer -- an explicit height on a
+  padded outer box clips.
+- **`Resolve`** owns a panel's *content* change: the skeleton and the content
+  are both mounted, in one box, for a single 180ms opacity handover. It only
+  reads as the placeholder becoming the thing if the skeleton is laid out where
+  the content lands; a skeleton of a different shape cross fades into a jump.
+  The two compose -- `Resolve` goes inside `Swap`.
+- **`FadeIn`** is opacity only. Its `slide` prop is off by default and has
+  exactly one caller, Chat's message list, where a message rising into a log is
+  a real convention. Do not add a second without a reason of that kind.
+
+`.ufwt-swap` and `.ufwt-reveal` in `index.css` are the CSS half of `Swap`; they
+were `.st-*` inside the stats scope until every page turned out to need them.
 
 **Schedule ledger (`frontend/components/schedule/`).** A scoped system under
 `.schedule-scope`, defined in `components/schedule/schedule-theme.css`.
@@ -313,6 +414,43 @@ Structure and behaviour:
   primary action and is that same square with its **ink inverted**, not a
   coloured button: a lone tinted chip on the end of a toolbar reads as a stray
   control rather than as the end of the row.
+- **The season switcher is a ghost control on the title line, not a field**
+  (`components/schedule/SeasonPicker.tsx`). It was a full-width bordered
+  `SeasonMultiSelect` on a row of its own under the header -- 40px plus a
+  gap spent on a form input asking you to fill it in, when what it reports
+  is *which schedule you are looking at*. That is part of the page's title,
+  so it sits beside the `<h1>` with no surface, no border and no radius at
+  rest; chrome appears on hover and while the menu is open, on the same
+  34px box and 5px radius as `.sch-icon-btn` opposite it. It is deliberately
+  not Stats' `Picker`, which carries a hairline frame to match the segmented
+  controls beside it -- the same object here puts a box back next to the
+  heading. Roster and Strategy make the same move through
+  `components/InlinePicker.tsx`, the global-scope member of the family.
+  Four things are load-bearing:
+  - **It wraps below `sm`, it does not shrink.** The utility cluster is a
+    fixed 196px and the heading is 95px, so a 360px viewport leaves ~90px of
+    label -- "JAM Summer 202…", which is worse than no season name at all.
+    The picker is `w-full` and ordered last there, which forces it onto its
+    own line; from `sm` up it is `w-auto` with `mr-auto`, and the auto margin
+    eats the free space before `justify-between` can.
+  - **The -9px optical offset goes on the wrapper, never on the button.**
+    It cancels the trigger's 8px padding and its 1px transparent border, so
+    the label's box lands on the heading's own left edge -- verify that by
+    measuring both rects, they must be equal. On the *button* the negative
+    margin also shrinks that button's own max-content width, so the
+    wrapper's shrink-to-fit lands under it and `max-width: 100%` clamps the
+    label short at *every* viewport -- the season name ellipsised on a
+    1400px screen with 900px of empty space beside it. `.sch-season`
+    therefore sets `min-width: 0` and no `max-width`.
+  - **Two or more seasons collapse to "3 seasons" with no count badge.**
+    Stats' `MultiPicker` prints both; here that is the label saying the same
+    number twice, six pixels from an `<h1>`.
+  - **The menu is the one floating layer in this scope and therefore the one
+    place a shadow is allowed** (`--sch-lift`), for the same reason Stats
+    allows one: a popover has no surface to seam against. Nothing in the
+    document flow gets one. It portals to `<body>`, so `PopoverContent`
+    carries `schedule-scope` itself or every `--sch-*` inside resolves to
+    nothing.
 - **shadcn primitives live in `frontend/lib/shadcn/`**, not `components/ui/`,
   and there is no `components.json`, so `npx shadcn add` will not work -- add the
   file by hand. Unused primitives are normal there (`separator`, `sheet` and
@@ -446,7 +584,7 @@ below are the ones that are specific to a page whose subject is numbers.
   "Games" -- stale data wearing a fresh label. Same reasoning as Season mode
   reinstating the default season rather than showing all of them.
 - **A panel that already has rows keeps them while the next range loads.**
-  `.st-swap` + `data-busy`: the skeleton is for a *cold* panel, one with
+  `.ufwt-swap` + `data-busy`: the skeleton is for a *cold* panel, one with
   nothing to show yet, and every panel computes `cold` / `busy` from whether
   it currently has data. Swapping ~500px of leaderboard for ~150px of
   skeleton and back is two full-page reflows per click on the filter, and the
@@ -482,16 +620,17 @@ below are the ones that are specific to a page whose subject is numbers.
   - **A width change is treated as a window resize and lands instantly.**
     Animated, the panel visibly lags a drag. Only a height change at a stable
     width is a new range arriving.
-  The assist matrix deliberately keeps the plain `.st-swap`: its web is
+  The assist matrix deliberately keeps the plain `.ufwt-swap`: its web is
   `aspect-ratio: 1`, so its height barely moves, and the web's svg is
   `overflow: visible` by design -- an `overflow: hidden` ancestor would clip
   the names that sit outside the ring.
-- **The dim goes on a wrapper, never on a `FadeIn`.** `FadeIn` runs its
-  entrance with `animation-fill-mode: both`, so the animation keeps ownership
-  of `opacity` after it ends and a transition on the same element never runs.
-  Put `.st-swap` on the element itself and the KPI card row snaps to 40% and
-  back in a single frame while every panel below it fades over 180ms --
-  which looks exactly like the bug this whole section exists to fix.
+- **The dim goes on a wrapper, never on the animated element itself.**
+  `FadeIn` used to run with `animation-fill-mode: both`, which kept the
+  animation owning `opacity` after it ended so a transition on the same element
+  never ran -- the KPI card row snapped to 40% and back in a single frame while
+  every panel below it faded over 180ms. `FadeIn` no longer sets that, but
+  `Resolve`'s own `.ufwt-resolve-in` still does, deliberately, so the rule
+  stands for it: never put `.ufwt-swap` on a `.ufwt-resolve-in`.
 - **Verify all of this by measuring, and not under `--virtual-time-budget`.**
   Virtual time runs timers but produces no rendering steps, so `rAF` barely
   ticks and **ResizeObserver never fires** -- every `Swap` reads as stuck at
@@ -519,9 +658,9 @@ these:
   `MultiPicker` / `SinglePicker`). It replaced three separate controls doing
   the same job: a shadcn `<Select>` under a `<Label>`, and two hand-rolled
   click-outside popovers (`SeasonMultiSelect`, `PlayerMultiSelect`) with their
-  own trigger styling and their own lucide chevrons. `PlayerMultiSelect` was
-  deleted with its last caller; `SeasonMultiSelect` stays because Schedule and
-  Roster still use it. Add a fourth dropdown here and it goes through Picker.
+  own trigger styling and their own lucide chevrons. Both were deleted with
+  their last callers -- `SeasonMultiSelect` when Roster moved to
+  `InlinePicker`. Add a fourth dropdown here and it goes through Picker.
 - **The assist matrix has two views of one data set -- a web and a table --
   and the web is the default** (`components/stats/AssistWeb.tsx`, chosen with
   a segmented control in the panel head, remembered per device in
@@ -687,11 +826,16 @@ The two tables -- Player Rankings and League Standings -- add these:
   standings `DialogContent` carries `stats-scope` itself; without it every
   `--st-*` inside resolves to nothing.
 
-Verifying a visual change: there is no test harness checked in. Render the
-component against mock data from a throwaway Vite entry at the `frontend/` root
-(an `harness.html` + `harness.tsx` pair; Vite dev serves it directly),
+Verifying a visual change: there is a unit test harness (vitest + jsdom +
+Testing Library, `npm test` in `frontend/`, `npm run test:frontend` at the
+repo root, and a CI step) but it covers component logic and behaviour --
+render output, class names, ARIA attributes, state transitions -- not what a
+change looks like. It does not replace rendering the component for visual
+verification, which is still done the way the rest of this section describes:
+against mock data from a throwaway Vite entry at the `frontend/` root (an
+`harness.html` + `harness.tsx` pair; Vite dev serves it directly),
 screenshot it in both themes, then delete the harness and revert the temporary
-`tailwind.config.js` `content` entry it needed. Two traps:
+`tailwind.config.js` `content` entry it needed. Three traps:
 
 - Headless Chrome's `--virtual-time-budget` does not advance the CSS animation
   clock, so transitions read as stuck at their start value -- assert on
@@ -702,6 +846,16 @@ screenshot it in both themes, then delete the harness and revert the temporary
   is not one. Verify narrow layouts by measuring instead -- dump geometry into
   the DOM and read it back with `--dump-dom` -- and check `scrollWidth ===
   clientWidth` rather than eyeballing a cropped PNG.
+- **Headless Chrome without access to a real display server advertises
+  `layout-shift` in `PerformanceObserver.supportedEntryTypes` and records
+  nothing through it.** A page that demonstrably shifts on screen still
+  reports `cls: 0` with an empty shift list, and Chrome's stderr shows
+  `CVDisplayLinkCreateWithCGDisplay failed` when this happens. A `cls: 0`
+  reading is indistinguishable from "did not shift" until the same harness has
+  been shown to report a non-zero value against a fixture built to shift --
+  see `scripts/measure-cls.mjs`'s header comment for the full detail. Run that
+  positive control before trusting any CLS number out of headless Chrome, in
+  CI or locally.
 
 ## References
 - Bugs and feature requests are tracked as GitHub issues in this repo (`gh issue list`), not in a separate tracker.

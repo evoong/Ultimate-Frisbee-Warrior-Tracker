@@ -7,14 +7,14 @@ import { useGetAllSeasons, useGetSeasons, useCreateSeason, useUpdateSeason, useG
 import { useGetGameAttendance } from '../hooks/backend/attendance'
 import { useGetJamSyncConflicts, useSyncJamNow, useCreateGameFromConflict, useLinkConflictToGame, useDismissConflict, type JamSyncConflict } from '../hooks/backend/jamSync'
 import { useGetLeagueTeams } from '../hooks/backend/league'
-import { getDefaultJamSeasonId } from '../lib/seasonUtils'
+import { getDefaultJamSeasonId, getDefaultSeasonForPlayer } from '../lib/seasonUtils'
+import { useMyPlayerLink, useMyPlayerSeasonIds } from '../hooks/backend/playerLink'
 import { track } from '../lib/analytics'
 import { POSITIONS } from '../lib/positions'
 import { isTurnoverEvent } from '../lib/eventUtils'
 import { SHOW_TURNOVERS } from '../lib/features'
 import { sortGamesUpcomingFirst, isPastGame } from '../lib/gameOrder'
 import { todayLocalStr } from '../lib/seasonUtils'
-import SeasonMultiSelect from '../components/SeasonMultiSelect'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../lib/shadcn/dialog'
@@ -31,6 +31,7 @@ import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
 import GameRow from '../components/schedule/GameRow'
 import GameLedger from '../components/schedule/GameLedger'
+import SeasonPicker from '../components/schedule/SeasonPicker'
 import IconButton, { SCHEDULE_ICON_PROPS } from '../components/schedule/IconButton'
 import type { MatchData, MatchDetail, MatchOutcome } from '../components/schedule/types'
 import { useAuth } from '../contexts/AuthContext'
@@ -91,7 +92,7 @@ function gameStartsAt(g: { game_date: string; game_time: string | null }): Date 
 const OUTCOME_OPTIONS = ['Win', 'Loss', 'Tie', 'Default Win', 'Default Loss', 'Forfeit']
 
 export default function Schedule() {
-  const { can, currentTeamId } = useAuth()
+  const { can, currentTeamId, isGuest, user } = useAuth()
   const navigate = useNavigate()
   // The selected game mirrors this URL segment (see the effect near
   // handleSelectGame below), so a reload, browser back/forward, or a
@@ -137,6 +138,8 @@ export default function Schedule() {
   const { trigger: updateEventTimestamp } = useUpdateEventTimestamp()
   const { data: eventTypes, trigger: fetchEventTypes } = useGetEventTypes()
   const { data: leagueTeams, trigger: fetchLeagueTeams } = useGetLeagueTeams()
+  const playerLink = useMyPlayerLink()
+  const playerSeasonIds = useMyPlayerSeasonIds()
 
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const { data: attendanceRows, trigger: fetchAttendance } = useGetGameAttendance()
@@ -164,6 +167,8 @@ export default function Schedule() {
   const [newSeasonLocationMode, setNewSeasonLocationMode] = useState<'select' | 'new'>('select')
   const [creatingSeasonLoading, setCreatingSeasonLoading] = useState(false)
   const [scheduleSeasonIds, setScheduleSeasonIds] = useState<number[]>([])
+  const scheduleSeasonDefaultApplied = useRef(false)
+  const scheduleSeasonManual = useRef(false)
   const [showUpcoming, setShowUpcoming] = useState(true)
   const [showPlayed, setShowPlayed] = useState(true)
 
@@ -269,6 +274,18 @@ export default function Schedule() {
   const [editingGroupNameValue, setEditingGroupNameValue] = useState('')
 
   useEffect(() => {
+    scheduleSeasonDefaultApplied.current = false
+    scheduleSeasonManual.current = false
+    setScheduleSeasonIds([])
+    if (currentTeamId == null || isGuest || !user) return
+    playerLink.trigger({ teamId: currentTeamId, userId: user.id })
+  }, [currentTeamId, isGuest, user])
+
+  useEffect(() => {
+    if (playerLink.data?.team_id === currentTeamId && playerLink.data.status === 'approved') playerSeasonIds.trigger({ playerId: playerLink.data.player_id })
+  }, [playerLink.data])
+
+  useEffect(() => {
     // fetchGames happens in the scheduleSeasonIds effect below (fires on mount too).
     // Player roster fetches happen in handleSelectGame, scoped to that game's season.
     if (currentTeamId == null) return
@@ -310,10 +327,13 @@ export default function Schedule() {
   useEffect(() => {
     const s = seasonsWithGames as { id: number }[] | undefined
     const allS = seasons as Season[] | undefined
-    if (!s || s.length === 0 || !allS || allS.length === 0 || scheduleSeasonIds.length > 0) return
-    const defaultId = getDefaultJamSeasonId(allS, s[0]!.id)
-    setScheduleSeasonIds([defaultId])
-  }, [seasonsWithGames, seasons])
+    if (!s || s.length === 0 || !allS || allS.length === 0 || scheduleSeasonManual.current) return
+    const fallbackId = getDefaultJamSeasonId(allS, s[0]!.id)
+    const ids = playerLink.data?.team_id === currentTeamId && playerLink.data.status === 'approved' ? playerSeasonIds.data : undefined
+    if (scheduleSeasonDefaultApplied.current && ids === undefined) return
+    scheduleSeasonDefaultApplied.current = true
+    setScheduleSeasonIds([getDefaultSeasonForPlayer(allS, ids, fallbackId)])
+  }, [seasonsWithGames, seasons, playerLink.data, playerSeasonIds.data])
 
   // Reload games when season filter changes
   useEffect(() => {
@@ -2332,14 +2352,46 @@ export default function Schedule() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="text-[1.375rem] font-semibold tracking-[-0.022em] text-foreground">Schedule</h1>
+      {/* Which season you are looking at is part of what this page is
+          called, not a form field you fill in, so the switcher is a ghost
+          control beside the <h1> rather than a full-width select on a row
+          of its own.
+
+          It wraps rather than shrinks below `sm`. The utility cluster
+          opposite is a fixed 196px and the heading is 95px, which on a
+          360px viewport leaves ~90px of usable label -- enough to render
+          "JAM Summer 202…", which is worse than no season name at all. So
+          the picker is `w-full` there (order last, which forces the wrap)
+          and gets the whole second line; from `sm` up it is `w-auto` with
+          `mr-auto`, and the auto margin eats the free space before
+          justify-between can, keeping it tucked against the heading.
+
+          The -9px offset pulls the button's 8px padding and 1px transparent
+          border back so the label's box sits on the heading's left edge in
+          both states. It belongs on the wrapper, not on the button: a
+          negative margin on the button also shrinks that button's own
+          max-content width, so the wrapper's shrink-to-fit lands under it
+          and clamps the label short at every viewport --
+          "JAM Summer 2026" rendering as "JAM Summer 202…" on a 1400px
+          screen with 900px of empty space beside it. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5">
+        <h1 className="order-1 shrink-0 text-[1.375rem] font-semibold tracking-[-0.022em] text-foreground">Schedule</h1>
+        <div className="order-3 -ml-[0.5625rem] flex w-full min-w-0 sm:order-2 sm:mr-auto sm:w-auto">
+          <SeasonPicker
+            seasons={(seasons as Season[] | undefined) ?? []}
+            selectedIds={scheduleSeasonIds}
+            onChange={ids => {
+              scheduleSeasonManual.current = true
+              setScheduleSeasonIds(ids)
+            }}
+          />
+        </div>
         {/* Utility cluster. Every control here is the same 34px square with a
             16px Phosphor glyph at "regular" weight (see IconButton) so the row
             reads as one instrument panel rather than four borrowed buttons.
             The one primary action -- add a game -- is that same square with
             its ink inverted, not a coloured chip parked on the end. */}
-        <div className="schedule-scope flex items-center gap-1.5">
+        <div className="schedule-scope order-2 flex shrink-0 items-center gap-1.5 sm:order-3">
           <div className="sch-icon-group">
             <IconButton label="List view" active={viewMode === 'list'} onClick={() => setViewMode('list')}>
               <ListBullets {...SCHEDULE_ICON_PROPS} />
@@ -2500,18 +2552,6 @@ export default function Schedule() {
             </DialogContent>
           </Dialog>
           )}
-        </div>
-      </div>
-
-      {/* Season filter */}
-      <div className="flex gap-2">
-        <div className="flex-1">
-          <SeasonMultiSelect
-            seasons={(seasons as Season[] | undefined) ?? []}
-            selectedIds={scheduleSeasonIds}
-            onChange={setScheduleSeasonIds}
-            placeholder="All Seasons"
-          />
         </div>
       </div>
 

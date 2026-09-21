@@ -16,6 +16,15 @@ export interface TeamMembership {
   name: string
   role: TeamRole
   is_public: boolean
+  /**
+   * Team crest, when there is one. Nothing populates this yet -- there is no
+   * logo column on `organizations` -- and the nav's crest renders the team's
+   * monogram until there is. It is declared here rather than left out so the
+   * switcher's `<AvatarImage>` has a field to bind, the same way the schedule
+   * ledger's row binds `MatchData.crestUrl`: when the column lands, the image
+   * appears and no layout moves.
+   */
+  logo_url?: string | null
 }
 
 export interface SessionInfo {

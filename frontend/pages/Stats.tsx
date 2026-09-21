@@ -9,18 +9,21 @@ import {
   useCreateLeagueTeam, useUpdateLeagueTeam, useDeleteLeagueTeam, useUpdateSeasonPoints,
   type LeagueTeam,
 } from '../hooks/backend/league'
-import { useMyPlayerLink, useClaimPlayer, useGetTeamPlayerLinks } from '../hooks/backend/playerLink'
-import { getLatestJamSeasonWithPlayedGame, getDefaultJamSeasonId } from '../lib/seasonUtils'
+import { useMyPlayerLink, useMyPlayerSeasonIds, useClaimPlayer, useGetTeamPlayerLinks } from '../hooks/backend/playerLink'
+import { getLatestJamSeasonWithPlayedGame, getDefaultJamSeasonId, getDefaultSeasonForPlayer } from '../lib/seasonUtils'
 import { isPastGame } from '../lib/gameOrder'
 import { track } from '../lib/analytics'
 import { SHOW_TURNOVERS } from '../lib/features'
+import { settleRange } from '../lib/loadingState'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
 import PlayerCombobox from '../components/PlayerCombobox'
 import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
+import Swap from '../components/Swap'
+import Resolve from '../components/Resolve'
 import StatsHeader from '../components/stats/StatsHeader'
 import FilterBar from '../components/stats/FilterBar'
-import { LeaderCard, TeamCard, MetricCard } from '../components/stats/KpiBento'
+import { LeaderCard, TeamCard, MetricCard, KpiRowSkeleton, MetricCardSkeleton } from '../components/stats/KpiBento'
 import PerformanceChart from '../components/stats/PerformanceChart'
 import RankingsTable from '../components/stats/RankingsTable'
 import StandingsTable, { type StandingsRow, type StandingsSortKey } from '../components/stats/StandingsTable'
@@ -109,7 +112,7 @@ function pageTabForSlug(slug: string | undefined, tabs: { key: PageTab; slug: st
 
 export default function Stats() {
   const navigate = useNavigate()
-  const { isGuest, currentTeamId } = useAuth()
+  const { isGuest, currentTeamId, user } = useAuth()
   // The active sub-tab mirrors this URL segment, so a reload, browser
   // back/forward, or a bookmarked/shared link lands on the right sub-tab
   // instead of always resetting to Overview.
@@ -128,15 +131,34 @@ export default function Stats() {
   const { data: games, trigger: fetchGames } = useGetGames()
   const { data: seasons, trigger: fetchSeasons } = useGetSeasons()
   const { data: allSeasons, trigger: fetchAllSeasons } = useGetAllSeasons()
+  const playerLink = useMyPlayerLink()
+  const playerSeasonIds = useMyPlayerSeasonIds()
 
   const [filterType, setFilterType] = useState<'all' | 'season' | 'games'>('all')
   const [selectedSeasonIds, setSelectedSeasonIds] = useState<number[]>([])
   const [selectedGameIds, setSelectedGameIds] = useState<number[]>([])
   const [defaultSeasonId, setDefaultSeasonId] = useState<number | null>(null)
+  const defaultAppliedRef = useRef(false)
+  const defaultSeasonManual = useRef(false)
 
   useEffect(() => {
     if (subtab && !visibleTabs.some(t => t.slug === subtab)) navigate('/stats', { replace: true })
   }, [subtab, visibleTabs])
+
+  useEffect(() => {
+    defaultAppliedRef.current = false
+    defaultSeasonManual.current = false
+    setDefaultSeasonId(null)
+    setFilterType('all')
+    setSelectedSeasonIds([])
+    setSelectedGameIds([])
+    if (currentTeamId == null || isGuest || !user) return
+    playerLink.trigger({ teamId: currentTeamId, userId: user.id })
+  }, [currentTeamId, isGuest, user])
+
+  useEffect(() => {
+    if (playerLink.data?.team_id === currentTeamId && playerLink.data.status === 'approved') playerSeasonIds.trigger({ playerId: playerLink.data.player_id })
+  }, [playerLink.data])
 
   useEffect(() => {
     if (currentTeamId == null) return
@@ -150,21 +172,24 @@ export default function Stats() {
   // "filterType is still all and nothing is selected", which is also true
   // the moment someone deliberately switches back to All-time, so any later
   // refetch of games/seasons would quietly drag them back into a season.
-  const defaultAppliedRef = useRef(false)
   useEffect(() => {
-    if (defaultAppliedRef.current) return
+    if (defaultSeasonManual.current) return
     const s = seasons as StatsSeasonRow[] | undefined
     const allS = allSeasons as Season[] | undefined
     const g = games as Game[] | undefined
     if (!s || s.length === 0 || !allS || allS.length === 0 || !g) return
+    const fallbackId = getLatestJamSeasonWithPlayedGame(allS, g, s[0]!.id)
+    const ids = playerLink.data?.team_id === currentTeamId && playerLink.data.status === 'approved' ? playerSeasonIds.data : undefined
+    if (defaultAppliedRef.current && ids === undefined) return
     defaultAppliedRef.current = true
-    const id = getLatestJamSeasonWithPlayedGame(allS, g, s[0]!.id)
+    const id = getDefaultSeasonForPlayer(allS, ids, fallbackId)
     setDefaultSeasonId(id)
     setFilterType('season')
     setSelectedSeasonIds([id])
-  }, [seasons, allSeasons, games])
+  }, [seasons, allSeasons, games, playerLink.data, playerSeasonIds.data])
 
   const handleModeChange = (mode: FilterMode) => {
+    defaultSeasonManual.current = true
     setFilterType(mode)
     // Switching back into Season mode with nothing selected reads as "all
     // seasons", which is the same view as All-time and makes the segment
@@ -201,7 +226,10 @@ export default function Stats() {
             onModeChange={handleModeChange}
             seasons={(allSeasons as Season[] | undefined) ?? []}
             selectedSeasonIds={selectedSeasonIds}
-            onSeasonsChange={setSelectedSeasonIds}
+            onSeasonsChange={ids => {
+              defaultSeasonManual.current = true
+              setSelectedSeasonIds(ids)
+            }}
             games={(games as Game[] | undefined) ?? []}
             selectedGameIds={selectedGameIds}
             onGamesChange={setSelectedGameIds}
@@ -338,17 +366,22 @@ function PlayerStatsView({
   // `settled` is written during render deliberately: it is derived from this
   // render's own data and is idempotent, and an effect would publish one
   // paint late -- which is the flash this exists to remove.
-  const rangePending = loading || (tab === 'overview' && pairingsLoading)
   const settled = useRef<{ stats?: PlayerStat[]; pairings?: PairingRow[] }>({})
-  if (!rangePending) {
-    settled.current = {
-      stats: stats as PlayerStat[] | undefined,
-      // On a tab that does not read pairings, keep whatever was last
-      // committed rather than publishing a half-loaded set to a tab the user
-      // may be about to switch to.
-      pairings: pairingsLoading ? settled.current.pairings : (pairings as PairingRow[] | undefined),
-    }
-  }
+  // The write gate reads only the in-flight terms (`loading` /
+  // `pairingsLoading`), never `rangePending` itself. `isRangePending` reports
+  // pending while `settled.current.stats` is undefined, so gating the write
+  // on it would mean the write never runs, the ref stays undefined forever,
+  // and the page renders skeletons permanently. See `settleRange`'s doc
+  // comment in lib/loadingState.ts for the full trace.
+  const { nextSettled, rangePending } = settleRange({
+    previous: settled.current,
+    statsIn: stats as PlayerStat[] | undefined,
+    pairingsIn: pairings as PairingRow[] | undefined,
+    loading,
+    readsPairings: tab === 'overview',
+    pairingsLoading,
+  })
+  settled.current = nextSettled
   const statsArr = settled.current.stats
 
   // "Me" tab: the claimed player's own row from the exact same `stats`
@@ -636,32 +669,31 @@ function PlayerStatsView({
                 before your stats show up here.
               </p>
             </section>
-          ) : statsArr === undefined ? (
-            // Same shape as the gate above: `mine` is derived from `link`
-            // (resolved by this point) AND `statsArr`, fetched by a separate
-            // effect. Without this check, `mine` would read as undefined
-            // while stats are still loading and fall through to the "no
-            // stats yet" case below -- a wrong, if momentary, message.
-            <section className="st-panel p-4">
-              <Skeleton className="h-9 w-full" />
-            </section>
-          ) : mine ? (
+          ) : mine || rangePending ? (
             <>
-              <h2 className="st-name text-lg">{mine.player_name}</h2>
+              {/* The heading is real as soon as there is a name for it, and a
+                  skeleton only while there is not -- the page identifies
+                  itself rather than showing four grey bars. */}
+              {mine ? <h2 className="st-name text-lg">{mine.player_name}</h2> : <Skeleton className="h-6 w-40" />}
               {/* The grid tracks the card count rather than being pinned at
                   four: with turnovers gated off, a lg:grid-cols-4 leaves a
-                  quarter of the row empty. */}
-              {/* Wrapper, not FadeIn -- see the card row on the Overview tab. */}
-              <div className="st-swap" data-busy={rangePending}>
-                <FadeIn className={`grid gap-3 ${SHOW_TURNOVERS ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3'}`}>
-                  <MetricCard label="Goals" value={mine.goals} series="goals" hint={perGame(mine.goals, mine.games_played)} />
-                  <MetricCard label="Assists" value={mine.assists} series="assists" hint={perGame(mine.assists, mine.games_played)} />
+                  quarter of the row empty. Swap owns the panel's height
+                  change and Resolve owns the cross fade from skeleton to
+                  cards, the same pairing the Overview row uses. */}
+              <Swap busy={rangePending && mine != null}>
+                <Resolve
+                  loading={rangePending && mine == null}
+                  className={`grid gap-3 ${SHOW_TURNOVERS ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3'}`}
+                  skeleton={<MetricCardSkeleton count={SHOW_TURNOVERS ? 4 : 3} />}
+                >
+                  <MetricCard label="Goals" value={mine?.goals ?? 0} series="goals" hint={mine ? perGame(mine.goals, mine.games_played) : undefined} />
+                  <MetricCard label="Assists" value={mine?.assists ?? 0} series="assists" hint={mine ? perGame(mine.assists, mine.games_played) : undefined} />
                   {SHOW_TURNOVERS && (
-                    <MetricCard label="Turnovers" value={mine.turnovers} series="turnovers" hint={perGame(mine.turnovers, mine.games_played)} />
+                    <MetricCard label="Turnovers" value={mine?.turnovers ?? 0} series="turnovers" hint={mine ? perGame(mine.turnovers, mine.games_played) : undefined} />
                   )}
-                  <MetricCard label="Games played" value={mine.games_played} />
-                </FadeIn>
-              </div>
+                  <MetricCard label="Games played" value={mine?.games_played ?? 0} />
+                </Resolve>
+              </Swap>
             </>
           ) : (
             <section className="st-panel">
@@ -673,19 +705,19 @@ function PlayerStatsView({
 
       {tab === 'overview' && (
         <>
-          {/* The three cards that open the page. They render whenever the
-              filter covers any games at all -- the leader cards carry their
-              own "no player data" state, so a range with games but no
-              recorded stats still shows the team's record rather than
-              collapsing the whole row. */}
-          {(playerLines.length > 0 || gamesInFilter > 0) && (
-            /* The dim goes on a wrapper, never on FadeIn itself: FadeIn's
-               entrance runs with `animation-fill-mode: both`, so the
-               animation keeps ownership of `opacity` after it ends and a
-               transition on the same element never runs -- the card row would
-               snap to 40% and back while every panel below it faded. */
-            <div className="st-swap" data-busy={rangePending && playerLines.length > 0}>
-              <FadeIn className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          {/* The three cards that open the page. On a cold load this row used
+              to be absent from the DOM entirely and then appear above the
+              leaderboard, pushing the whole page down -- the jolt this panel
+              row exists to remove. It is inside Swap so the height settles
+              rather than cutting, and inside Resolve so the skeleton cross
+              fades into the cards rather than being swapped for them. */}
+          {(rangePending || playerLines.length > 0 || gamesInFilter > 0) && (
+            <Swap busy={rangePending && playerLines.length > 0}>
+              <Resolve
+                loading={rangePending && playerLines.length === 0}
+                className="grid grid-cols-1 gap-3 md:grid-cols-3"
+                skeleton={<KpiRowSkeleton />}
+              >
                 <LeaderCard
                   overline="Top finisher"
                   icon={<Trophy className="h-3.5 w-3.5" weight="bold" />}
@@ -707,8 +739,8 @@ function PlayerStatsView({
                   secondary={secondaryFor('assists', topPlaymaker)}
                 />
                 <TeamCard icon={<Scales className="h-3.5 w-3.5" weight="bold" />} team={teamLine} />
-              </FadeIn>
-            </div>
+              </Resolve>
+            </Swap>
           )}
 
           {/* The leaderboard. Everything it needs is already parsed into
@@ -759,7 +791,7 @@ function PlayerStatsView({
             onSeasonChange={setCumulativeSeasonId}
             stat={cumulativeStat}
             onStatChange={setCumulativeStat}
-            loading={cumulativeLoading}
+            loading={cumulativeLoading || cumulativeRaw === undefined}
           />
         </>
       )}
@@ -995,7 +1027,15 @@ function Standings() {
         </div>
 
         {oppHistoryLoading && !oppHistory ? (
-          <p className="st-meta">Loading…</p>
+          <div className="space-y-2" aria-hidden="true">
+            {[0, 1, 2].map(i => (
+              <div key={i} className="flex items-center gap-2.5">
+                <Skeleton className="h-7 w-7 rounded-md" />
+                <Skeleton className="h-3 flex-1" />
+                <Skeleton className="h-3 w-10" />
+              </div>
+            ))}
+          </div>
         ) : (
           <>
             {allTimeH2h && (

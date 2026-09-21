@@ -160,3 +160,88 @@
     font-variant-numeric: tabular-nums;
   }
 }
+
+/* ── Loading choreography ────────────────────────────────────────────────
+   Promoted out of .stats-scope, where these lived as .st-swap / .st-reveal.
+   They carry no colour at all -- only opacity, height and timing -- which is
+   what lets one copy serve all three visual systems without any of them
+   leaking into another. Do not add a colour here; if a rule needs one it
+   belongs in that scope's own stylesheet.
+
+   A panel that already has rows keeps them while the next range loads and
+   dims, rather than collapsing into its skeleton. Swapping ~500px of chart
+   for ~150px of skeleton and back is two full page reflows per click, and the
+   second one throws whatever you were reading somewhere else on screen. The
+   skeleton is for a cold panel, one with nothing to show yet.
+
+   The delay is on the way IN only: a fetch that resolves inside 140ms never
+   dims at all, so a fast range change is a straight cross fade of the numbers
+   rather than a flicker. Coming back out is immediate. */
+.ufwt-swap {
+  transition: opacity 180ms ease;
+}
+.ufwt-swap[data-busy='true'] {
+  opacity: 0.4;
+  pointer-events: none;
+  transition-delay: 140ms;
+}
+
+/* The same dim plus a measured height, for a panel whose contents change size
+   between ranges. See components/Swap.tsx. The delay list is per property on
+   purpose: the dim waits 140ms so a fast fetch never flickers, but the height
+   must start the instant the new content is in, or the panel holds the old
+   size for a beat and then lurches. */
+.ufwt-reveal {
+  overflow: hidden;
+  transition-property: opacity, height;
+  transition-duration: 180ms, 340ms;
+  transition-timing-function: ease, cubic-bezier(0.22, 1, 0.36, 1);
+}
+.ufwt-reveal[data-busy='true'] {
+  transition-delay: 140ms, 0ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ufwt-swap,
+  .ufwt-reveal {
+    transition-duration: 1ms;
+  }
+}
+
+/* The handover itself: 180ms, opacity only, nothing moves. See
+   components/Resolve.tsx.
+
+   .ufwt-resolve-in is a dedicated wrapper and must stay one. Its entrance runs
+   with animation-fill-mode: both, so the animation keeps ownership of opacity
+   after it ends and any transition set on the same element silently never
+   runs. That is the documented reason the Stats dim goes on a wrapper rather
+   than on FadeIn; do not put .ufwt-swap on this element for the same reason.
+
+   Resolve also appends the caller's own layout className (e.g. `grid`) to
+   this element and to .ufwt-resolve-out, because both are the box that
+   directly holds the caller's children -- a layout class one level up, on
+   .ufwt-resolve itself, would only arrange its own single child rather than
+   the children inside it. Do not switch this element to `display: contents`
+   to "simplify" that: an element with no box of its own cannot be animated,
+   which would silently kill the cross fade above. */
+.ufwt-resolve { position: relative; }
+
+.ufwt-resolve-in {
+  animation: ufwt-fade-in 180ms ease both;
+}
+.ufwt-resolve-out {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  animation: ufwt-fade-out 180ms ease both;
+}
+
+@keyframes ufwt-fade-in { from { opacity: 0 } to { opacity: 1 } }
+@keyframes ufwt-fade-out { from { opacity: 1 } to { opacity: 0 } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ufwt-resolve-in,
+  .ufwt-resolve-out {
+    animation-duration: 1ms;
+  }
+}

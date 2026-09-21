@@ -3,12 +3,13 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlayer, useGetPlayerGameStats, useSetGameAttendance, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer, useGetSeasonRoster, useCopyPlayersToSeason, useRemovePlayersFromSeason, useGetPlayerAssistPairings, useGetPlayerTurnoverBreakdown, useGetPlayerPrivate, useUpsertPlayerPrivate, type AssistPairingRow, type TurnoverBreakdownRow, type PlayerPrivate } from '../hooks/backend/players'
 import { track } from '../lib/analytics'
 import { useGetAllSeasons, useGetSeasons, useCreateSeason } from '../hooks/backend/stats'
-import { getDefaultJamSeasonId } from '../lib/seasonUtils'
+import { getDefaultJamSeasonId, getDefaultSeasonForPlayer } from '../lib/seasonUtils'
+import { useMyPlayerLink, useMyPlayerSeasonIds } from '../hooks/backend/playerLink'
 import { isPastGame } from '../lib/gameOrder'
 import { SHOW_TURNOVERS } from '../lib/features'
 import { POSITIONS } from '../lib/positions'
 import { useAuth } from '../contexts/AuthContext'
-import SeasonMultiSelect from '../components/SeasonMultiSelect'
+import { InlineMultiPicker } from '../components/InlinePicker'
 import PlayerAvatar from '../components/PlayerAvatar'
 import GenderTag from '../components/GenderTag'
 import { Badge } from '../lib/shadcn/badge'
@@ -165,7 +166,7 @@ function PlayerEgoNetworkGraph({ centerName, received, given }: {
 }
 
 export default function Roster() {
-  const { can, currentTeamId } = useAuth()
+  const { can, currentTeamId, isGuest, user } = useAuth()
   const navigate = useNavigate()
   // The selected player mirrors this URL segment (see the effect near
   // handleSelectPlayer below), so a reload, browser back/forward, or a
@@ -197,6 +198,8 @@ export default function Roster() {
   // via playerPrivateError below and is NOT swallowed as if it were absence.
   const { data: playerPrivateRaw, error: playerPrivateError, trigger: fetchPlayerPrivate } = useGetPlayerPrivate()
   const { trigger: upsertPlayerPrivate, error: phoneError } = useUpsertPlayerPrivate()
+  const playerLink = useMyPlayerLink()
+  const playerSeasonIds = useMyPlayerSeasonIds()
 
   const phoneByPlayerId = useMemo(
     () => new Map(((playerPrivateRaw as PlayerPrivate[] | undefined) ?? []).map(p => [p.player_id, p.phone])),
@@ -236,6 +239,7 @@ export default function Roster() {
   // picks All Seasons, so any later refetch of seasons would drag them back
   // into a season.
   const seasonDefaultApplied = useRef(false)
+  const rosterSeasonManual = useRef(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
 
@@ -280,6 +284,18 @@ export default function Roster() {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
+    seasonDefaultApplied.current = false
+    rosterSeasonManual.current = false
+    setRosterSeasonIds(null)
+    if (currentTeamId == null || isGuest || !user) return
+    playerLink.trigger({ teamId: currentTeamId, userId: user.id })
+  }, [currentTeamId, isGuest, user])
+
+  useEffect(() => {
+    if (playerLink.data?.team_id === currentTeamId && playerLink.data.status === 'approved') playerSeasonIds.trigger({ playerId: playerLink.data.player_id })
+  }, [playerLink.data])
+
+  useEffect(() => {
     if (currentTeamId == null) return
     fetchAllSeasons({ organizationId: currentTeamId })
     fetchSeasonsWithGames({ organizationId: currentTeamId })
@@ -288,14 +304,17 @@ export default function Roster() {
   useEffect(() => {
     const s = seasonsWithGames as { id: number }[] | undefined
     const allS = allSeasons as Season[] | undefined
-    if (!s || !allS || seasonDefaultApplied.current) return
+    if (!s || !allS || rosterSeasonManual.current) return
+    const ids = playerLink.data?.team_id === currentTeamId && playerLink.data.status === 'approved' ? playerSeasonIds.data : undefined
+    if (seasonDefaultApplied.current && ids === undefined) return
     seasonDefaultApplied.current = true
     // Both queries have answered by here. A team with no seasons at all
     // resolves to All Seasons rather than staying null, or the roster would
     // sit on skeletons waiting for a default that is never coming.
     if (s.length === 0 || allS.length === 0) { setRosterSeasonIds([]); return }
-    setRosterSeasonIds([getDefaultJamSeasonId(allS, s[0]!.id)])
-  }, [seasonsWithGames, allSeasons])
+    const fallbackId = getDefaultJamSeasonId(allS, s[0]!.id)
+    setRosterSeasonIds([getDefaultSeasonForPlayer(allS, ids, fallbackId)])
+  }, [seasonsWithGames, allSeasons, playerLink.data, playerSeasonIds.data])
 
   useEffect(() => {
     if (currentTeamId == null || rosterSeasonIds === null) return
@@ -1185,9 +1204,34 @@ export default function Roster() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-foreground">Roster</h1>
-        <div className="flex items-center gap-2">
+      {/* Which season's roster you are looking at is part of what this page
+          is called, not a form field, so the switcher is a ghost control on
+          the title line rather than a full-width select on a row of its own
+          -- same move, same reasons, as the schedule's. It wraps below `sm`
+          instead of shrinking: the action cluster opposite is wider than the
+          heading, which leaves a phone nothing to put a season name in. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5">
+        <h1 className="order-1 shrink-0 text-2xl font-bold text-foreground">Roster</h1>
+        {/* The -9px offset goes on the wrapper, never on the button: on the button
+            it also shrinks that button's own max-content width, so the
+            wrapper's shrink-to-fit lands 8px under it and the label
+            ellipsises at every viewport. */}
+        <div className="order-3 -ml-[0.5625rem] flex w-full min-w-0 sm:order-2 sm:mr-auto sm:w-auto">
+          <InlineMultiPicker
+            items={allSeasonsArr.map(s => ({ id: s.id, label: seasonLabel(s) }))}
+            selectedIds={activeSeasonIds}
+            onChange={ids => {
+              rosterSeasonManual.current = true
+              setRosterSeasonIds(ids)
+            }}
+            placeholder="All seasons"
+            unit="seasons"
+            emptyLabel="No seasons yet"
+            onCreateNew={() => setShowCreateSeason(true)}
+            createLabel="Create new season…"
+          />
+        </div>
+        <div className="order-2 flex shrink-0 items-center gap-2 sm:order-3">
           <span className="text-sm text-muted-foreground">{filteredPlayers?.length || 0} of {players?.length || 0}</span>
           {/* View mode toggle: cards (full detail) vs compact (dense rows,
               fits far more of a large roster on screen without scrolling). */}
@@ -1217,15 +1261,6 @@ export default function Roster() {
           )}
         </div>
       </div>
-
-      {/* Season filter */}
-      <SeasonMultiSelect
-        seasons={allSeasonsArr}
-        selectedIds={activeSeasonIds}
-        onChange={setRosterSeasonIds}
-        placeholder="All Seasons"
-        onCreateNew={() => setShowCreateSeason(true)}
-      />
 
       {/* Gender breakdown, doubling as a quick filter — click a count to
           narrow the list to just that gender, click again to clear it. */}

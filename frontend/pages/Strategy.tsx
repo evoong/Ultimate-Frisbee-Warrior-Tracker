@@ -25,6 +25,7 @@ import { Card, CardContent } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
 import { Input } from '../lib/shadcn/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
+import { InlineSinglePicker } from '../components/InlinePicker'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
 import { Popover, PopoverContent, PopoverTrigger } from '../lib/shadcn/popover'
 import { Label } from '../lib/shadcn/label'
@@ -1038,24 +1039,30 @@ export default function Strategy() {
       ) : (
         <FadeIn>
           <div className="space-y-3">
-            {/* Play-level controls: select, rename, delete, assign game. */}
-            <div className="flex items-center gap-2">
-              <Select
-                value={selectedPlayId !== null ? String(selectedPlayId) : undefined}
-                onValueChange={v => navigate(`${PLAYBOOK_PATH}/${v}`)}
-                onOpenChange={open => { if (open) fetchPlays({ organizationId: currentTeamId }) }}
-              >
-                <SelectTrigger className="flex-1 bg-card text-foreground border-border">
-                  <SelectValue placeholder="Select a play" />
-                </SelectTrigger>
-                <SelectContent>
-                  {plays?.map(play => (
-                    <SelectItem key={play.id} value={String(play.id)}>{play.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            {/* Play-level controls: which play, then what to do with it.
+                The play switcher is a ghost control, not a full-width
+                bordered select -- it reports which play is on the board,
+                which is a title, not a field you fill in. Same treatment as
+                the schedule's and the roster's season switchers. The row is
+                justify-between so the switcher opens it and the actions
+                close it, rather than the pair clustering left with the
+                right half of the row empty. */}
+            <div className="flex items-center justify-between gap-2">
+              {/* The -9px optical offset lives on the wrapper, never on the
+                  button -- on the button it also shrinks that button's own
+                  max-content width and the label ellipsises early. */}
+              <div className="-ml-[0.5625rem] flex min-w-0">
+                <InlineSinglePicker
+                  items={(plays ?? []).map(play => ({ id: play.id, label: play.name }))}
+                  selectedId={selectedPlayId}
+                  onChange={id => navigate(`${PLAYBOOK_PATH}/${id}`)}
+                  onOpenChange={open => { if (open) fetchPlays({ organizationId: currentTeamId }) }}
+                  placeholder="Select a play"
+                  emptyLabel="No plays yet"
+                />
+              </div>
               {can.record && (
-                <>
+                <div className="flex shrink-0 items-center gap-2">
                   <Button variant="outline" size="icon" aria-label="New play"
                     onClick={() => { setNameInput(''); setGameInput(NO_GAME); setShowCreate(true) }}>
                     <Plus className="w-4 h-4" />
@@ -1069,7 +1076,7 @@ export default function Strategy() {
                     onClick={() => setDeleteConfirm(true)}>
                     <Trash2 className="w-4 h-4" />
                   </Button>
-                </>
+                </div>
               )}
             </div>
 

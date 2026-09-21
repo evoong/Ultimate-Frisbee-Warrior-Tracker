@@ -106,3 +106,16 @@ export function useGetTeamPlayerLinks() {
   }, [])
   return useApiCall<TeamPlayerLink[], { teamId: number }>(fn)
 }
+
+export function useMyPlayerSeasonIds() {
+  const fn = useCallback(async (params: { playerId: number }) => {
+    const { data, error } = await supabase
+      .from('season_players')
+      .select('season_id')
+      .eq('player_id', params.playerId)
+    if (error) throw new Error(error.message)
+    return (data ?? []).map((row: { season_id: number }) => row.season_id) as number[]
+  }, [])
+  return useApiCall<number[], { playerId: number }>(fn)
+}
+
