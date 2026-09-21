@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
+import { authenticatedStorageUrl } from '../../lib/storageUrl'
 import { isTurnoverEvent, TURNOVER_EVENT_TYPES } from '../../lib/eventUtils'
 
 type HookResult<T, P = void> = {
@@ -391,7 +392,7 @@ export function useUploadPlayerPhoto() {
     // (with the session cookie the proxy needs) on the origin it was uploaded
     // from — viewed from any other deployment it's a cross-origin request with
     // no cookie, so the gateway 401s and the image never loads.
-    const photo_url = `/db/storage/v1/object/authenticated/player-photos/${data.path}`
+    const photo_url = authenticatedStorageUrl('player-photos', data.path)
 
     const { data: updated, error: updateError } = await supabase
       .from('players')

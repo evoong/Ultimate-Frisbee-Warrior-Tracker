@@ -9,9 +9,11 @@ import { useGetJamSyncConflicts, useSyncJamNow, useCreateGameFromConflict, useLi
 import { useGetLeagueTeams } from '../hooks/backend/league'
 import { getDefaultJamSeasonId, getDefaultSeasonForPlayer } from '../lib/seasonUtils'
 import { useMyPlayerLink, useMyPlayerSeasonIds } from '../hooks/backend/playerLink'
+import { useGameEventPolling } from '../hooks/useGameEventPolling'
 import { track } from '../lib/analytics'
 import { POSITIONS } from '../lib/positions'
 import { isTurnoverEvent } from '../lib/eventUtils'
+import { shouldShowEventsLoading } from '../lib/eventLoading'
 import { SHOW_TURNOVERS } from '../lib/features'
 import { sortGamesUpcomingFirst, isPastGame } from '../lib/gameOrder'
 import { todayLocalStr } from '../lib/seasonUtils'
@@ -620,6 +622,8 @@ export default function Schedule() {
       else navigate('/schedule', { replace: true })
     })
   }, [gameIdParam, games, currentTeamId])
+
+  useGameEventPolling(selectedGame?.id ?? null, fetchEvents)
 
   const handleSeasonSelect = (value: string) => {
     if (value === '__new__') { setShowNewSeason(true); setFormData(f => ({ ...f, season_id: '' })) }
@@ -1587,7 +1591,7 @@ export default function Schedule() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {eventsLoading ? (
+              {shouldShowEventsLoading(eventsLoading, events) ? (
                 <div className="text-center py-8 text-muted-foreground text-sm">Loading events...</div>
               ) : gameEvents.length ? (
                 <div className="space-y-2">
