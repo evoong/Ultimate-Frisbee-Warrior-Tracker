@@ -7,7 +7,8 @@ import { useGetAllSeasons, useGetSeasons, useCreateSeason, useUpdateSeason, useG
 import { useGetGameAttendance } from '../hooks/backend/attendance'
 import { useGetJamSyncConflicts, useSyncJamNow, useCreateGameFromConflict, useLinkConflictToGame, useDismissConflict, type JamSyncConflict } from '../hooks/backend/jamSync'
 import { useGetLeagueTeams } from '../hooks/backend/league'
-import { getDefaultJamSeasonId } from '../lib/seasonUtils'
+import { getDefaultJamSeasonId, getDefaultSeasonForPlayer } from '../lib/seasonUtils'
+import { useMyPlayerLink, useMyPlayerSeasonIds } from '../hooks/backend/playerLink'
 import { track } from '../lib/analytics'
 import { POSITIONS } from '../lib/positions'
 import { isTurnoverEvent } from '../lib/eventUtils'
@@ -91,7 +92,7 @@ function gameStartsAt(g: { game_date: string; game_time: string | null }): Date 
 const OUTCOME_OPTIONS = ['Win', 'Loss', 'Tie', 'Default Win', 'Default Loss', 'Forfeit']
 
 export default function Schedule() {
-  const { can, currentTeamId } = useAuth()
+  const { can, currentTeamId, isGuest, user } = useAuth()
   const navigate = useNavigate()
   // The selected game mirrors this URL segment (see the effect near
   // handleSelectGame below), so a reload, browser back/forward, or a
@@ -137,6 +138,8 @@ export default function Schedule() {
   const { trigger: updateEventTimestamp } = useUpdateEventTimestamp()
   const { data: eventTypes, trigger: fetchEventTypes } = useGetEventTypes()
   const { data: leagueTeams, trigger: fetchLeagueTeams } = useGetLeagueTeams()
+  const playerLink = useMyPlayerLink()
+  const playerSeasonIds = useMyPlayerSeasonIds()
 
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const { data: attendanceRows, trigger: fetchAttendance } = useGetGameAttendance()
@@ -164,6 +167,8 @@ export default function Schedule() {
   const [newSeasonLocationMode, setNewSeasonLocationMode] = useState<'select' | 'new'>('select')
   const [creatingSeasonLoading, setCreatingSeasonLoading] = useState(false)
   const [scheduleSeasonIds, setScheduleSeasonIds] = useState<number[]>([])
+  const scheduleSeasonDefaultApplied = useRef(false)
+  const scheduleSeasonManual = useRef(false)
   const [showUpcoming, setShowUpcoming] = useState(true)
   const [showPlayed, setShowPlayed] = useState(true)
 
@@ -269,6 +274,18 @@ export default function Schedule() {
   const [editingGroupNameValue, setEditingGroupNameValue] = useState('')
 
   useEffect(() => {
+    scheduleSeasonDefaultApplied.current = false
+    scheduleSeasonManual.current = false
+    setScheduleSeasonIds([])
+    if (currentTeamId == null || isGuest || !user) return
+    playerLink.trigger({ teamId: currentTeamId, userId: user.id })
+  }, [currentTeamId, isGuest, user])
+
+  useEffect(() => {
+    if (playerLink.data?.team_id === currentTeamId && playerLink.data.status === 'approved') playerSeasonIds.trigger({ playerId: playerLink.data.player_id })
+  }, [playerLink.data])
+
+  useEffect(() => {
     // fetchGames happens in the scheduleSeasonIds effect below (fires on mount too).
     // Player roster fetches happen in handleSelectGame, scoped to that game's season.
     if (currentTeamId == null) return
@@ -310,10 +327,13 @@ export default function Schedule() {
   useEffect(() => {
     const s = seasonsWithGames as { id: number }[] | undefined
     const allS = seasons as Season[] | undefined
-    if (!s || s.length === 0 || !allS || allS.length === 0 || scheduleSeasonIds.length > 0) return
-    const defaultId = getDefaultJamSeasonId(allS, s[0]!.id)
-    setScheduleSeasonIds([defaultId])
-  }, [seasonsWithGames, seasons])
+    if (!s || s.length === 0 || !allS || allS.length === 0 || scheduleSeasonManual.current) return
+    const fallbackId = getDefaultJamSeasonId(allS, s[0]!.id)
+    const ids = playerLink.data?.team_id === currentTeamId && playerLink.data.status === 'approved' ? playerSeasonIds.data : undefined
+    if (scheduleSeasonDefaultApplied.current && ids === undefined) return
+    scheduleSeasonDefaultApplied.current = true
+    setScheduleSeasonIds([getDefaultSeasonForPlayer(allS, ids, fallbackId)])
+  }, [seasonsWithGames, seasons, playerLink.data, playerSeasonIds.data])
 
   // Reload games when season filter changes
   useEffect(() => {
@@ -2360,7 +2380,10 @@ export default function Schedule() {
           <SeasonPicker
             seasons={(seasons as Season[] | undefined) ?? []}
             selectedIds={scheduleSeasonIds}
-            onChange={setScheduleSeasonIds}
+            onChange={ids => {
+              scheduleSeasonManual.current = true
+              setScheduleSeasonIds(ids)
+            }}
           />
         </div>
         {/* Utility cluster. Every control here is the same 34px square with a

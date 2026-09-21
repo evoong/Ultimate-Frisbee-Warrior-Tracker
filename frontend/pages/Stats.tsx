@@ -9,8 +9,8 @@ import {
   useCreateLeagueTeam, useUpdateLeagueTeam, useDeleteLeagueTeam, useUpdateSeasonPoints,
   type LeagueTeam,
 } from '../hooks/backend/league'
-import { useMyPlayerLink, useClaimPlayer, useGetTeamPlayerLinks } from '../hooks/backend/playerLink'
-import { getLatestJamSeasonWithPlayedGame, getDefaultJamSeasonId } from '../lib/seasonUtils'
+import { useMyPlayerLink, useMyPlayerSeasonIds, useClaimPlayer, useGetTeamPlayerLinks } from '../hooks/backend/playerLink'
+import { getLatestJamSeasonWithPlayedGame, getDefaultJamSeasonId, getDefaultSeasonForPlayer } from '../lib/seasonUtils'
 import { isPastGame } from '../lib/gameOrder'
 import { track } from '../lib/analytics'
 import { SHOW_TURNOVERS } from '../lib/features'
@@ -112,7 +112,7 @@ function pageTabForSlug(slug: string | undefined, tabs: { key: PageTab; slug: st
 
 export default function Stats() {
   const navigate = useNavigate()
-  const { isGuest, currentTeamId } = useAuth()
+  const { isGuest, currentTeamId, user } = useAuth()
   // The active sub-tab mirrors this URL segment, so a reload, browser
   // back/forward, or a bookmarked/shared link lands on the right sub-tab
   // instead of always resetting to Overview.
@@ -131,15 +131,34 @@ export default function Stats() {
   const { data: games, trigger: fetchGames } = useGetGames()
   const { data: seasons, trigger: fetchSeasons } = useGetSeasons()
   const { data: allSeasons, trigger: fetchAllSeasons } = useGetAllSeasons()
+  const playerLink = useMyPlayerLink()
+  const playerSeasonIds = useMyPlayerSeasonIds()
 
   const [filterType, setFilterType] = useState<'all' | 'season' | 'games'>('all')
   const [selectedSeasonIds, setSelectedSeasonIds] = useState<number[]>([])
   const [selectedGameIds, setSelectedGameIds] = useState<number[]>([])
   const [defaultSeasonId, setDefaultSeasonId] = useState<number | null>(null)
+  const defaultAppliedRef = useRef(false)
+  const defaultSeasonManual = useRef(false)
 
   useEffect(() => {
     if (subtab && !visibleTabs.some(t => t.slug === subtab)) navigate('/stats', { replace: true })
   }, [subtab, visibleTabs])
+
+  useEffect(() => {
+    defaultAppliedRef.current = false
+    defaultSeasonManual.current = false
+    setDefaultSeasonId(null)
+    setFilterType('all')
+    setSelectedSeasonIds([])
+    setSelectedGameIds([])
+    if (currentTeamId == null || isGuest || !user) return
+    playerLink.trigger({ teamId: currentTeamId, userId: user.id })
+  }, [currentTeamId, isGuest, user])
+
+  useEffect(() => {
+    if (playerLink.data?.team_id === currentTeamId && playerLink.data.status === 'approved') playerSeasonIds.trigger({ playerId: playerLink.data.player_id })
+  }, [playerLink.data])
 
   useEffect(() => {
     if (currentTeamId == null) return
@@ -153,21 +172,24 @@ export default function Stats() {
   // "filterType is still all and nothing is selected", which is also true
   // the moment someone deliberately switches back to All-time, so any later
   // refetch of games/seasons would quietly drag them back into a season.
-  const defaultAppliedRef = useRef(false)
   useEffect(() => {
-    if (defaultAppliedRef.current) return
+    if (defaultSeasonManual.current) return
     const s = seasons as StatsSeasonRow[] | undefined
     const allS = allSeasons as Season[] | undefined
     const g = games as Game[] | undefined
     if (!s || s.length === 0 || !allS || allS.length === 0 || !g) return
+    const fallbackId = getLatestJamSeasonWithPlayedGame(allS, g, s[0]!.id)
+    const ids = playerLink.data?.team_id === currentTeamId && playerLink.data.status === 'approved' ? playerSeasonIds.data : undefined
+    if (defaultAppliedRef.current && ids === undefined) return
     defaultAppliedRef.current = true
-    const id = getLatestJamSeasonWithPlayedGame(allS, g, s[0]!.id)
+    const id = getDefaultSeasonForPlayer(allS, ids, fallbackId)
     setDefaultSeasonId(id)
     setFilterType('season')
     setSelectedSeasonIds([id])
-  }, [seasons, allSeasons, games])
+  }, [seasons, allSeasons, games, playerLink.data, playerSeasonIds.data])
 
   const handleModeChange = (mode: FilterMode) => {
+    defaultSeasonManual.current = true
     setFilterType(mode)
     // Switching back into Season mode with nothing selected reads as "all
     // seasons", which is the same view as All-time and makes the segment
@@ -204,7 +226,10 @@ export default function Stats() {
             onModeChange={handleModeChange}
             seasons={(allSeasons as Season[] | undefined) ?? []}
             selectedSeasonIds={selectedSeasonIds}
-            onSeasonsChange={setSelectedSeasonIds}
+            onSeasonsChange={ids => {
+              defaultSeasonManual.current = true
+              setSelectedSeasonIds(ids)
+            }}
             games={(games as Game[] | undefined) ?? []}
             selectedGameIds={selectedGameIds}
             onGamesChange={setSelectedGameIds}

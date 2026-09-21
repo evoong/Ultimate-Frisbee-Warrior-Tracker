@@ -31,6 +31,10 @@ describe('getDefaultSeasonForPlayer', () => {
     expect(result).toBe(11)
   })
 
+  it('ignores seasons outside player roster', () => {
+    expect(getDefaultSeasonForPlayer(seasons, [1], 999)).toBe(1)
+  })
+
   it('falls back to default jam season if player has no seasons or empty array', () => {
     const result = getDefaultSeasonForPlayer(seasons, [], 999)
     // Season 2 is active Jam season

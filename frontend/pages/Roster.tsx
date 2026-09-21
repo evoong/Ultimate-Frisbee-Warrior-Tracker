@@ -3,7 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlayer, useGetPlayerGameStats, useSetGameAttendance, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer, useGetSeasonRoster, useCopyPlayersToSeason, useRemovePlayersFromSeason, useGetPlayerAssistPairings, useGetPlayerTurnoverBreakdown, useGetPlayerPrivate, useUpsertPlayerPrivate, type AssistPairingRow, type TurnoverBreakdownRow, type PlayerPrivate } from '../hooks/backend/players'
 import { track } from '../lib/analytics'
 import { useGetAllSeasons, useGetSeasons, useCreateSeason } from '../hooks/backend/stats'
-import { getDefaultJamSeasonId } from '../lib/seasonUtils'
+import { getDefaultJamSeasonId, getDefaultSeasonForPlayer } from '../lib/seasonUtils'
+import { useMyPlayerLink, useMyPlayerSeasonIds } from '../hooks/backend/playerLink'
 import { isPastGame } from '../lib/gameOrder'
 import { SHOW_TURNOVERS } from '../lib/features'
 import { POSITIONS } from '../lib/positions'
@@ -165,7 +166,7 @@ function PlayerEgoNetworkGraph({ centerName, received, given }: {
 }
 
 export default function Roster() {
-  const { can, currentTeamId } = useAuth()
+  const { can, currentTeamId, isGuest, user } = useAuth()
   const navigate = useNavigate()
   // The selected player mirrors this URL segment (see the effect near
   // handleSelectPlayer below), so a reload, browser back/forward, or a
@@ -197,6 +198,8 @@ export default function Roster() {
   // via playerPrivateError below and is NOT swallowed as if it were absence.
   const { data: playerPrivateRaw, error: playerPrivateError, trigger: fetchPlayerPrivate } = useGetPlayerPrivate()
   const { trigger: upsertPlayerPrivate, error: phoneError } = useUpsertPlayerPrivate()
+  const playerLink = useMyPlayerLink()
+  const playerSeasonIds = useMyPlayerSeasonIds()
 
   const phoneByPlayerId = useMemo(
     () => new Map(((playerPrivateRaw as PlayerPrivate[] | undefined) ?? []).map(p => [p.player_id, p.phone])),
@@ -236,6 +239,7 @@ export default function Roster() {
   // picks All Seasons, so any later refetch of seasons would drag them back
   // into a season.
   const seasonDefaultApplied = useRef(false)
+  const rosterSeasonManual = useRef(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
 
@@ -280,6 +284,18 @@ export default function Roster() {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
+    seasonDefaultApplied.current = false
+    rosterSeasonManual.current = false
+    setRosterSeasonIds(null)
+    if (currentTeamId == null || isGuest || !user) return
+    playerLink.trigger({ teamId: currentTeamId, userId: user.id })
+  }, [currentTeamId, isGuest, user])
+
+  useEffect(() => {
+    if (playerLink.data?.team_id === currentTeamId && playerLink.data.status === 'approved') playerSeasonIds.trigger({ playerId: playerLink.data.player_id })
+  }, [playerLink.data])
+
+  useEffect(() => {
     if (currentTeamId == null) return
     fetchAllSeasons({ organizationId: currentTeamId })
     fetchSeasonsWithGames({ organizationId: currentTeamId })
@@ -288,14 +304,17 @@ export default function Roster() {
   useEffect(() => {
     const s = seasonsWithGames as { id: number }[] | undefined
     const allS = allSeasons as Season[] | undefined
-    if (!s || !allS || seasonDefaultApplied.current) return
+    if (!s || !allS || rosterSeasonManual.current) return
+    const ids = playerLink.data?.team_id === currentTeamId && playerLink.data.status === 'approved' ? playerSeasonIds.data : undefined
+    if (seasonDefaultApplied.current && ids === undefined) return
     seasonDefaultApplied.current = true
     // Both queries have answered by here. A team with no seasons at all
     // resolves to All Seasons rather than staying null, or the roster would
     // sit on skeletons waiting for a default that is never coming.
     if (s.length === 0 || allS.length === 0) { setRosterSeasonIds([]); return }
-    setRosterSeasonIds([getDefaultJamSeasonId(allS, s[0]!.id)])
-  }, [seasonsWithGames, allSeasons])
+    const fallbackId = getDefaultJamSeasonId(allS, s[0]!.id)
+    setRosterSeasonIds([getDefaultSeasonForPlayer(allS, ids, fallbackId)])
+  }, [seasonsWithGames, allSeasons, playerLink.data, playerSeasonIds.data])
 
   useEffect(() => {
     if (currentTeamId == null || rosterSeasonIds === null) return
@@ -1201,7 +1220,10 @@ export default function Roster() {
           <InlineMultiPicker
             items={allSeasonsArr.map(s => ({ id: s.id, label: seasonLabel(s) }))}
             selectedIds={activeSeasonIds}
-            onChange={setRosterSeasonIds}
+            onChange={ids => {
+              rosterSeasonManual.current = true
+              setRosterSeasonIds(ids)
+            }}
             placeholder="All seasons"
             unit="seasons"
             emptyLabel="No seasons yet"
