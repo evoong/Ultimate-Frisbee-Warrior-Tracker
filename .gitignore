@@ -62,3 +62,4 @@ supabase/signing_keys.json
 
 # Brainstorming visual companion scratch
 .superpowers/
+.playwright-mcp/
