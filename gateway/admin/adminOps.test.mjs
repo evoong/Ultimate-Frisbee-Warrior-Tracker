@@ -155,9 +155,10 @@ const registry = createRegistry([bump, nuke])
   const { ADMIN_OPERATIONS } = await import('./ops.ts')
   const byName = new Map(ADMIN_OPERATIONS.map(o => [o.name, o]))
 
-  check('all eight operations are registered', ADMIN_OPERATIONS.length === 8)
+  check('all ten operations are registered', ADMIN_OPERATIONS.length === 10)
   for (const n of ['set_member_role', 'remove_member', 'invite_member', 'revoke_invite',
-                   'set_player_link', 'approve_player_link', 'merge_players', 'delete_org']) {
+                   'set_player_link', 'approve_player_link', 'merge_players', 'delete_org',
+                   'transfer_captainship', 'create_invite_link']) {
     check(`${n} is registered`, byName.has(n))
   }
 
@@ -165,6 +166,14 @@ const registry = createRegistry([bump, nuke])
   check('merge_players is superadmin', byName.get('merge_players').minRole === 'superadmin')
   check('delete_org is superadmin',    byName.get('delete_org').minRole === 'superadmin')
   check('set_member_role is support',  byName.get('set_member_role').minRole === 'support')
+  check('transfer_captainship is superadmin', byName.get('transfer_captainship').minRole === 'superadmin')
+  check('create_invite_link is support', byName.get('create_invite_link').minRole === 'support')
+
+  const transfer = byName.get('transfer_captainship').input
+  check('transfer_captainship requires a reason', !transfer.safeParse({
+    org_id: 1, new_captain_user_id: '11111111-1111-4111-8111-111111111111' }).success)
+  check('transfer_captainship requires a valid target UUID', !transfer.safeParse({
+    org_id: 1, new_captain_user_id: 'nope', reason: 'Emergency ownership recovery' }).success)
 
   // team_invites.role forbids 'captain'; the schema must reject it up front
   // rather than letting a bare check-constraint error reach the operator.
