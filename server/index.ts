@@ -25,7 +25,7 @@ import { insertReport, listOpenClusters, attachReportToCluster, createCluster, t
 import { judgeReport } from "../gateway/feedbackJudge.js";
 import { sbGet } from "../gateway/supabaseRest.js";
 import { track, trackError, shutdown } from "./lib/posthog.js";
-import { consumeAiMessage } from "./lib/tierLimits.js";
+import { consumeAiMessage, refundAiMessage } from "./lib/tierLimits.js";
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
@@ -433,6 +433,8 @@ app.post("/api/chat", async (req, res) => {
   const startedAt = Date.now();
   let usedToolCall = false;
   let distinctId = "unknown";
+  let quotaOrgId: number | null = null;
+  let quotaConsumed = false;
   try {
     const { message, session_id, history = [], organization_id } = req.body as {
       message: string; session_id: string; history: { role: string; content: string }[]; organization_id: number
@@ -450,17 +452,18 @@ app.post("/api/chat", async (req, res) => {
 
     // From here on only teamId is used. The raw body value never reaches a
     // query again, matching the same invariant in gateway/chat.ts.
-    if (!await consumeAiMessage(teamId)) {
-      return res.status(429).json({ error: "Monthly AI chat limit reached for this team's plan. Upgrade to increase limits." });
-    }
     const systemContext = await getTeamContext(teamId);
-
     const geminiApiKey = await getVaultSecret(vaultConfig, "gemini_api_key", process.env.GEMINI_API_KEY);
     const geminiModel = (await getVaultSecret(vaultConfig, "gemini_model", process.env.GEMINI_MODEL)) ?? DEFAULT_GEMINI_MODEL;
     if (!geminiApiKey) return res.status(500).json({ error: "Gemini API key not configured" });
     const genai = new GoogleGenAI({ apiKey: geminiApiKey, posthog: posthogAi });
-
     const actionsConfig: ActionsConfig = { supabaseUrl: process.env.SUPABASE_URL || "", supabaseSecretKey: process.env.SUPABASE_SECRET_KEY || "" };
+
+    if (!await consumeAiMessage(teamId)) {
+      return res.status(429).json({ error: "Monthly AI chat limit reached for this team's plan. Upgrade to increase limits." });
+    }
+    quotaOrgId = teamId;
+    quotaConsumed = true;
 
     // PostHog's Gemini wrapper only instruments models.generateContent (not
     // the chats.create()/sendMessage() session helper), so the conversation
@@ -564,8 +567,17 @@ app.post("/api/chat", async (req, res) => {
       duration_ms: Date.now() - startedAt,
       used_tool_call: usedToolCall,
     });
+    quotaConsumed = false;
     res.json({ reply });
   } catch (err: unknown) {
+    if (quotaConsumed && quotaOrgId != null) {
+      quotaConsumed = false;
+      try {
+        await refundAiMessage(quotaOrgId);
+      } catch (refundError) {
+        Sentry.captureException(refundError);
+      }
+    }
     await posthogAi.flush();
     await trackError(distinctId, err);
     Sentry.captureException(err);

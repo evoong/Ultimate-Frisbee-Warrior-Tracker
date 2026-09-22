@@ -16,3 +16,8 @@ export async function consumeAiMessage(orgId: number): Promise<boolean> {
   if (error) throw error;
   return data === true;
 }
+
+export async function refundAiMessage(orgId: number): Promise<void> {
+  const { error } = await supabase.rpc('refund_ai_message', { p_org_id: orgId });
+  if (error) throw error;
+}

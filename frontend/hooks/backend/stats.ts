@@ -253,7 +253,7 @@ export function useGetPlayerStats() {
 
     return result
   }, [])
-  return useApiCall<any[], { organizationId: number | null; seasonIds?: number[]; gameIds?: number[] }>(fn)
+  return useApiCall<any[], { organizationId: number | null; seasonIds?: number[]; gameIds?: number[]; tier?: string | null }>(fn)
 }
 
 export type PairingRow = {
@@ -322,7 +322,7 @@ export function useGetAssistPairings() {
 
     return rows.slice(0, params.limit ?? 10)
   }, [])
-  return useApiCall<PairingRow[], { organizationId: number | null; seasonIds?: number[]; gameIds?: number[]; limit?: number }>(fn)
+  return useApiCall<PairingRow[], { organizationId: number | null; seasonIds?: number[]; gameIds?: number[]; limit?: number; tier?: string | null }>(fn)
 }
 
 export function useGetCumulativeStats() {

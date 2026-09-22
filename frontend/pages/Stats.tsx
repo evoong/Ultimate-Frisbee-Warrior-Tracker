@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { useEffectiveTier } from '../hooks/useEffectiveTier'
 import { useGetGames } from '../hooks/backend/games'
 import { useGetPlayers } from '../hooks/backend/players'
 import { useGetPlayerStats, useGetSeasons, useGetCumulativeStats, useGetAllSeasons, useGetAssistPairings, type PairingRow } from '../hooks/backend/stats'
@@ -113,6 +114,7 @@ function pageTabForSlug(slug: string | undefined, tabs: { key: PageTab; slug: st
 export default function Stats() {
   const navigate = useNavigate()
   const { isGuest, currentTeamId, user } = useAuth()
+  const entitlement = useEffectiveTier(currentTeamId)
   // The active sub-tab mirrors this URL segment, so a reload, browser
   // back/forward, or a bookmarked/shared link lands on the right sub-tab
   // instead of always resetting to Overview.
@@ -246,6 +248,7 @@ export default function Stats() {
           selectedSeasonIds={selectedSeasonIds}
           selectedGameIds={selectedGameIds}
           defaultSeasonId={defaultSeasonId}
+          tier={entitlement.tier}
         />
       )}
     </div>
@@ -257,7 +260,7 @@ export default function Stats() {
 // duplicated the same filter UI and query); only the content below the
 // filters differs by tab.
 function PlayerStatsView({
-  tab, games, allSeasons, filterType, selectedSeasonIds, selectedGameIds, defaultSeasonId,
+  tab, games, allSeasons, filterType, selectedSeasonIds, selectedGameIds, defaultSeasonId, tier,
 }: {
   tab: 'me' | 'overview' | 'table'
   /** Hoisted to Stats() along with the filter below -- see the comment there. */
@@ -268,6 +271,7 @@ function PlayerStatsView({
   selectedGameIds: number[]
   /** The season the page opened on; seeds the progression chart's own picker. */
   defaultSeasonId: number | null
+  tier: string | null
 }) {
   const { currentTeamId, user } = useAuth()
   const link = useMyPlayerLink()
@@ -311,21 +315,21 @@ function PlayerStatsView({
     // read the same pairing data) each derive their own view from this one
     // fetch rather than hitting the network separately per view.
     if (filterType === 'all') {
-      fetchStats({ organizationId: currentTeamId })
-      fetchPairings({ organizationId: currentTeamId, limit: 200 })
+      fetchStats({ organizationId: currentTeamId, tier })
+      fetchPairings({ organizationId: currentTeamId, limit: 200, tier })
     } else if (filterType === 'season') {
       if (selectedSeasonIds.length > 0) {
-        fetchStats({ seasonIds: selectedSeasonIds, organizationId: currentTeamId })
-        fetchPairings({ seasonIds: selectedSeasonIds, organizationId: currentTeamId, limit: 200 })
+        fetchStats({ seasonIds: selectedSeasonIds, organizationId: currentTeamId, tier })
+        fetchPairings({ seasonIds: selectedSeasonIds, organizationId: currentTeamId, limit: 200, tier })
       } else {
-        fetchStats({ organizationId: currentTeamId })
-        fetchPairings({ organizationId: currentTeamId, limit: 200 })
+        fetchStats({ organizationId: currentTeamId, tier })
+        fetchPairings({ organizationId: currentTeamId, limit: 200, tier })
       }
     } else if (filterType === 'games' && selectedGameIds.length > 0) {
-      fetchStats({ gameIds: selectedGameIds, organizationId: currentTeamId })
-      fetchPairings({ gameIds: selectedGameIds, organizationId: currentTeamId, limit: 200 })
+      fetchStats({ gameIds: selectedGameIds, organizationId: currentTeamId, tier })
+      fetchPairings({ gameIds: selectedGameIds, organizationId: currentTeamId, limit: 200, tier })
     }
-  }, [filterType, selectedSeasonIds, selectedGameIds, currentTeamId])
+  }, [filterType, selectedSeasonIds, selectedGameIds, currentTeamId, tier])
 
   useEffect(() => {
     if (currentTeamId == null || cumulativeSeasonId == null) return
