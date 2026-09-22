@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
 export type OrgTier = 'free' | 'plus' | 'premium'
@@ -34,6 +34,7 @@ export function useEffectiveTier(orgId: number | null) {
   const [result, setResult] = useState<EffectiveTierResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
+  const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
     if (!orgId) {
@@ -60,7 +61,11 @@ export function useEffectiveTier(orgId: number | null) {
     return () => {
       cancelled = true
     }
-  }, [orgId])
+  }, [orgId, refreshKey])
 
-  return { tier: result?.tier ?? null, ...result, loading, error }
+  const refresh = useCallback(() => {
+    setRefreshKey(k => k + 1)
+  }, [])
+
+  return { tier: result?.tier ?? null, ...result, loading, error, refresh }
 }

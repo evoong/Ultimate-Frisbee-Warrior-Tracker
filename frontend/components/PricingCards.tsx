@@ -51,13 +51,15 @@ export function PricingCards({
   currentTier,
   onSelectTier,
   loadingTier,
+  compact = false,
 }: {
   currentTier?: string
   onSelectTier?: (tier: string) => void
-  loadingTier?: string
+  loadingTier?: string | null
+  compact?: boolean
 }) {
   return (
-    <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
+    <div className={`grid max-w-5xl mx-auto ${compact ? 'gap-3 sm:grid-cols-3' : 'gap-6 md:grid-cols-3'}`}> 
       {PLANS.map((plan) => {
         const isCurrent = currentTier === plan.tier
         return (
