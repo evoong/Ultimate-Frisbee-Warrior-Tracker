@@ -170,6 +170,37 @@ async function classifyChatCaller(webRequest: Request, organizationId: number): 
 }
 
 
+app.post("/api/org/plan", async (req, res) => {
+  try {
+    const organizationId = Number(req.body?.organization_id);
+    const tier = req.body?.tier;
+    if (!Number.isInteger(organizationId) || organizationId <= 0 || !["free", "plus", "premium"].includes(tier)) {
+      return res.status(400).json({ error: "Invalid organization_id or tier" });
+    }
+
+    const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
+      headers: { cookie: req.headers.cookie ?? "" },
+    });
+    const caller = await classifyChatCaller(webRequest, organizationId);
+    if (!caller.ok) return res.status(caller.status).json({ error: caller.error });
+    if (!hasAtLeast(caller.role, "captain")) {
+      return res.status(403).json({ error: "Only team captains or admins can change subscription plans" });
+    }
+
+    const { data, error } = await supabase
+      .from("organizations")
+      .update({ tier, plan_source: "stripe", trial_ends_at: new Date().toISOString() })
+      .eq("id", organizationId)
+      .select()
+      .single();
+    if (error) throw error;
+
+    return res.json({ success: true, organization: data });
+  } catch (err: unknown) {
+    Sentry.captureException(err);
+    return res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
 
 // ── AI Chat ───────────────────────────────────────────────────────────────────
 
