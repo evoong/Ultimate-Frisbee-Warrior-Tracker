@@ -25,6 +25,7 @@ import { insertReport, listOpenClusters, attachReportToCluster, createCluster, t
 import { judgeReport } from "../gateway/feedbackJudge.js";
 import { sbGet } from "../gateway/supabaseRest.js";
 import { track, trackError, shutdown } from "./lib/posthog.js";
+import { checkAiMessageLimit, incrementAiUsage } from "./lib/tierLimits.js";
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
@@ -449,6 +450,9 @@ app.post("/api/chat", async (req, res) => {
 
     // From here on only teamId is used. The raw body value never reaches a
     // query again, matching the same invariant in gateway/chat.ts.
+    if (!await checkAiMessageLimit(teamId)) {
+      return res.status(429).json({ error: "Monthly AI chat limit reached for this team's plan. Upgrade to increase limits." });
+    }
     const systemContext = await getTeamContext(teamId);
 
     const geminiApiKey = await getVaultSecret(vaultConfig, "gemini_api_key", process.env.GEMINI_API_KEY);
@@ -547,10 +551,12 @@ app.post("/api/chat", async (req, res) => {
     await posthogAi.flush();
 
     // Save both turns to chat_logs
-    await supabase.from("chat_logs").insert([
+    const { error: chatLogError } = await supabase.from("chat_logs").insert([
       { session_id, role: "user", content: message, organization_id: teamId },
       { session_id, role: "assistant", content: reply, organization_id: teamId },
     ]);
+    if (chatLogError) throw chatLogError;
+    await incrementAiUsage(teamId);
 
     await track(distinctId, "chat_message_sent", {
       organization_id,
