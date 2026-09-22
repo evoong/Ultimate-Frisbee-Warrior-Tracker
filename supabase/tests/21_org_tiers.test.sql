@@ -1,5 +1,5 @@
 begin;
-select plan(5);
+select plan(6);
 
 -- Migration check: columns exist
 select has_column('public', 'organizations', 'tier', 'organizations has tier');
@@ -23,6 +23,14 @@ select is_empty(
   'RLS prevents outsider from seeing usage logs'
 );
 select tests.logout();
+
+-- Test increment_ai_usage RPC
+select public.increment_ai_usage(999);
+select is(
+  (select message_count from public.ai_usage_logs where organization_id = 999 and month_key = to_char(now(), 'YYYY-MM')),
+  11,
+  'increment_ai_usage atomically increments existing usage log'
+);
 
 select * from finish();
 rollback;
