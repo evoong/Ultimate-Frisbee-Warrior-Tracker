@@ -19,6 +19,7 @@ const AdminSearch = lazy(() => import('./pages/admin/Search'))
 const AdminUserDetail = lazy(() => import('./pages/admin/UserDetail'))
 const AdminOrgDetail = lazy(() => import('./pages/admin/OrgDetail'))
 const AdminAuditLog = lazy(() => import('./pages/admin/AuditLog'))
+const AdminViewAs = lazy(() => import('./pages/admin/ViewAs'))
 import { useAuth } from './contexts/AuthContext'
 import { Loader2, LogOut } from 'lucide-react'
 import { visibleNavItems, tabForPath, pathForTab, isKnownPath, renamedPathFor, type Tab } from './lib/nav'
@@ -272,6 +273,16 @@ export default function App() {
             <Route path="org/:orgId" element={<AdminOrgDetail />} />
             <Route path="audit" element={<AdminAuditLog />} />
           </Route>
+        )}
+        {!isGuest && (
+          <Route
+            path="/admin/view-as/:userId"
+            element={
+              <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading view-as…</div>}>
+                <AdminViewAs />
+              </Suspense>
+            }
+          />
         )}
       </Routes>
     </Suspense>
