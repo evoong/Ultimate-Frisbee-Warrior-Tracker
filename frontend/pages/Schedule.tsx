@@ -15,7 +15,7 @@ import { POSITIONS } from '../lib/positions'
 import { isTurnoverEvent } from '../lib/eventUtils'
 import { shouldShowEventsLoading } from '../lib/eventLoading'
 import { SHOW_TURNOVERS } from '../lib/features'
-import { sortGamesUpcomingFirst, isPastGame } from '../lib/gameOrder'
+import { sortGamesUpcomingFirst, isPastGame, isWithinLivePollWindow } from '../lib/gameOrder'
 import { todayLocalStr } from '../lib/seasonUtils'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
@@ -35,6 +35,7 @@ import GameRow from '../components/schedule/GameRow'
 import GameLedger from '../components/schedule/GameLedger'
 import SeasonPicker from '../components/schedule/SeasonPicker'
 import IconButton, { SCHEDULE_ICON_PROPS } from '../components/schedule/IconButton'
+import LiveBadge from '../components/schedule/LiveBadge'
 import type { MatchData, MatchDetail, MatchOutcome } from '../components/schedule/types'
 import { useAuth } from '../contexts/AuthContext'
 import { ArrowClockwise, ArrowCounterClockwise, ArrowsLeftRight, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, CaretUp, CaretUpDown, Check, DotsSixVertical, FloppyDisk, ListBullets, Minus, NoteBlank, PencilSimple, Plus, PlusCircle, Table, Target, Trash, TrendUp, Trophy, Users, Warning, X } from '@phosphor-icons/react'
@@ -623,7 +624,7 @@ export default function Schedule() {
     })
   }, [gameIdParam, games, currentTeamId])
 
-  useGameEventPolling(selectedGame?.id ?? null, fetchEvents)
+  useGameEventPolling(selectedGame && isWithinLivePollWindow(selectedGame) ? selectedGame.id : null, fetchEvents)
 
   const handleSeasonSelect = (value: string) => {
     if (value === '__new__') { setShowNewSeason(true); setFormData(f => ({ ...f, season_id: '' })) }
@@ -1394,16 +1395,17 @@ export default function Schedule() {
         <FadeIn>
         <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
           <CardContent className="p-5">
-            <div className="text-center">
-              <div className="text-lg font-bold text-foreground leading-snug break-words">vs {selectedGame.opponent}</div>
-              <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground mt-1">
-                <CalendarBlank className="w-3 h-3 flex-shrink-0" />
-                <span>
-                  {formatDate(selectedGame.game_date)} · {formatTime(selectedGame.game_time)}
-                  {selectedGame.season_id && getSeasonLabel(selectedGame.season_id) ? ` · ${getSeasonLabel(selectedGame.season_id)}` : ''}
-                </span>
+<div className="text-center">
+                <div className="text-lg font-bold text-foreground leading-snug break-words">vs {selectedGame.opponent}</div>
+                <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground mt-1">
+                  <CalendarBlank className="w-3 h-3 flex-shrink-0" />
+                  <span>
+                    {formatDate(selectedGame.game_date)} · {formatTime(selectedGame.game_time)}
+                    {selectedGame.season_id && getSeasonLabel(selectedGame.season_id) ? ` · ${getSeasonLabel(selectedGame.season_id)}` : ''}
+                  </span>
+                </div>
+                <LiveBadge active={isWithinLivePollWindow(selectedGame)} />
               </div>
-            </div>
 
             <div className="flex items-center justify-center gap-3 mt-4">
               <div className="text-center">
