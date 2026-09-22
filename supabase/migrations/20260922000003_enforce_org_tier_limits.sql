@@ -124,6 +124,13 @@ for each row execute function public.enforce_tier_strategy_limit();
 revoke all on function public.consume_ai_message(bigint) from public, anon, authenticated;
 revoke all on function public.refund_ai_message(bigint) from public, anon, authenticated;
 revoke all on function public.set_employee_grant(bigint, boolean) from public, anon, authenticated;
+revoke all on function public.enforce_tier_member_limit() from public, anon, authenticated;
+revoke all on function public.enforce_tier_strategy_limit() from public, anon, authenticated;
 grant execute on function public.consume_ai_message(bigint) to service_role;
 grant execute on function public.refund_ai_message(bigint) to service_role;
 grant execute on function public.set_employee_grant(bigint, boolean) to service_role;
+
+create index if not exists organization_subscriptions_organization_id_idx
+  on public.organization_subscriptions (organization_id);
+create index if not exists ai_usage_logs_organization_id_idx
+  on public.ai_usage_logs (organization_id);
