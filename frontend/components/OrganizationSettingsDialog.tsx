@@ -32,6 +32,9 @@ import { useGetTeamPlayerLinks, useApprovePlayerClaim } from '../hooks/backend/p
 type OrganizationSettingsDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
+  tier: string | null
+  isEmployeeGranted?: boolean
+  trialEndsAt?: string | null
 }
 
 const DETAILS_FORM_ID = 'team-settings-details'
@@ -104,6 +107,40 @@ function EmptyNote({ children }: { children: ReactNode }) {
   )
 }
 
+const TIER_LIMITS = {
+  free: { members: '15 members', history: '30-day history', strategies: '3 strategies', ai: '5 AI messages/month' },
+  plus: { members: '35 members', history: 'Unlimited history', strategies: 'Unlimited strategies', ai: '100 AI messages/month' },
+  premium: { members: 'Unlimited members', history: 'Unlimited history', strategies: 'Unlimited strategies', ai: 'Unlimited AI messages' },
+} as const
+
+export function TierDetails({ tier, isEmployeeGranted, trialEndsAt }: Pick<OrganizationSettingsDialogProps, 'tier' | 'isEmployeeGranted' | 'trialEndsAt'>) {
+  if (tier !== 'free' && tier !== 'plus' && tier !== 'premium') return null
+  const limits = TIER_LIMITS[tier]
+  const trialActive = trialEndsAt != null && new Date(trialEndsAt) > new Date()
+
+  return (
+    <section>
+      <SectionHeading>Plan</SectionHeading>
+      <div className="overflow-hidden rounded-lg border border-border">
+        <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2.5">
+          <span className="text-xs text-muted-foreground">Tier</span>
+          <span className="rounded-full border border-border bg-secondary px-2.5 py-0.5 text-[11px] font-semibold capitalize text-foreground">{tier}</span>
+        </div>
+        {(isEmployeeGranted || trialActive) && (
+          <div className="border-b border-border px-3 py-2.5 text-xs text-muted-foreground">
+            {isEmployeeGranted ? 'Employee grant active' : `Free trial ends ${new Date(trialEndsAt!).toLocaleDateString()}`}
+          </div>
+        )}
+        <ul className="grid grid-cols-2 gap-px bg-border text-xs text-muted-foreground">
+          {[limits.members, limits.history, limits.strategies, limits.ai].map(limit => (
+            <li key={limit} className="bg-card px-3 py-2.5">{limit}</li>
+          ))}
+        </ul>
+      </div>
+    </section>
+  )
+}
+
 function teamInitials(name: string): string {
   const words = name.split(/[^\p{L}\p{N}]+/u).filter(Boolean)
   return (words.slice(0, 2).map(w => w[0]).join('') || name.slice(0, 2)).toUpperCase()
@@ -112,7 +149,7 @@ function teamInitials(name: string): string {
 // Gated on can.manageTeam (captain/editor), not a role literal: the database
 // re-checks every one of these actions via RPC or a storage policy, so the
 // gating here is only about not showing controls that would 403 anyway.
-export default function OrganizationSettingsDialog({ open, onOpenChange }: OrganizationSettingsDialogProps) {
+export default function OrganizationSettingsDialog({ open, onOpenChange, tier, isEmployeeGranted, trialEndsAt }: OrganizationSettingsDialogProps) {
   const { can, user, currentTeamId, teams, refreshSession } = useAuth()
   const current = teams.find(t => t.organization_id === currentTeamId)
 
@@ -258,7 +295,10 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5">
           {!current ? (
             <EmptyNote>Pick a team from the switcher to manage it.</EmptyNote>
-          ) : !canEdit ? (
+          ) : (
+            <>
+              <TierDetails tier={tier} isEmployeeGranted={isEmployeeGranted} trialEndsAt={trialEndsAt} />
+              {!canEdit ? (
             <section>
               <SectionHeading>Team</SectionHeading>
               <dl className="divide-y divide-border overflow-hidden rounded-lg border border-border">
@@ -593,6 +633,8 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
                 )}
               </section>
             </div>
+          )}
+            </>
           )}
         </div>
 
