@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import { randomUUID, createHash } from 'node:crypto'
 import { sbGet, sbWrite } from '../supabaseRest.js'
 import { AdminOpError, defineOperation, type AdminCtx, type AdminOperation } from './operations.js'
 
@@ -410,7 +409,10 @@ const createInviteToken = defineOperation({
   preview: async (ctx, i) => ({ exists: await sbGet(ctx.config, `/team_invites?team_id=eq.${i.org_id}&email=eq.${encodeURIComponent(i.email)}`) }),
   apply: async (ctx, i) => {
     const token = crypto.randomUUID();
-    const hash = crypto.createHash('sha256').update(token).digest('hex');
+    const data = new TextEncoder().encode(token);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
     const result = await sbWrite(ctx.config, 'POST', '/rpc/admin_create_invite_token', {
       p_org_id: i.org_id,
       p_email: i.email,
