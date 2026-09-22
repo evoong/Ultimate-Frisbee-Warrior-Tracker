@@ -28,6 +28,8 @@ import {
   useUpdateTeam,
 } from '../hooks/backend/teams'
 import { useGetTeamPlayerLinks, useApprovePlayerClaim } from '../hooks/backend/playerLink'
+import { PricingCards } from './PricingCards'
+import { toast } from 'sonner'
 
 type OrganizationSettingsDialogProps = {
   open: boolean
@@ -35,6 +37,7 @@ type OrganizationSettingsDialogProps = {
   tier: string | null
   isEmployeeGranted?: boolean
   trialEndsAt?: string | null
+  onPlanChange?: () => void
 }
 
 const DETAILS_FORM_ID = 'team-settings-details'
@@ -113,10 +116,32 @@ const TIER_LIMITS = {
   premium: { members: 'Unlimited members', history: 'Unlimited history', strategies: 'Unlimited strategies', ai: 'Unlimited AI messages' },
 } as const
 
-export function TierDetails({ tier, isEmployeeGranted, trialEndsAt }: Pick<OrganizationSettingsDialogProps, 'tier' | 'isEmployeeGranted' | 'trialEndsAt'>) {
+interface TierDetailsProps {
+  tier: string | null
+  isEmployeeGranted?: boolean
+  trialEndsAt?: string | null
+  currentTeamId?: number | null
+  role?: TeamRole | null
+  onPlanChange?: (tier: string) => Promise<boolean>
+}
+
+export function TierDetails({ tier, isEmployeeGranted, trialEndsAt, currentTeamId, role, onPlanChange }: TierDetailsProps) {
   if (tier !== 'free' && tier !== 'plus' && tier !== 'premium') return null
   const limits = TIER_LIMITS[tier]
   const trialActive = trialEndsAt != null && new Date(trialEndsAt) > new Date()
+  const isCaptain = role === 'captain'
+  const [showPlanSelector, setShowPlanSelector] = useState(false)
+  const [loadingTier, setLoadingTier] = useState<string | null>(null)
+
+  async function handleSelectTier(nextTier: string) {
+    if (!currentTeamId || !onPlanChange || loadingTier) return
+    setLoadingTier(nextTier)
+    try {
+      if (await onPlanChange(nextTier)) setShowPlanSelector(false)
+    } finally {
+      setLoadingTier(null)
+    }
+  }
 
   return (
     <section>
@@ -124,7 +149,19 @@ export function TierDetails({ tier, isEmployeeGranted, trialEndsAt }: Pick<Organ
       <div className="overflow-hidden rounded-lg border border-border">
         <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2.5">
           <span className="text-xs text-muted-foreground">Tier</span>
-          <span className="rounded-full border border-border bg-secondary px-2.5 py-0.5 text-[11px] font-semibold capitalize text-foreground">{tier}</span>
+          <div className="flex items-center gap-2">
+            <span className="rounded-full border border-border bg-secondary px-2.5 py-0.5 text-[11px] font-semibold capitalize text-foreground">{tier}</span>
+            {isCaptain && !isEmployeeGranted && currentTeamId && onPlanChange && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => setShowPlanSelector(true)}
+              >
+                Change plan
+              </Button>
+            )}
+          </div>
         </div>
         {(isEmployeeGranted || trialActive) && (
           <div className="border-b border-border px-3 py-2.5 text-xs text-muted-foreground">
@@ -137,6 +174,25 @@ export function TierDetails({ tier, isEmployeeGranted, trialEndsAt }: Pick<Organ
           ))}
         </ul>
       </div>
+
+      {showPlanSelector && (
+        <Dialog open={showPlanSelector} onOpenChange={setShowPlanSelector}>
+          <DialogContent className="max-w-lg sm:max-w-xl">
+            <DialogHeader className="pb-3">
+              <DialogTitle className="text-lg">Change plan</DialogTitle>
+              <DialogDescription>
+                Select a new plan for your team. Changes take effect immediately.
+              </DialogDescription>
+            </DialogHeader>
+            <PricingCards
+              currentTier={tier}
+              loadingTier={loadingTier}
+              onSelectTier={handleSelectTier}
+              compact
+            />
+          </DialogContent>
+        </Dialog>
+      )}
     </section>
   )
 }
@@ -149,8 +205,8 @@ function teamInitials(name: string): string {
 // Gated on can.manageTeam (captain/editor), not a role literal: the database
 // re-checks every one of these actions via RPC or a storage policy, so the
 // gating here is only about not showing controls that would 403 anyway.
-export default function OrganizationSettingsDialog({ open, onOpenChange, tier, isEmployeeGranted, trialEndsAt }: OrganizationSettingsDialogProps) {
-  const { can, user, currentTeamId, teams, refreshSession } = useAuth()
+export default function OrganizationSettingsDialog({ open, onOpenChange, tier, isEmployeeGranted, trialEndsAt, onPlanChange }: OrganizationSettingsDialogProps) {
+  const { can, role, user, currentTeamId, teams, refreshSession } = useAuth()
   const current = teams.find(t => t.organization_id === currentTeamId)
 
   const members = useGetTeamMembers()
@@ -297,7 +353,32 @@ export default function OrganizationSettingsDialog({ open, onOpenChange, tier, i
             <EmptyNote>Pick a team from the switcher to manage it.</EmptyNote>
           ) : (
             <>
-              <TierDetails tier={tier} isEmployeeGranted={isEmployeeGranted} trialEndsAt={trialEndsAt} />
+              <TierDetails
+                tier={tier}
+                isEmployeeGranted={isEmployeeGranted}
+                trialEndsAt={trialEndsAt}
+                currentTeamId={currentTeamId}
+                role={role}
+                onPlanChange={async (nextTier) => {
+                  if (!currentTeamId) return false
+                  try {
+                    const res = await fetch('/api/org/plan', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      credentials: 'include',
+                      body: JSON.stringify({ organization_id: currentTeamId, tier: nextTier }),
+                    })
+                    const data = await res.json()
+                    if (!res.ok) throw new Error(data?.error || 'Failed to change plan')
+                    toast.success('Plan updated')
+                    onPlanChange?.()
+                    return true
+                  } catch (err) {
+                    toast.error(err instanceof Error ? err.message : 'Failed to change plan')
+                    return false
+                  }
+                }}
+              />
               {!canEdit ? (
             <section>
               <SectionHeading>Team</SectionHeading>
