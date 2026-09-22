@@ -150,7 +150,9 @@ export default function App() {
   // memberships has nothing to see yet: send them to create one first.
   // Guests hold zero memberships by design (they browse the public team
   // read-only), so this only fires for a real signed-in user.
-  if (!isGuest && teams.length === 0) {
+  // /admin is exempt: a platform admin is not tied to any team, and the
+  // admin console must stay reachable for a zero-team admin account.
+  if (!isGuest && teams.length === 0 && !location.pathname.startsWith('/admin')) {
     return (
       <Suspense fallback={<PageFallback />}>
         <CreateOrganization />
