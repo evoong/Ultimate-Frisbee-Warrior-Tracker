@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { adminGet, adminOp } from '../../lib/adminClient'
 import { Skeleton } from '../../lib/shadcn/skeleton'
 import { Button } from '../../lib/shadcn/button'
@@ -9,14 +9,20 @@ import { Label } from '../../lib/shadcn/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../lib/shadcn/select'
 
 type Member = { user_id: string; email: string; role: 'captain' | 'editor' | 'viewer' }
-type Org = {
-  id: number; name: string; is_public: boolean; member_count: number; captain_id: string; members: Member[]
+type OrgDetailPayload = {
+  organization: { id: number; name: string; is_public: boolean; created_at: string }
+  members: Member[]
+  teams: { id: number; name: string }[]
+  counts: { games: number; players: number; seasons: number }
+  pending_invites: { id: number; email: string; role: string; expires_at: string }[]
+  legacy_organization_members: { role: string; email: string }[]
 }
 
 export default function OrgDetail({ orgId: propOrgId }: { orgId?: string }) {
   const { orgId: paramOrgId } = useParams<{ orgId: string }>()
   const orgId = propOrgId ?? paramOrgId!
-  const [org, setOrg] = useState<Org | null>(null)
+  const navigate = useNavigate()
+  const [data, setData] = useState<OrgDetailPayload | null>(null)
   const [loading, setLoading] = useState(true)
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState<'captain' | 'editor' | 'viewer'>('editor')
@@ -39,7 +45,7 @@ export default function OrgDetail({ orgId: propOrgId }: { orgId?: string }) {
 
   async function refresh() {
     setLoading(true)
-    setOrg(await adminGet<Org>(`/org/${orgId}`))
+    setData(await adminGet<OrgDetailPayload>(`/org/${orgId}`))
     setLoading(false)
   }
 
@@ -58,14 +64,17 @@ export default function OrgDetail({ orgId: propOrgId }: { orgId?: string }) {
   }
 
   if (loading) return <Skeleton className="h-64 w-full" />
-  if (!org) return <div>Org not found.</div>
+  if (!data || !data.organization) return <div>Org not found.</div>
+
+  const org = data.organization
+  const captain = data.members.find(m => m.role === 'captain')
 
   return (
     <section className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">{org.name}</h1>
-          <p className="text-sm text-muted-foreground">Org #{org.id} · {org.is_public ? 'Public' : 'Private'} · {org.member_count} members</p>
+          <p className="text-sm text-muted-foreground">Org #{org.id} · {org.is_public ? 'Public' : 'Private'} · {data.members.length} members</p>
         </div>
       </div>
       <div className="rounded border p-4 space-y-4">
@@ -84,6 +93,9 @@ export default function OrgDetail({ orgId: propOrgId }: { orgId?: string }) {
             </SelectContent>
           </Select>
           <Button onClick={invite}>Create invite</Button>
+          {captain && (
+            <Button variant="outline" onClick={() => navigate(`/admin/view-as/${captain.user_id}`)}>View as captain</Button>
+          )}
         </div>
       </div>
       <div className="rounded border">
@@ -96,7 +108,7 @@ export default function OrgDetail({ orgId: propOrgId }: { orgId?: string }) {
             </tr>
           </thead>
           <tbody>
-            {org.members.map(m => (
+            {data.members.map(m => (
               <tr key={m.user_id} className="border-b">
                 <td className="p-3">{m.email}</td>
                 <td className="p-3 capitalize">{m.role}</td>

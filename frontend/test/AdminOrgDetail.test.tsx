@@ -12,16 +12,16 @@ vi.mock('../lib/adminClient', () => ({
 }))
 
 const ORG = {
-  id: 1,
-  name: 'Warriors',
-  is_public: true,
-  member_count: 3,
-  captain_id: 'u1',
+  organization: { id: 1, name: 'Warriors', is_public: true, created_at: '2026-01-01T00:00:00Z' },
   members: [
     { user_id: 'u1', email: 'capt@test.com', role: 'captain' },
     { user_id: 'u2', email: 'editor@test.com', role: 'editor' },
     { user_id: 'u3', email: 'viewer@test.com', role: 'viewer' },
   ],
+  teams: [{ id: 1, name: 'Warriors' }],
+  counts: { games: 0, players: 0, seasons: 0 },
+  pending_invites: [],
+  legacy_organization_members: [],
 }
 
 describe('admin org detail page', () => {
