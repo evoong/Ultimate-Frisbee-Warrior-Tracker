@@ -39,17 +39,18 @@ select is(
   'refund_ai_message decrements current month usage'
 );
 
-select public.refund_ai_message(1000);
+select public.refund_ai_message(999999);
 select is(
-  (select message_count from public.ai_usage_logs where organization_id = 1000 and month_key = to_char(now(), 'YYYY-MM')),
+  (select message_count from public.ai_usage_logs where organization_id = 999999 and month_key = to_char(now(), 'YYYY-MM')),
   null,
   'refund_ai_message does nothing for non-existent log'
 );
 
-insert into public.ai_usage_logs (organization_id, month_key, message_count) values (1001, to_char(now(), 'YYYY-MM'), 0);
-select public.refund_ai_message(1001);
+insert into public.organizations (id, name) values (998, 'zero-usage-org');
+insert into public.ai_usage_logs (organization_id, month_key, message_count) values (998, to_char(now(), 'YYYY-MM'), 0);
+select public.refund_ai_message(998);
 select is(
-  (select message_count from public.ai_usage_logs where organization_id = 1001 and month_key = to_char(now(), 'YYYY-MM')),
+  (select message_count from public.ai_usage_logs where organization_id = 998 and month_key = to_char(now(), 'YYYY-MM')),
   0,
   'refund_ai_message does not decrement below zero'
 );
