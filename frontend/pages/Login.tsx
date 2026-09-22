@@ -7,6 +7,7 @@ import { Input } from '../lib/shadcn/input'
 import { Label } from '../lib/shadcn/label'
 import { Eye, EyeOff, KeyRound, Loader2 } from 'lucide-react'
 import { isCeremonyCancelled, passkeysAvailable } from '../lib/passkeys'
+import { adminGet } from '../lib/adminClient'
 
 const AUTH_ERROR_MESSAGES: Record<string, string> = {
   login_expired: 'The sign-in attempt took too long. Please try again.',
@@ -21,13 +22,13 @@ type Mode = 'login' | 'signup' | 'forgot'
 // `minLength`, the inline hint, and the client-side guard so every message agrees.
 const PASSWORD_MIN_LENGTH = 8
 
-export default function Login() {
+export default function Login({ adminOnly = false }: { adminOnly?: boolean }) {
   const navigate = useNavigate()
   const { login, signup, loginWithGoogle, loginWithPasskey, loginAsGuest, forgotPassword } = useAuth()
   // Home's "Get started free" CTA links here with ?mode=signup so the form
   // opens straight on the signup tab instead of requiring an extra click.
   const [mode, setMode] = useState<Mode>(
-    () => (new URLSearchParams(window.location.search).get('mode') === 'signup' ? 'signup' : 'login')
+    () => (adminOnly || new URLSearchParams(window.location.search).get('mode') !== 'signup' ? 'login' : 'signup')
   )
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -56,6 +57,14 @@ export default function Login() {
     try {
       if (mode === 'login') {
         await login(email, password)
+        if (adminOnly) {
+          try {
+            await adminGet<{ role: string }>('/whoami')
+            navigate('/admin')
+          } catch {
+            setError('This account is not a platform administrator.')
+          }
+        }
       } else if (mode === 'signup') {
         const { confirmationRequired } = await signup(email, password)
         if (confirmationRequired) {
@@ -100,14 +109,16 @@ export default function Login() {
         <Card>
           <CardHeader>
             <CardTitle>
-              {mode === 'login' && 'Sign in'}
+              {mode === 'login' && (adminOnly ? 'Admin sign in' : 'Sign in')}
               {mode === 'signup' && 'Create account'}
               {mode === 'forgot' && 'Reset password'}
             </CardTitle>
             <CardDescription>
               {mode === 'forgot'
                 ? 'Enter your email and we will send a reset link.'
-                : 'Use your email to continue.'}
+                : adminOnly
+                  ? 'Platform administrators only.'
+                  : 'Use your email to continue.'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -169,7 +180,7 @@ export default function Login() {
                   </Button>
                 </form>
 
-                {mode !== 'forgot' && (
+                {!adminOnly && mode !== 'forgot' && (
                   <>
                     <div className="relative">
                       <div className="absolute inset-0 flex items-center">
@@ -240,7 +251,7 @@ export default function Login() {
                 )}
 
                 <div className="flex justify-between text-xs text-muted-foreground">
-                  {mode === 'login' ? (
+                  {!adminOnly && mode === 'login' ? (
                     <>
                       <button
                         type="button"
