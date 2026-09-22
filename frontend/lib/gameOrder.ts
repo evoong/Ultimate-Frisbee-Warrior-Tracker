@@ -20,6 +20,12 @@ export function isPastGame(g: GameLike, today: string = todayLocalStr()): boolea
   return g.game_date < today
 }
 
+const POLL_WINDOW_AFTER_START_MS = 5 * 60 * 60 * 1000
+
+export function isWithinLivePollWindow(g: GameLike, now: number = Date.now()): boolean {
+  return now <= gameStartsAt(g).getTime() + POLL_WINDOW_AFTER_START_MS
+}
+
 // Next upcoming game first (soonest first), then past games most-recent-first
 // so the last result is always the first thing you see in that group. Shared
 // by Schedule (the canonical ordering) and anywhere else a game list should
