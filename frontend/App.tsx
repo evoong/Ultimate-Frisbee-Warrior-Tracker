@@ -140,6 +140,7 @@ export default function App() {
       <Suspense fallback={<PageFallback />}>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/admin/login" element={<Login adminOnly />} />
           <Route path="*" element={<Home theme={theme} toggleTheme={toggleTheme} />} />
         </Routes>
       </Suspense>
