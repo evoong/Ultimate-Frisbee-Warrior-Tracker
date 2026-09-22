@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { randomUUID, createHash } from 'node:crypto'
 import { sbGet, sbWrite } from '../supabaseRest.js'
 import { AdminOpError, defineOperation, type AdminCtx, type AdminOperation } from './operations.js'
 
@@ -370,6 +371,56 @@ const deleteOrg = defineOperation({
   },
 })
 
+const transferCaptainship = defineOperation({
+  name: 'transfer_captainship',
+  minRole: 'superadmin',
+  input: z.object({
+    org_id: z.number().int().positive(),
+    new_captain_user_id: z.string().uuid(),
+    reason: z.string().min(5),
+  }),
+  target: i => ({ org_id: i.org_id, new_captain: i.new_captain_user_id }),
+  preview: async (ctx, i) => ({
+    current_captain: await sbGet(ctx.config, `/team_members?select=user_id&team_id=eq.${i.org_id}&role=eq.captain`),
+    next_captain: i.new_captain_user_id,
+  }),
+  apply: async (ctx, i) => {
+    try {
+      const result = await sbWrite(ctx.config, 'POST', '/rpc/admin_transfer_captainship', {
+        p_org_id: i.org_id,
+        p_new_captain_id: i.new_captain_user_id,
+        p_reason: i.reason,
+      });
+      return { before: null, after: result };
+    } catch (err) {
+      translate(err);
+    }
+  },
+});
+
+const createInviteToken = defineOperation({
+  name: 'create_invite_link',
+  minRole: 'support',
+  input: z.object({
+    org_id: z.number().int().positive(),
+    email: z.string().email().transform(v => v.trim().toLowerCase()),
+    role: z.enum(INVITE_ROLES),
+  }),
+  target: i => ({ org_id: i.org_id, email: i.email, role: i.role }),
+  preview: async (ctx, i) => ({ exists: await sbGet(ctx.config, `/team_invites?team_id=eq.${i.org_id}&email=eq.${encodeURIComponent(i.email)}`) }),
+  apply: async (ctx, i) => {
+    const token = crypto.randomUUID();
+    const hash = crypto.createHash('sha256').update(token).digest('hex');
+    const result = await sbWrite(ctx.config, 'POST', '/rpc/admin_create_invite_token', {
+      p_org_id: i.org_id,
+      p_email: i.email,
+      p_role: i.role,
+      p_token_hash: hash,
+    });
+    return { before: null, after: { ...result, link: `/join/${token}` } };
+  },
+});
+
 export const ADMIN_OPERATIONS: AdminOperation<any>[] = [
   setMemberRole,
   removeMember,
@@ -379,4 +430,6 @@ export const ADMIN_OPERATIONS: AdminOperation<any>[] = [
   approvePlayerLink,
   mergePlayers,
   deleteOrg,
+  transferCaptainship,
+  createInviteToken,
 ]
