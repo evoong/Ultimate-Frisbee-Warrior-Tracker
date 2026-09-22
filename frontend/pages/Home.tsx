@@ -17,6 +17,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '../lib/shadcn/accordion'
+import { PricingCards } from '../components/PricingCards'
 
 const FEATURES = [
   {
@@ -149,6 +150,18 @@ export default function Home({ theme, toggleTheme }: HomeProps) {
               </Card>
             ))}
           </div>
+        </section>
+
+        <section aria-labelledby="pricing-heading" className="max-w-5xl mx-auto px-4 sm:px-6 pb-16">
+          <div className="text-center mb-10">
+            <h2 id="pricing-heading" className="text-2xl font-bold">
+              Plans for every team
+            </h2>
+            <p className="mt-2 text-muted-foreground">
+              Start free, then upgrade as your team grows.
+            </p>
+          </div>
+          <PricingCards />
         </section>
 
         <section className="border-y border-border bg-accent/40">
