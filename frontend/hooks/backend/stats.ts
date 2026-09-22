@@ -115,7 +115,7 @@ export function useUpdateSeason() {
 }
 
 export function useGetPlayerStats() {
-  const fn = useCallback(async (params: { organizationId: number | null; seasonIds?: number[]; gameIds?: number[] }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; seasonIds?: number[]; gameIds?: number[]; tier?: string | null }) => {
     // Resolve the games in scope first so events/attendance can be filtered
     // server-side (supabase caps unfiltered fetches at 1000 rows).
     let gamesQuery = supabase.from('games').select('id, season_id, game_date, game_time').eq('organization_id', params.organizationId)
@@ -141,6 +141,9 @@ export function useGetPlayerStats() {
       .from('game_events')
       .select('player_id, related_player_id, event_type, game_id')
     if (scopedGameIds) eventsQuery = eventsQuery.in('game_id', scopedGameIds)
+    if (params.tier === 'free') {
+      eventsQuery = eventsQuery.gte('event_timestamp', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+    }
     const { data: events, error: eventsError } = await eventsQuery
     if (eventsError) throw new Error(eventsError.message)
     if (!events) return []
@@ -262,7 +265,7 @@ export type PairingRow = {
 }
 
 export function useGetAssistPairings() {
-  const fn = useCallback(async (params: { organizationId: number | null; seasonIds?: number[]; gameIds?: number[]; limit?: number }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; seasonIds?: number[]; gameIds?: number[]; limit?: number; tier?: string | null }) => {
     // Resolve the games in scope first, same three-way logic as useGetPlayerStats:
     // explicit gameIds wins, else games in seasonIds, else null (all-time).
     let gamesQuery = supabase.from('games').select('id, season_id').eq('organization_id', params.organizationId)
@@ -282,6 +285,9 @@ export function useGetAssistPairings() {
       .from('game_events')
       .select('player_id, related_player_id, event_type')
     if (scopedGameIds) eventsQuery = eventsQuery.in('game_id', scopedGameIds)
+    if (params.tier === 'free') {
+      eventsQuery = eventsQuery.gte('event_timestamp', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+    }
     const { data: events, error: eventsError } = await eventsQuery
     if (eventsError) throw new Error(eventsError.message)
 
