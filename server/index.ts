@@ -26,6 +26,7 @@ import { judgeReport } from "../gateway/feedbackJudge.js";
 import { sbGet } from "../gateway/supabaseRest.js";
 import { track, trackError, shutdown } from "./lib/posthog.js";
 import { consumeAiMessage, refundAiMessage } from "./lib/tierLimits.js";
+import { createCheckoutSession, canStartTrial } from "./lib/billing.js";
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
@@ -218,16 +219,91 @@ app.post("/api/org/trial", async (req, res) => {
       return res.status(403).json({ error: "Only team captains or admins can activate a free trial" });
     }
 
-    const trialEndsAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-    const { data, error } = await supabase
-      .from("organizations")
-      .update({ tier: "premium", plan_source: "trial", trial_ends_at: trialEndsAt })
-      .eq("id", organizationId)
-      .select()
-      .single();
-    if (error) throw error;
+    // One-time trial guard, checked BEFORE Stripe: trial_started_at is only
+    // ever stamped by the checkout.session.completed webhook, so this is the
+    // sole gatekeeper for repeat trials. 400 (not 403): the caller is
+    // authorized, the org's state is what rejects the request.
+    if (!await canStartTrial(organizationId)) {
+      return res.status(400).json({ error: "Trial already used for this organization" });
+    }
 
-    return res.json({ success: true, organization: data });
+    const priceId = process.env.STRIPE_PRICE_PREMIUM_MONTHLY || "";
+    if (!priceId) throw new Error("STRIPE_PRICE_PREMIUM_MONTHLY is not configured");
+
+    const { url } = await createCheckoutSession(organizationId, priceId, true);
+    await track(caller.sub, "trial_checkout_started", { organization_id: organizationId });
+    return res.json({ url });
+  } catch (err: unknown) {
+    Sentry.captureException(err);
+    return res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// ── Stripe Billing Routes ─────────────────────────────────────────────────────
+// Canonical checkout-session endpoint: handles both trial (is_trial=true) and
+// upgrade (is_trial=false). Frontend migrates here in Task 4.
+app.post("/api/billing/create-checkout-session", async (req, res) => {
+  try {
+    const organizationId = Number(req.body?.organization_id);
+    const priceId = req.body?.price_id;
+    const isTrial = req.body?.is_trial === true;
+    const allowedPrices = [process.env.STRIPE_PRICE_PLUS_MONTHLY, process.env.STRIPE_PRICE_PLUS_YEARLY, process.env.STRIPE_PRICE_PREMIUM_MONTHLY, process.env.STRIPE_PRICE_PREMIUM_YEARLY].filter(Boolean);
+
+    if (!Number.isSafeInteger(organizationId) || organizationId <= 0 || typeof priceId !== "string" || !allowedPrices.includes(priceId) || typeof req.body?.is_trial !== "boolean" || (isTrial && ![process.env.STRIPE_PRICE_PREMIUM_MONTHLY, process.env.STRIPE_PRICE_PREMIUM_YEARLY].includes(priceId))) {
+      return res.status(400).json({ error: "Invalid organization_id or price_id" });
+    }
+
+    const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
+      headers: { cookie: req.headers.cookie ?? "" },
+    });
+    const caller = await classifyChatCaller(webRequest, organizationId);
+    if (!caller.ok) return res.status(caller.status).json({ error: caller.error });
+    if (!hasAtLeast(caller.role, "captain")) {
+      return res.status(403).json({ error: "Only team captains or admins can change subscription" });
+    }
+
+    if (isTrial) {
+      if (!await canStartTrial(organizationId)) {
+        return res.status(400).json({ error: "Trial already used for this organization" });
+      }
+    }
+
+    const { url } = await createCheckoutSession(organizationId, priceId, isTrial);
+    await track(caller.sub, "checkout_started", { organization_id: organizationId, price_id: priceId, is_trial: isTrial });
+    return res.json({ url });
+  } catch (err: unknown) {
+    Sentry.captureException(err);
+    return res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// Legacy trial endpoint kept for current frontend; same guard + Stripe flow.
+app.post("/api/org/trial", async (req, res) => {
+  try {
+    const organizationId = Number(req.body?.organization_id);
+    if (!Number.isInteger(organizationId) || organizationId <= 0) {
+      return res.status(400).json({ error: "Invalid organization_id" });
+    }
+
+    const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
+      headers: { cookie: req.headers.cookie ?? "" },
+    });
+    const caller = await classifyChatCaller(webRequest, organizationId);
+    if (!caller.ok) return res.status(caller.status).json({ error: caller.error });
+    if (!hasAtLeast(caller.role, "captain")) {
+      return res.status(403).json({ error: "Only team captains or admins can activate a free trial" });
+    }
+
+    if (!await canStartTrial(organizationId)) {
+      return res.status(400).json({ error: "Trial already used for this organization" });
+    }
+
+    const priceId = process.env.STRIPE_PRICE_PREMIUM_MONTHLY || "";
+    if (!priceId) throw new Error("STRIPE_PRICE_PREMIUM_MONTHLY is not configured");
+
+    const { url } = await createCheckoutSession(organizationId, priceId, true);
+    await track(caller.sub, "trial_checkout_started", { organization_id: organizationId });
+    return res.json({ url });
   } catch (err: unknown) {
     Sentry.captureException(err);
     return res.status(500).json({ error: err instanceof Error ? err.message : String(err) });

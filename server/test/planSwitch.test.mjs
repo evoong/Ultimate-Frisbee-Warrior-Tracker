@@ -40,6 +40,9 @@ globalThis.fetch = async (url, init = {}) => {
      dbUpdates.push(update);
      return Response.json({ id: 1, name: 'Test Org', tier: update.tier, plan_source: update.plan_source, trial_ends_at: update.trial_ends_at });
   }
+  if (target.pathname === '/rest/v1/rpc/can_start_trial') {
+    return Response.json(false);
+  }
   throw new Error(`Unexpected fetch: ${url}`);
 };
 
@@ -95,7 +98,9 @@ try {
   assert.equal(result.body.organization.plan_source, 'stripe');
   assert.match(result.body.organization.trial_ends_at, /^\d{4}-\d{2}-\d{2}T/);
 
-  // Test trial route
+  // Trial route now goes through Stripe Checkout with the one-time guard.
+  // Mocked can_start_trial returns false, so a captain still gets the guard:
+  // 400 (not 403) — the caller is authorized, the org's state rejects.
   const trialRes = await fetch(`${origin}/api/org/trial`, {
     method: 'POST',
     headers: {
@@ -104,12 +109,11 @@ try {
     },
     body: JSON.stringify({ organization_id: 1 }),
   });
-  assert.equal(trialRes.status, 200);
+  assert.equal(trialRes.status, 400);
   const trialBody = await trialRes.json();
-  assert.equal(trialBody.success, true);
-  assert.equal(trialBody.organization.plan_source, 'trial');
+  assert.equal(trialBody.error, 'Trial already used for this organization');
 
-  console.log('✓ POST /api/org/plan and POST /api/org/trial validate, authorize, and update plan');
+  console.log('✓ POST /api/org/plan validates, authorizes, and updates plan; POST /api/org/trial rejects repeat trials');
 } finally {
   await new Promise(resolve => server.close(resolve));
 }
