@@ -63,3 +63,6 @@ supabase/signing_keys.json
 # Brainstorming visual companion scratch
 .superpowers/
 .playwright-mcp/
+
+# QA artifacts (prod dumps, scrubbed data — never commit)
+.qa/

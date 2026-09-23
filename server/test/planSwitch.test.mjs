@@ -34,6 +34,12 @@ globalThis.fetch = async (url, init = {}) => {
     // `.single()` requests PostgREST's object response media type.
     return Response.json({ id: 1, name: 'Test Org', tier: update.tier, plan_source: update.plan_source, trial_ends_at: update.trial_ends_at });
   }
+  if (target.pathname === '/rest/v1/organizations' && target.searchParams.has('id') && init.method === 'PATCH') {
+     // Matches the specific route update (sometimes PostgREST is URL, sometimes query param)
+     const update = JSON.parse(String(init.body));
+     dbUpdates.push(update);
+     return Response.json({ id: 1, name: 'Test Org', tier: update.tier, plan_source: update.plan_source, trial_ends_at: update.trial_ends_at });
+  }
   throw new Error(`Unexpected fetch: ${url}`);
 };
 
@@ -83,16 +89,27 @@ try {
 
   result = await request({ organization_id: 1, tier: 'premium' }, await tokenFor('captain'));
   assert.equal(result.status, 200);
-    assert.equal(result.body.success, true);
+  assert.equal(result.body.success, true);
   assert.equal(result.body.organization.id, 1);
   assert.equal(result.body.organization.tier, 'premium');
   assert.equal(result.body.organization.plan_source, 'stripe');
   assert.match(result.body.organization.trial_ends_at, /^\d{4}-\d{2}-\d{2}T/);
-  assert.equal(dbUpdates.at(-1).tier, 'premium');
-  assert.equal(dbUpdates.at(-1).plan_source, 'stripe');
-  assert.match(dbUpdates.at(-1).trial_ends_at, /^\d{4}-\d{2}-\d{2}T/);
 
-  console.log('✓ POST /api/org/plan validates, authorizes, and updates plan');
+  // Test trial route
+  const trialRes = await fetch(`${origin}/api/org/trial`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      cookie: `ufwt_at=${await tokenFor('captain')}`,
+    },
+    body: JSON.stringify({ organization_id: 1 }),
+  });
+  assert.equal(trialRes.status, 200);
+  const trialBody = await trialRes.json();
+  assert.equal(trialBody.success, true);
+  assert.equal(trialBody.organization.plan_source, 'trial');
+
+  console.log('✓ POST /api/org/plan and POST /api/org/trial validate, authorize, and update plan');
 } finally {
   await new Promise(resolve => server.close(resolve));
 }

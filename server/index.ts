@@ -202,6 +202,38 @@ app.post("/api/org/plan", async (req, res) => {
   }
 });
 
+app.post("/api/org/trial", async (req, res) => {
+  try {
+    const organizationId = Number(req.body?.organization_id);
+    if (!Number.isInteger(organizationId) || organizationId <= 0) {
+      return res.status(400).json({ error: "Invalid organization_id" });
+    }
+
+    const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
+      headers: { cookie: req.headers.cookie ?? "" },
+    });
+    const caller = await classifyChatCaller(webRequest, organizationId);
+    if (!caller.ok) return res.status(caller.status).json({ error: caller.error });
+    if (!hasAtLeast(caller.role, "captain")) {
+      return res.status(403).json({ error: "Only team captains or admins can activate a free trial" });
+    }
+
+    const trialEndsAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from("organizations")
+      .update({ tier: "premium", plan_source: "trial", trial_ends_at: trialEndsAt })
+      .eq("id", organizationId)
+      .select()
+      .single();
+    if (error) throw error;
+
+    return res.json({ success: true, organization: data });
+  } catch (err: unknown) {
+    Sentry.captureException(err);
+    return res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 // ── AI Chat ───────────────────────────────────────────────────────────────────
 
 // Supabase Vault (see gateway/secrets.ts) is the primary source for these,

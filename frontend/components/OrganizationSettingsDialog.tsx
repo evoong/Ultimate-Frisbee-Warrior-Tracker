@@ -113,7 +113,7 @@ function EmptyNote({ children }: { children: ReactNode }) {
 const TIER_LIMITS = {
   free: { members: '15 members', history: '30-day history', strategies: '3 strategies', ai: '5 AI messages/month' },
   plus: { members: '35 members', history: 'Unlimited history', strategies: 'Unlimited strategies', ai: '100 AI messages/month' },
-  premium: { members: 'Unlimited members', history: 'Unlimited history', strategies: 'Unlimited strategies', ai: 'Unlimited AI messages' },
+  premium: { members: 'Unlimited members', history: 'Unlimited history', strategies: 'Unlimited strategies', ai: '500 AI messages/month' },
 } as const
 
 interface TierDetailsProps {
@@ -138,6 +138,28 @@ export function TierDetails({ tier, isEmployeeGranted, trialEndsAt, currentTeamI
     setLoadingTier(nextTier)
     try {
       if (await onPlanChange(nextTier)) setShowPlanSelector(false)
+    } finally {
+      setLoadingTier(null)
+    }
+  }
+
+  async function handleStartTrial() {
+    if (!currentTeamId || !onPlanChange || loadingTier) return
+    setLoadingTier('trial')
+    try {
+      const res = await fetch('/api/org/trial', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ organization_id: currentTeamId }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.error || 'Failed to start trial')
+      toast.success('30-Day Premium Trial activated!')
+      onPlanChange?.()
+      setShowPlanSelector(false)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to start trial')
     } finally {
       setLoadingTier(null)
     }
@@ -188,6 +210,7 @@ export function TierDetails({ tier, isEmployeeGranted, trialEndsAt, currentTeamI
               currentTier={tier}
               loadingTier={loadingTier}
               onSelectTier={handleSelectTier}
+              onStartTrial={handleStartTrial}
               compact
             />
           </DialogContent>
