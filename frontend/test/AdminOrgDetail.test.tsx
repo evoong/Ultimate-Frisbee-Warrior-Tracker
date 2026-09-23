@@ -16,7 +16,7 @@ const ORG = {
   members: [
     { user_id: 'u1', email: 'capt@test.com', role: 'captain' },
     { user_id: 'u2', email: 'editor@test.com', role: 'editor' },
-    { user_id: 'u3', email: 'viewer@test.com', role: 'viewer' },
+    { user_id: 'u3', email: 'member@test.com', role: 'member' },
   ],
   teams: [{ id: 1, name: 'Warriors' }],
   counts: { games: 0, players: 0, seasons: 0 },
@@ -59,31 +59,40 @@ describe('admin org detail page', () => {
     })
   })
 
-  it('changes member role through audited operation', async () => {
+  it('changes member role through audited operation via preview dialog', async () => {
     mockAdminGet.mockResolvedValueOnce(ORG)
-    mockAdminOp.mockResolvedValueOnce({})
+    mockAdminOp
+      .mockResolvedValueOnce({ preview: { current: ORG.members[1], next: { role: 'editor' } } })
+      .mockResolvedValueOnce({ ok: true })
     render(<MemoryRouter><OrgDetail orgId="1" /></MemoryRouter>)
     await waitFor(() => fireEvent.click(screen.getByRole('button', { name: /change role.*editor@test\.com/i })))
-    fireEvent.click(screen.getByRole('button', { name: /make viewer/i }))
+    await waitFor(() => screen.getByText(/operation/i))
+    fireEvent.click(screen.getByRole('button', { name: /apply/i }))
     await waitFor(() => {
-      expect(mockAdminOp).toHaveBeenCalledWith('set_member_role', { team_id: 1, user_id: 'u2', role: 'viewer' }, 'apply')
+      expect(mockAdminOp).toHaveBeenCalledWith('set_member_role', { team_id: 1, user_id: 'u2', role: 'editor' }, 'apply')
     })
   })
 
-  it('removes a member through audited operation', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValueOnce(true)
+  it('removes a member through audited operation via preview dialog', async () => {
     mockAdminGet.mockResolvedValueOnce(ORG)
-    mockAdminOp.mockResolvedValueOnce({})
+    mockAdminOp
+      .mockResolvedValueOnce({ preview: { current: ORG.members[2] } })
+      .mockResolvedValueOnce({ ok: true })
     render(<MemoryRouter><OrgDetail orgId="1" /></MemoryRouter>)
-    await waitFor(() => fireEvent.click(screen.getByRole('button', { name: /remove.*viewer@test\.com/i })))
+    await waitFor(() => fireEvent.click(screen.getByRole('button', { name: /remove.*member@test\.com/i })))
+    await waitFor(() => screen.getByText(/operation/i))
+    fireEvent.change(screen.getByPlaceholderText('remove'), { target: { value: 'remove' } })
+    fireEvent.click(screen.getByRole('button', { name: /apply/i }))
     await waitFor(() => {
       expect(mockAdminOp).toHaveBeenCalledWith('remove_member', { team_id: 1, user_id: 'u3' }, 'apply')
     })
   })
 
-  it('shows invite form and creates invite link on submit', async () => {
+  it('shows invite form and creates invite link on submit via preview dialog', async () => {
     mockAdminGet.mockResolvedValueOnce(ORG)
-    mockAdminOp.mockResolvedValueOnce({ link: '/join/abc123' })
+    mockAdminOp
+      .mockResolvedValueOnce({ preview: { invite: { email: 'new@test.com', role: 'editor' } } })
+      .mockResolvedValueOnce({ ok: true })
     render(
       <MemoryRouter>
         <OrgDetail orgId="1" />
@@ -95,14 +104,18 @@ describe('admin org detail page', () => {
     })
     fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'new@test.com' } })
     fireEvent.click(screen.getByRole('button', { name: /create invite/i }))
+    await waitFor(() => screen.getByText(/operation/i))
+    fireEvent.click(screen.getByRole('button', { name: /apply/i }))
     await waitFor(() => {
       expect(mockAdminOp).toHaveBeenCalledWith('create_invite_link', { org_id: 1, email: 'new@test.com', role: 'editor' }, 'apply')
     })
   })
 
-  it('transfers captainship via modal and calls adminOp', async () => {
+  it('transfers captainship via modal and calls adminOp via preview dialog', async () => {
     mockAdminGet.mockResolvedValueOnce(ORG)
-    mockAdminOp.mockResolvedValueOnce({})
+    mockAdminOp
+      .mockResolvedValueOnce({ preview: { target: 'u2', demoted: ['u1'] } })
+      .mockResolvedValueOnce({ ok: true })
     render(
       <MemoryRouter>
         <OrgDetail orgId="1" />
@@ -112,13 +125,13 @@ describe('admin org detail page', () => {
       fireEvent.click(screen.getByRole('button', { name: /make captain.*editor@test\.com/i }))
     })
     await waitFor(() => {
-      expect(screen.getByRole('dialog')).toBeInTheDocument()
+      expect(screen.getByText(/operation/i)).toBeInTheDocument()
       expect(screen.getByText(/transfer captainship/i)).toBeInTheDocument()
     })
-    fireEvent.change(screen.getByLabelText(/reason/i), { target: { value: 'Stepping down' } })
-    fireEvent.click(screen.getByRole('button', { name: /confirm transfer/i }))
+    fireEvent.change(screen.getByPlaceholderText('transfer'), { target: { value: 'transfer' } })
+    fireEvent.click(screen.getByRole('button', { name: /apply/i }))
     await waitFor(() => {
-      expect(mockAdminOp).toHaveBeenCalledWith('transfer_captainship', { org_id: 1, new_captain_user_id: 'u2', reason: 'Stepping down' }, 'apply')
+      expect(mockAdminOp).toHaveBeenCalledWith('transfer_captainship', { org_id: 1, new_captain_user_id: 'u2', reason: 'Admin transfer' }, 'apply')
     })
   })
 })
