@@ -339,3 +339,21 @@ Both are named here so this sub-project's seams are shaped to accept them: the
 operation catalog is a registry rather than a switch statement, and
 `AdminCtx` carries the request id and admin identity that C will need to mark
 impersonated sessions.
+
+## Deviations found during implementation
+
+Two things in the design above were not buildable as written. Both were
+corrected in the plan; this section records why so the spec is not read as the
+final word on them.
+
+1. **`/auth/session` does not gain an `admin` field.** `GatewayConfig`
+   deliberately carries no `supabaseSecretKey`, and reading `platform_admins`
+   requires it — adding the service-role key to the gateway would break the
+   invariant the whole design rests on. `GET /api/admin/whoami` serves the nav
+   gate instead, which also means the gate shares the same enforcement path as
+   every other admin route rather than being a second trust surface.
+2. **No admin operation wraps an existing membership RPC.** The RPCs gate on
+   `auth.uid()`, which is NULL under the service role, so a wrapper would
+   raise rather than work. Operations write directly; `enforce_last_captain()`
+   is a trigger and still applies. See schema fact 5 above, which anticipated
+   this but stopped short of stating the consequence for the operation table.

@@ -845,6 +845,57 @@ screenshot it in both themes, then delete the harness and revert the temporary
   positive control before trusting any CLS number out of headless Chrome, in
   CI or locally.
 
+## Admin console
+
+- The console lives at `/admin` (SPA route); its API is `/api/admin/*`. These
+  prefixes must stay different: `worker.ts` serves the SPA fallback only for
+  paths failing its `isGatewayPath` check, so an `/admin` API prefix makes a
+  browser navigation to `/admin/users` return 404.
+- Handlers are in `gateway/admin/` and live **outside** `createGateway`,
+  because they hold the service-role key and the gateway never does. They are
+  mounted twice: in `worker.ts` right after the gateway call, and in
+  `server/index.ts` via `createNodeAdapter` before `express.json()`.
+- **Granting admin is a manual step, on purpose.** Run
+  `node --env-file=.env.local scripts/grant-platform-admin.mjs <email> <role>`
+  (roles: `superadmin`, `support`, `readonly`). The console deliberately has no
+  operation for this, so a compromised admin session cannot mint more admins.
+  Without a `platform_admins` row you get a 403 from every `/api/admin/*`
+  route and no Admin link in the sidebar — that is correct behaviour, not a bug.
+- `platform_admins` and `admin_audit_log` are RLS-enabled with **zero
+  policies** and no grants to `anon`/`authenticated`. If you add a table like
+  this, also add it to the allowlist in `supabase/tests/00_meta.test.sql`,
+  which otherwise fails with "every table in public has at least one policy".
+- `admin_audit_log` is append-only via the `admin_audit_log_no_mutate` trigger.
+  `UPDATE` and `DELETE` raise even for the service role. Deleting a former
+  admin's `auth.users` row is blocked by `admin_id`'s `ON DELETE RESTRICT` —
+  that is deliberate, and it means a GDPR deletion for an ex-admin needs an
+  explicit decision about their audit history.
+- **Admin operations write tables directly with the service role; they do not
+  call the membership RPCs.** `set_member_role` and friends gate on
+  `auth.uid()` via `my_captain_team_ids()`, which is empty under the service
+  role, so they raise `only a captain can change roles`. This is safe because
+  `enforce_last_captain()` is a *trigger* (`team_members_require_captain`) and
+  fires on direct writes too. Each operation re-implements the RPC's input
+  validation; see `gateway/admin/ops.ts`.
+- Adding an operation means adding one entry to `ADMIN_OPERATIONS` in
+  `gateway/admin/ops.ts`. Do **not** write an audit row from inside an
+  operation — `dispatchOperation` does it, which is what guarantees no
+  operation can forget. `preview` must never write.
+- **Every admin mutation in the UI goes through `OperationDialog`**
+  (`frontend/pages/admin/OperationDialog.tsx`): preview first, then Apply.
+  Do not call `adminOp(..., 'apply')` directly from a page — the preview step
+  is what shows the operator what will change before anything is written.
+- Team member roles are `captain` / `editor` / `member` — there is no `viewer`
+  role. Invite roles are only `editor` / `member` (an invite can never grant
+  captain; use `transfer_captainship` for that).
+- There is **no team-transfer operation** and cannot be one without a schema
+  change: `players`, `game_events`, `strategy_*`, and `lineup_templates` are
+  scoped only by `organization_id`, so there is no way to tell which of them
+  belong to a moved team. See the spec for the full reasoning.
+- Tests: `npm run db:test` (pgTAP suites 18-20) and
+  `npm run test:gateway:offline` (`adminAuth`, `adminOps`). As everywhere else
+  in this repo, do not run `npm test` — it reads production.
+
 ## References
 - Bugs and feature requests are tracked as GitHub issues in this repo (`gh issue list`), not in a separate tracker.
 - Project notes/planning doc in Notion: https://app.notion.com/p/e2e903a5dd4347c7be8fe9a0ab39b4f1?v=3d08e4449db2814b9332000c33d32b8b
