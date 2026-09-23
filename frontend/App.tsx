@@ -34,6 +34,9 @@ import PanelToggle from './components/nav/PanelToggle'
 import UserMenu from './components/nav/UserMenu'
 import WorkspaceSwitcher from './components/nav/WorkspaceSwitcher'
 import { passkeysAvailable } from './lib/passkeys'
+import { AdBanner } from './components/AdBanner'
+import { useEffectiveTier } from './hooks/useEffectiveTier'
+import { Toaster } from 'sonner'
 
 const THEME_KEY = 'ufwt_theme'
 
@@ -64,6 +67,7 @@ export default function App() {
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const isDesktop = useMediaQuery('(min-width: 1024px)')
   const { user, teams, currentTeamId, switchTeam, can, role, isGuest, loading, logout } = useAuth()
+  const entitlement = useEffectiveTier(currentTeamId)
 
   useEffect(() => {
     const root = document.documentElement
@@ -291,8 +295,10 @@ export default function App() {
   // Desktop: collapsible sidebar shell.
   if (isDesktop) {
     return (
-      <SidebarProvider>
-        <AppSidebar
+      <>
+        <Toaster richColors position="bottom-right" />
+        <SidebarProvider>
+          <AppSidebar
           activeTab={activeTab}
           setActiveTab={setActiveTab}
           userEmail={user.email}
@@ -307,7 +313,7 @@ export default function App() {
           openFeedback={() => setFeedbackOpen(true)}
         />
         <PasskeysDialog open={passkeysOpen} onOpenChange={setPasskeysOpen} />
-        <OrganizationSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+        <OrganizationSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} tier={entitlement.tier} isEmployeeGranted={entitlement.isEmployeeGranted} trialEndsAt={entitlement.trialEndsAt} onPlanChange={entitlement.refresh} />
         <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
         <SidebarInset>
           {/* A utility strip, not a page header. The page's name used to sit
@@ -326,19 +332,23 @@ export default function App() {
             <PanelToggle />
             <ThemeToggle theme={theme} toggleTheme={toggleTheme} className="ml-auto" />
           </header>
+          <AdBanner tier={entitlement.tier} />
           {guestNotice}
           {readOnlyNotice}
           <main className="mx-auto w-full max-w-5xl px-6 py-6">
             {pageContent}
           </main>
         </SidebarInset>
-      </SidebarProvider>
+        </SidebarProvider>
+      </>
     )
   }
 
   // Mobile: sticky header plus fixed bottom navigation.
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <>
+      <Toaster richColors position="bottom-right" />
+      <div className="min-h-screen bg-background text-foreground">
       {/* Mobile carries the same two controls as the desktop shell, in the
           same places: the workspace on the left, one theme toggle and one
           account menu on the right. The five loose icons and the separate
@@ -374,9 +384,12 @@ export default function App() {
       {readOnlyNotice}
 
       <PasskeysDialog open={passkeysOpen} onOpenChange={setPasskeysOpen} />
-      <OrganizationSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <OrganizationSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} tier={entitlement.tier} isEmployeeGranted={entitlement.isEmployeeGranted} trialEndsAt={entitlement.trialEndsAt} onPlanChange={entitlement.refresh} />
       <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
 
+      <AdBanner tier={entitlement.tier} />
+
+      <Toaster richColors position="bottom-right" />
       <main className="max-w-2xl mx-auto px-4 py-6 pb-24">
         {pageContent}
       </main>
@@ -409,5 +422,6 @@ export default function App() {
         </div>
       </nav>
     </div>
+    </>
   )
 }
