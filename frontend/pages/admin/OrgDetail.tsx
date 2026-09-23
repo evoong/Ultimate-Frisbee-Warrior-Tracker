@@ -7,8 +7,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogT
 import { Input } from '../../lib/shadcn/input'
 import { Label } from '../../lib/shadcn/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../lib/shadcn/select'
+import OperationDialog from './OperationDialog'
 
-type Member = { user_id: string; email: string; role: 'captain' | 'editor' | 'viewer' }
+type Member = { user_id: string; email: string; role: 'captain' | 'editor' | 'member' }
 type OrgDetailPayload = {
   organization: { id: number; name: string; is_public: boolean; created_at: string }
   members: Member[]
@@ -18,6 +19,9 @@ type OrgDetailPayload = {
   legacy_organization_members: { role: string; email: string }[]
 }
 
+const TEAM_ROLES = ['captain', 'editor', 'member'] as const
+const INVITE_ROLES = ['editor', 'member'] as const
+
 export default function OrgDetail({ orgId: propOrgId }: { orgId?: string }) {
   const { orgId: paramOrgId } = useParams<{ orgId: string }>()
   const orgId = propOrgId ?? paramOrgId!
@@ -25,23 +29,13 @@ export default function OrgDetail({ orgId: propOrgId }: { orgId?: string }) {
   const [data, setData] = useState<OrgDetailPayload | null>(null)
   const [loading, setLoading] = useState(true)
   const [inviteEmail, setInviteEmail] = useState('')
-  const [inviteRole, setInviteRole] = useState<'captain' | 'editor' | 'viewer'>('editor')
-  const [transferUserId, setTransferUserId] = useState<string | null>(null)
-  const [transferReason, setTransferReason] = useState('')
-  const [roleUserId, setRoleUserId] = useState<string | null>(null)
-
-  async function changeRole(role: Member['role']) {
-    if (!roleUserId) return
-    await adminOp('set_member_role', { team_id: Number(orgId), user_id: roleUserId, role }, 'apply')
-    setRoleUserId(null)
-    refresh()
-  }
-
-  async function removeMember(userId: string) {
-    if (!window.confirm('Remove this member?')) return
-    await adminOp('remove_member', { team_id: Number(orgId), user_id: userId }, 'apply')
-    refresh()
-  }
+  const [inviteRole, setInviteRole] = useState<'editor' | 'member'>('editor')
+  const [dialog, setDialog] = useState<{
+    name: string
+    title: string
+    input: Record<string, unknown>
+    confirmPhrase?: string
+  } | null>(null)
 
   async function refresh() {
     setLoading(true)
@@ -51,16 +45,42 @@ export default function OrgDetail({ orgId: propOrgId }: { orgId?: string }) {
 
   useEffect(() => { refresh() }, [orgId])
 
-  async function invite() {
-    await adminOp('create_invite_link', { org_id: Number(orgId), email: inviteEmail, role: inviteRole }, 'apply')
-    refresh()
+  function openSetMemberRole(membership: Member) {
+    setDialog({
+      name: 'set_member_role',
+      title: 'Change Member Role',
+      input: { team_id: Number(orgId), user_id: membership.user_id, role: 'editor' },
+    })
   }
 
-  async function transfer() {
-    if (!transferUserId) return
-    await adminOp('transfer_captainship', { org_id: Number(orgId), new_captain_user_id: transferUserId, reason: transferReason }, 'apply')
-    setTransferUserId(null)
-    refresh()
+  function openRemoveMember(userId: string) {
+    setDialog({
+      name: 'remove_member',
+      title: 'Remove Member',
+      input: { team_id: Number(orgId), user_id: userId },
+      confirmPhrase: 'remove',
+    })
+  }
+
+  function openInvite() {
+    setDialog({
+      name: 'create_invite_link',
+      title: 'Create Invite Link',
+      input: { org_id: Number(orgId), email: inviteEmail, role: inviteRole },
+    })
+  }
+
+  function openTransferCaptain(userId: string) {
+    setDialog({
+      name: 'transfer_captainship',
+      title: 'Transfer Captainship',
+      input: { org_id: Number(orgId), new_captain_user_id: userId, reason: 'Admin transfer' },
+      confirmPhrase: 'transfer',
+    })
+  }
+
+  function closeDialog() {
+    setDialog(null)
   }
 
   if (loading) return <Skeleton className="h-64 w-full" />
@@ -87,12 +107,10 @@ export default function OrgDetail({ orgId: propOrgId }: { orgId?: string }) {
           <Select value={inviteRole} onValueChange={(r: any) => setInviteRole(r)}>
             <SelectTrigger className="w-32" aria-label="Role"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="captain">Captain</SelectItem>
-              <SelectItem value="editor">Editor</SelectItem>
-              <SelectItem value="viewer">Viewer</SelectItem>
+              {INVITE_ROLES.map(r => <SelectItem key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</SelectItem>)}
             </SelectContent>
           </Select>
-          <Button onClick={invite}>Create invite</Button>
+          <Button onClick={openInvite}>Create invite</Button>
           {captain && (
             <Button variant="outline" onClick={() => navigate(`/admin/view-as/${captain.user_id}`)}>View as captain</Button>
           )}
@@ -113,34 +131,10 @@ export default function OrgDetail({ orgId: propOrgId }: { orgId?: string }) {
                 <td className="p-3">{m.email}</td>
                 <td className="p-3 capitalize">{m.role}</td>
                 <td className="p-3 text-right space-x-2">
-                  <Dialog>
-                    <DialogTrigger asChild><Button variant="outline" size="sm" aria-label={`Change role for ${m.email}`} onClick={() => setRoleUserId(m.user_id)}>Change role</Button></DialogTrigger>
-                    <DialogContent>
-                      <DialogHeader><DialogTitle>Change role for {m.email}</DialogTitle></DialogHeader>
-                      <div className="flex flex-col gap-2">
-                        {(['captain', 'editor', 'viewer'] as const).map(role => (
-                          <Button key={role} variant="outline" className="justify-start capitalize" onClick={() => changeRole(role)}>Make {role}</Button>
-                        ))}
-                      </div>
-                    </DialogContent>
-                  </Dialog>
-                  <Button variant="destructive" size="sm" aria-label={`Remove ${m.email}`} onClick={() => removeMember(m.user_id)}>Remove</Button>
+                  <Button variant="outline" size="sm" aria-label={`Change role for ${m.email}`} onClick={() => openSetMemberRole(m)}>Change role</Button>
+                  <Button variant="destructive" size="sm" aria-label={`Remove ${m.email}`} onClick={() => openRemoveMember(m.user_id)}>Remove</Button>
                   {m.role !== 'captain' && (
-                    <Dialog>
-                      <DialogTrigger asChild><Button variant="outline" size="sm" aria-label={`Make captain ${m.email}`} onClick={() => setTransferUserId(m.user_id)}>Make captain</Button></DialogTrigger>
-                      <DialogContent>
-                        <DialogHeader>
-                          <DialogTitle>Transfer captainship to {m.email}?</DialogTitle>
-                        </DialogHeader>
-                        <div className="space-y-2">
-                          <Label htmlFor="transfer-reason">Reason</Label>
-                          <Input id="transfer-reason" value={transferReason} onChange={e => setTransferReason(e.target.value)} placeholder="Reason for transfer" />
-                        </div>
-                        <DialogFooter>
-                          <Button onClick={transfer}>Confirm transfer</Button>
-                        </DialogFooter>
-                      </DialogContent>
-                    </Dialog>
+                    <Button variant="outline" size="sm" aria-label={`Make captain ${m.email}`} onClick={() => openTransferCaptain(m.user_id)}>Make captain</Button>
                   )}
                 </td>
               </tr>
@@ -148,6 +142,17 @@ export default function OrgDetail({ orgId: propOrgId }: { orgId?: string }) {
           </tbody>
         </table>
       </div>
+
+      {dialog && (
+        <OperationDialog
+          name={dialog.name}
+          title={dialog.title}
+          input={dialog.input}
+          confirmPhrase={dialog.confirmPhrase}
+          onDone={closeDialog}
+          onCancel={closeDialog}
+        />
+      )}
     </section>
   )
 }
