@@ -4,9 +4,12 @@
 A local, free, production-safe QA environment. It uses the Supabase CLI Docker stack, managed via npm scripts.
 
 ## Setup
-1. `npm install`
-2. `supabase start`
-3. `cp .env.local.example .env.local`
+1. `npm install` in repo root and `cd frontend && npm install` for frontend dependencies.
+2. `npx supabase start` to start isolated local Docker stack.
+3. `npm run qa:reset` to apply migrations, seed test identities, and write `.env.local` from local stack credentials.
+4. `npm run qa:verify` to run full checks.
+
+For guided setup, use `.claude/skills/repo-setup/SKILL.md`.
 
 ## Commands
 

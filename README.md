@@ -15,6 +15,10 @@ Ultimate Frisbee Warrior Tracker is a full-stack web application designed to hel
 - **Deployment:** Vercel (Frontend & Serverless API functions)
 - **Analytics:** PostHog (frontend product analytics and MCP server tool-call analytics)
 
+## Setup skill
+
+For guided first-time setup, use repo skill: `.claude/skills/repo-setup/SKILL.md`.
+
 ## Running Locally
 
 To run the project locally for development:
@@ -53,7 +57,7 @@ The frontend will be available at `http://localhost:5001` and the backend API at
 Use local QA to test migrations, RLS, and destructive flows without touching production:
 
 ```bash
-supabase start           # start local stack
+npx supabase start       # start local stack
 npm run qa:reset         # reset DB + seed users
 npm run qa:verify        # full test suite
 ```
