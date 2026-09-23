@@ -25,7 +25,10 @@
     "db:test": "supabase test db",
     "db:signing-key": "node scripts/gen-local-signing-key.mjs",
     "test:gateway:offline": "node node_modules/tsx/dist/cli.mjs gateway/jwt.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/gameActions.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/jamSync.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/feedbackTriage.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/admin/adminAuth.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/admin/adminOps.test.mjs",
-    "test:triage": "node node_modules/tsx/dist/cli.mjs gateway/feedbackTriage.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/feedbackStore.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/feedbackJudge.test.mjs"
+    "test:triage": "node node_modules/tsx/dist/cli.mjs gateway/feedbackTriage.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/feedbackStore.test.mjs && node node_modules/tsx/dist/cli.mjs gateway/feedbackJudge.test.mjs",
+    "qa:reset": "node scripts/qa-reset.mjs",
+    "qa:import-prod": "node scripts/qa-import-prod.mjs",
+    "qa:verify": "node scripts/qa-verify.mjs"
   },
   "retool": {
     "app": {

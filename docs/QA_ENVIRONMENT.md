@@ -1,0 +1,28 @@
+# QA Environment
+
+## Overview
+A local, free, production-safe QA environment. It uses the Supabase CLI Docker stack, managed via npm scripts.
+
+## Setup
+1. `npm install`
+2. `supabase start`
+3. `cp .env.local.example .env.local`
+
+## Commands
+
+| Command | Purpose | Safety |
+|---------|---------|--------|
+| `npm run qa:reset` | Reset DB + seed test users | Local-only guard |
+| `npm run qa:verify` | Run full test suite | Local-only guard |
+| `npm run qa:import-prod`| Guided safe-import from production | Requires QA_PROD_SOURCE_URL, manual-only |
+
+## Production Import Procedure
+1. Set `QA_PROD_SOURCE_URL=postgresql://...` to your production database URL.
+2. Run `npm run qa:import-prod`.
+3. The script will dump only approved tables (seasons, games, etc.), scrub sensitive schemas, and restore to local QA.
+4. `.qa/` folder contains intermediate files; it is gitignored.
+
+## Safety
+- All scripts assert the target Supabase URL is local (`127.0.0.1` or `localhost`).
+- Production credentials are never read by QA commands.
+- `qa:import-prod` only imports tables explicitly defined in the script's `ALLOWED_TABLES` list.

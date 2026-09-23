@@ -47,3 +47,21 @@ To run the project locally for development:
    ```
 
 The frontend will be available at `http://localhost:5001` and the backend API at `http://localhost:3001`.
+
+## QA Environment (local Supabase)
+
+Use local QA to test migrations, RLS, and destructive flows without touching production:
+
+```bash
+supabase start           # start local stack
+npm run qa:reset         # reset DB + seed users
+npm run qa:verify        # full test suite
+```
+
+Optional: import a scrubbed prod snapshot (approved tables only):
+
+```bash
+QA_PROD_SOURCE_URL=postgresql://... npm run qa:import-prod
+```
+
+See `docs/QA_ENVIRONMENT.md` for details.
