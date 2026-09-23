@@ -197,7 +197,7 @@ export default function App() {
     </div>
   )
 
-  const readOnlyNotice = !isGuest && !can.record && (
+  const readOnlyNotice = !isGuest && !can.record && !location.pathname.startsWith('/admin') && (
     <div className="border-b bg-muted/60 px-4 py-2 text-center text-sm">
       You don't have permission to change this team's data.
     </div>
