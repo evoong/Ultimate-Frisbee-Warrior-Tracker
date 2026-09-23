@@ -18,12 +18,12 @@ const USER = {
 }
 
 const MEMBERSHIPS = [
-  { team_id: 1, organization_name: 'Warriors', role: 'member', created_at: '2026-01-02' },
-  { team_id: 2, organization_name: 'Storm', role: 'captain', created_at: '2026-02-02' },
+  { organization_id: 1, name: 'Warriors', role: 'member', since: '2026-01-02' },
+  { organization_id: 2, name: 'Storm', role: 'captain', since: '2026-02-02' },
 ]
 
 const LINKS = [
-  { id: 10, team_id: 1, player_id: 5, player_name: 'Test Player', status: 'pending' },
+  { link_id: 10, organization_id: 1, player_id: 5, display_name: 'Test Player', status: 'pending' },
 ]
 
 function renderPage() {

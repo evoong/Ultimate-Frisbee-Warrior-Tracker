@@ -11,17 +11,17 @@ interface User {
 }
 
 interface Membership {
-  team_id: number
-  organization_name: string
+  organization_id: number
+  name: string
   role: string
-  created_at: string
+  since: string
 }
 
 interface PlayerLink {
-  id: number
-  team_id: number
+  link_id: number
+  organization_id: number
   player_id: number
-  player_name: string
+  display_name: string
   status: string
 }
 
@@ -29,6 +29,7 @@ interface State {
   user: User
   memberships: Membership[]
   player_links: PlayerLink[]
+  pending_invites: any[]
 }
 
 export default function UserDetail() {
@@ -59,7 +60,7 @@ export default function UserDetail() {
     setDialog({
       name: 'set_member_role',
       title: 'Change Member Role',
-      input: { team_id: membership.team_id, user_id: userId!, role: 'editor' },
+      input: { team_id: membership.organization_id, user_id: userId!, role: 'editor' },
     })
   }
 
@@ -67,7 +68,7 @@ export default function UserDetail() {
     setDialog({
       name: 'approve_player_link',
       title: 'Approve Player Link',
-      input: { link_id: link.id },
+      input: { link_id: link.link_id },
     })
   }
 
@@ -85,7 +86,7 @@ export default function UserDetail() {
         <h1 className="text-xl font-semibold">{data.user.email}</h1>
         <p className="text-xs text-muted-foreground">
           Created {new Date(data.user.created_at).toLocaleDateString()} ·
-          Last sign-in {new Date(data.user.last_sign_in_at).toLocaleDateString()}
+          Last sign-in {data.user.last_sign_in_at ? new Date(data.user.last_sign_in_at).toLocaleDateString() : 'never'}
         </p>
       </div>
 
@@ -96,9 +97,9 @@ export default function UserDetail() {
         ) : (
           <ul className="flex flex-col gap-2">
             {data.memberships.map(m => (
-              <li key={m.team_id} className="flex items-center justify-between rounded border bg-background p-3">
+              <li key={m.organization_id} className="flex items-center justify-between rounded border bg-background p-3">
                 <div>
-                  <code className="font-medium">{m.organization_name}</code>
+                  <code className="font-medium">{m.name}</code>
                   <span className="ml-2 text-xs text-muted-foreground">({m.role})</span>
                 </div>
                 <button
@@ -120,9 +121,9 @@ export default function UserDetail() {
         ) : (
           <ul className="flex flex-col gap-2">
             {data.player_links.map(l => (
-              <li key={l.id} className="flex items-center justify-between rounded border bg-background p-3">
+              <li key={l.link_id} className="flex items-center justify-between rounded border bg-background p-3">
                 <div>
-                  <code className="font-medium">{l.player_name}</code>
+                  <code className="font-medium">{l.display_name}</code>
                   <span className="ml-2 text-xs text-muted-foreground">({l.status})</span>
                 </div>
                 {l.status === 'pending' && (
