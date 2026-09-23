@@ -26,7 +26,7 @@ import { judgeReport } from "../gateway/feedbackJudge.js";
 import { sbGet } from "../gateway/supabaseRest.js";
 import { track, trackError, shutdown } from "./lib/posthog.js";
 import { consumeAiMessage, refundAiMessage } from "./lib/tierLimits.js";
-import { createCheckoutSession, canStartTrial } from "./lib/billing.js";
+import { createCheckoutSession, canStartTrial, verifyWebhook, processWebhook } from "./lib/billing.js";
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
@@ -73,6 +73,31 @@ app.use(
     isAdminPath
   )
 );
+
+// Stripe webhook MUST be before express.json() to receive raw body for signature verification
+app.post(
+  "/api/billing/webhook",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    let event;
+    try {
+      event = verifyWebhook(req.body, req.headers["stripe-signature"] as string | undefined);
+    } catch (err) {
+      // Unsigned/invalid request: reject, never grant anything (spec §4.4).
+      return res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+    try {
+      const outcome = await processWebhook(event);
+      return res.json({ received: true, outcome });
+    } catch (err) {
+      // Processing failure: 500 so Stripe retries; idempotency guard makes
+      // the retry safe.
+      Sentry.captureException(err);
+      return res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+);
+
 app.use(express.json());
 
 // Vercel serverless filesystem is read-only except /tmp; use /tmp/uploads there
