@@ -192,14 +192,26 @@ export function TierDetails({ tier, isEmployeeGranted, trialEndsAt, trialStarted
           <div className="flex items-center gap-2">
             <span className="rounded-full border border-border bg-secondary px-2.5 py-0.5 text-[11px] font-semibold capitalize text-foreground">{tier}</span>
             {isCaptain && !isEmployeeGranted && currentTeamId && onPlanChange && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-xs"
-                onClick={() => setShowPlanSelector(true)}
-              >
-                Change plan
-              </Button>
+              tier === 'free' ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => setShowPlanSelector(true)}
+                >
+                  Change plan
+                </Button>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  disabled={loadingTier === 'portal'}
+                  onClick={() => redirectToBilling('/api/billing/create-portal-session', {}, 'portal')}
+                >
+                  {loadingTier === 'portal' ? 'Loading…' : 'Manage billing'}
+                </Button>
+              )
             )}
           </div>
         </div>
@@ -229,6 +241,9 @@ export function TierDetails({ tier, isEmployeeGranted, trialEndsAt, trialStarted
               loadingTier={loadingTier}
               onSelectTier={handleSelectTier}
               onStartTrial={handleStartTrial}
+              trialEligible={trialEligible && trialEligibilityLoaded}
+              billingInterval={billingInterval}
+              onBillingIntervalChange={setBillingInterval}
               compact
             />
           </DialogContent>

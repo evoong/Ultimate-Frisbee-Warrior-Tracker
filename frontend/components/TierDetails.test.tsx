@@ -74,12 +74,8 @@ describe('TierDetails', () => {
     fetchMock.mockRestore()
   })
 
-  it('disables current tier button in selector', () => {
-    const onPlanChange = vi.fn()
-    render(<TierDetails tier="plus" role="captain" currentTeamId={1} onPlanChange={onPlanChange} />)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Change plan' }))
-
-    expect(screen.getByRole('button', { name: 'Current Plan' })).toBeDisabled()
+  it('shows Manage billing button for paid captain', () => {
+    render(<TierDetails tier="plus" role="captain" currentTeamId={1} onPlanChange={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'Manage billing' })).toBeInTheDocument()
   })
 })
