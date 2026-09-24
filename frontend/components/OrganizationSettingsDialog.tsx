@@ -37,6 +37,8 @@ type OrganizationSettingsDialogProps = {
   tier: string | null
   isEmployeeGranted?: boolean
   trialEndsAt?: string | null
+  trialStartedAt?: string | null
+  planSource?: 'stripe' | 'employee_grant' | 'trial'
   onPlanChange?: () => void
 }
 
@@ -120,49 +122,65 @@ interface TierDetailsProps {
   tier: string | null
   isEmployeeGranted?: boolean
   trialEndsAt?: string | null
+  trialStartedAt?: string | null
+  planSource?: 'stripe' | 'employee_grant' | 'trial'
   currentTeamId?: number | null
   role?: TeamRole | null
-  onPlanChange?: (tier: string) => Promise<boolean>
+  onPlanChange?: () => void
 }
 
-export function TierDetails({ tier, isEmployeeGranted, trialEndsAt, currentTeamId, role, onPlanChange }: TierDetailsProps) {
-  if (tier !== 'free' && tier !== 'plus' && tier !== 'premium') return null
-  const limits = TIER_LIMITS[tier]
-  const trialActive = trialEndsAt != null && new Date(trialEndsAt) > new Date()
-  const isCaptain = role === 'captain'
+export function TierDetails({ tier, isEmployeeGranted, trialEndsAt, trialStartedAt, planSource, currentTeamId, role, onPlanChange }: TierDetailsProps) {
   const [showPlanSelector, setShowPlanSelector] = useState(false)
   const [loadingTier, setLoadingTier] = useState<string | null>(null)
+  const [billingInterval, setBillingInterval] = useState<'month' | 'year'>('month')
+  const [trialEligible, setTrialEligible] = useState(false)
+  const [trialEligibilityLoaded, setTrialEligibilityLoaded] = useState(false)
 
-  async function handleSelectTier(nextTier: string) {
-    if (!currentTeamId || !onPlanChange || loadingTier) return
-    setLoadingTier(nextTier)
+  useEffect(() => {
+    if (!showPlanSelector || !currentTeamId || tier !== 'free' || trialStartedAt != null || trialEndsAt != null) return
+    let cancelled = false
+    setTrialEligibilityLoaded(false)
+    supabase.rpc('can_start_trial', { p_org_id: currentTeamId }).then(({ data, error }) => {
+      if (!cancelled) {
+        setTrialEligible(!error && data === true)
+        setTrialEligibilityLoaded(true)
+      }
+    })
+    return () => { cancelled = true }
+  }, [showPlanSelector, currentTeamId, tier, trialStartedAt, trialEndsAt])
+
+  if (tier !== 'free' && tier !== 'plus' && tier !== 'premium') return null
+  const limits = TIER_LIMITS[tier]
+  const trialActive = planSource === 'trial' && trialStartedAt != null && trialEndsAt != null && new Date(trialEndsAt) > new Date()
+  const isCaptain = role === 'captain'
+
+  async function redirectToBilling(endpoint: string, body: object, loading: string) {
+    if (!currentTeamId || loadingTier) return
+    setLoadingTier(loading)
     try {
-      if (await onPlanChange(nextTier)) setShowPlanSelector(false)
-    } finally {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ organization_id: currentTeamId, ...body }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.error || 'Billing request failed')
+      if (typeof data.url !== 'string' || !data.url.startsWith('https://')) throw new Error('Invalid billing URL')
+      window.location.assign(data.url)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Billing request failed')
       setLoadingTier(null)
     }
   }
 
+  async function handleSelectTier(nextTier: string) {
+    if (nextTier === 'free') return void redirectToBilling('/api/billing/create-portal-session', {}, 'free')
+    await redirectToBilling('/api/billing/create-checkout-session', { tier: nextTier, interval: billingInterval, is_trial: false }, nextTier)
+  }
+
   async function handleStartTrial() {
-    if (!currentTeamId || !onPlanChange || loadingTier) return
-    setLoadingTier('trial')
-    try {
-      const res = await fetch('/api/org/trial', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ organization_id: currentTeamId }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data?.error || 'Failed to start trial')
-      toast.success('30-Day Premium Trial activated!')
-      onPlanChange?.()
-      setShowPlanSelector(false)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to start trial')
-    } finally {
-      setLoadingTier(null)
-    }
+    await redirectToBilling('/api/billing/create-checkout-session', { tier: 'premium', interval: billingInterval, is_trial: true }, 'trial')
   }
 
   return (
@@ -228,7 +246,7 @@ function teamInitials(name: string): string {
 // Gated on can.manageTeam (captain/editor), not a role literal: the database
 // re-checks every one of these actions via RPC or a storage policy, so the
 // gating here is only about not showing controls that would 403 anyway.
-export default function OrganizationSettingsDialog({ open, onOpenChange, tier, isEmployeeGranted, trialEndsAt, onPlanChange }: OrganizationSettingsDialogProps) {
+export default function OrganizationSettingsDialog({ open, onOpenChange, tier, isEmployeeGranted, trialEndsAt, trialStartedAt, planSource, onPlanChange }: OrganizationSettingsDialogProps) {
   const { can, role, user, currentTeamId, teams, refreshSession } = useAuth()
   const current = teams.find(t => t.organization_id === currentTeamId)
 
@@ -380,27 +398,11 @@ export default function OrganizationSettingsDialog({ open, onOpenChange, tier, i
                 tier={tier}
                 isEmployeeGranted={isEmployeeGranted}
                 trialEndsAt={trialEndsAt}
+                trialStartedAt={trialStartedAt}
+                planSource={planSource}
                 currentTeamId={currentTeamId}
                 role={role}
-                onPlanChange={async (nextTier) => {
-                  if (!currentTeamId) return false
-                  try {
-                    const res = await fetch('/api/org/plan', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      credentials: 'include',
-                      body: JSON.stringify({ organization_id: currentTeamId, tier: nextTier }),
-                    })
-                    const data = await res.json()
-                    if (!res.ok) throw new Error(data?.error || 'Failed to change plan')
-                    toast.success('Plan updated')
-                    onPlanChange?.()
-                    return true
-                  } catch (err) {
-                    toast.error(err instanceof Error ? err.message : 'Failed to change plan')
-                    return false
-                  }
-                }}
+                onPlanChange={onPlanChange}
               />
               {!canEdit ? (
             <section>

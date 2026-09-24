@@ -3,6 +3,15 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { PricingCards } from './PricingCards'
 
 describe('PricingCards', () => {
+  it('only offers trial to eligible free teams', () => {
+    const onStart = vi.fn()
+    const { rerender } = render(<PricingCards currentTier="free" trialEligible onStartTrial={onStart} />)
+    fireEvent.click(screen.getByRole('button', { name: /Start 30-Day Free Trial/i }))
+    expect(onStart).toHaveBeenCalledOnce()
+    rerender(<PricingCards currentTier="free" trialEligible={false} onStartTrial={onStart} />)
+    expect(screen.queryByRole('button', { name: /Start 30-Day Free Trial/i })).not.toBeInTheDocument()
+  })
+
   it('renders plans and selects an available tier', () => {
     const onSelectTier = vi.fn()
 

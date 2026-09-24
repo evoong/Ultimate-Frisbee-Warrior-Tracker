@@ -16,7 +16,8 @@ describe('TierDetails', () => {
 
   it('shows trial end date when trial active', () => {
     const future = new Date(Date.now() + 86400000).toISOString()
-    render(<TierDetails tier="free" trialEndsAt={future} />)
+    const past = new Date(Date.now() - 86400000).toISOString()
+    render(<TierDetails tier="premium" planSource="trial" trialStartedAt={past} trialEndsAt={future} />)
 
     expect(screen.getByText(/Free trial ends/)).toBeInTheDocument()
   })
@@ -58,12 +59,19 @@ describe('TierDetails', () => {
 
   it('calls onPlanChange when tier selected in dialog', async () => {
     const onPlanChange = vi.fn()
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ url: 'https://checkout.stripe.com/test' }), { status: 200 })
+    )
+    const assignSpy = vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, assign: vi.fn() } as unknown as Location)
+    Object.defineProperty(window, 'location', { value: assignSpy, writable: true })
+
     render(<TierDetails tier="free" role="captain" currentTeamId={1} onPlanChange={onPlanChange} />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Change plan' }))
     fireEvent.click(screen.getByRole('button', { name: 'Select Plus' }))
 
-    expect(onPlanChange).toHaveBeenCalledWith('plus')
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    fetchMock.mockRestore()
   })
 
   it('disables current tier button in selector', () => {

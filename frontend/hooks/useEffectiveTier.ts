@@ -7,6 +7,7 @@ export interface EffectiveTierResult {
   tier: OrgTier
   isEmployeeGranted: boolean
   trialEndsAt: string | null
+  trialStartedAt: string | null
   planSource: 'stripe' | 'employee_grant' | 'trial'
 }
 
@@ -16,7 +17,7 @@ export async function fetchEffectiveTier(orgId: number): Promise<EffectiveTierRe
 
   const { data: org, error: orgError } = await supabase
     .from('organizations')
-    .select('is_employee_granted, trial_ends_at, plan_source')
+    .select('is_employee_granted, trial_started_at, trial_ends_at, plan_source')
     .eq('id', orgId)
     .single()
 
@@ -26,6 +27,7 @@ export async function fetchEffectiveTier(orgId: number): Promise<EffectiveTierRe
     tier: data as OrgTier,
     isEmployeeGranted: org?.is_employee_granted ?? false,
     trialEndsAt: org?.trial_ends_at ?? null,
+    trialStartedAt: org?.trial_started_at ?? null,
     planSource: org?.plan_source ?? 'trial',
   }
 }

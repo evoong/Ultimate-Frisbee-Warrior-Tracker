@@ -61,6 +61,9 @@ globalThis.fetch = async (url, init = {}) => {
       mode: 'subscription',
     });
   }
+  if (target.hostname === 'api.stripe.com' && target.pathname === '/v1/billing_portal/sessions') {
+    return Response.json({ id: 'bps_test_123', url: 'https://billing.stripe.com/p/session/test_123' });
+  }
   if (target.hostname === 'api.stripe.com' && target.pathname === '/v1/customers') {
     return Response.json({ id: 'cus_new123', email: 'test@example.test' });
   }
@@ -91,7 +94,7 @@ async function runTests() {
     let res = await fetch(`${origin}/api/billing/create-checkout-session`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', cookie: `ufwt_at=${await tokenFor('captain')}` },
-      body: JSON.stringify({ organization_id: 1, price_id: 'price_premium_monthly', is_trial: true }),
+      body: JSON.stringify({ organization_id: 1, tier: 'premium', interval: 'month', is_trial: true }),
     });
     assert.equal(res.status, 400);
     let body = await res.json();
@@ -106,7 +109,7 @@ async function runTests() {
     res = await fetch(`${origin}/api/billing/create-checkout-session`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', cookie: `ufwt_at=${await tokenFor('captain')}` },
-      body: JSON.stringify({ organization_id: 1, price_id: 'price_premium_monthly', is_trial: true }),
+      body: JSON.stringify({ organization_id: 1, tier: 'premium', interval: 'month', is_trial: true }),
     });
     assert.equal(res.status, 200, JSON.stringify(await res.clone().json()));
     body = await res.json();
@@ -128,7 +131,7 @@ async function runTests() {
     res = await fetch(`${origin}/api/billing/create-checkout-session`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', cookie: `ufwt_at=${await tokenFor('captain')}` },
-      body: JSON.stringify({ organization_id: 1, price_id: 'price_plus_monthly', is_trial: false }),
+      body: JSON.stringify({ organization_id: 1, tier: 'plus', interval: 'month', is_trial: false }),
     });
     assert.equal(res.status, 200, JSON.stringify(await res.clone().json()));
     body = await res.json();
@@ -146,7 +149,7 @@ async function runTests() {
     res = await fetch(`${origin}/api/billing/create-checkout-session`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', cookie: `ufwt_at=${await tokenFor('member')}` },
-      body: JSON.stringify({ organization_id: 1, price_id: 'price_premium_monthly', is_trial: true }),
+      body: JSON.stringify({ organization_id: 1, tier: 'premium', interval: 'month', is_trial: true }),
     });
     assert.equal(res.status, 403);
     body = await res.json();
@@ -158,23 +161,32 @@ async function runTests() {
     res = await fetch(`${origin}/api/billing/create-checkout-session`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ organization_id: 1, price_id: 'price_premium_monthly', is_trial: true }),
+      body: JSON.stringify({ organization_id: 1, tier: 'premium', interval: 'month', is_trial: true }),
     });
     assert.equal(res.status, 401);
     console.log('✓ unauthenticated rejected');
 
-    // Test 6: Legacy /api/org/trial endpoint also rejects repeat trials
-    console.log('Test 6: Legacy /api/org/trial rejects repeat trial...');
-    canStartTrialResult = false;
-    res = await fetch(`${origin}/api/org/trial`, {
+    // Test 6: Portal session requires captain
+    console.log('Test 6: Portal session requires captain...');
+    res = await fetch(`${origin}/api/billing/create-portal-session`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', cookie: `ufwt_at=${await tokenFor('captain')}` },
+      headers: { 'content-type': 'application/json', cookie: `ufwt_at=${await tokenFor('member')}` },
       body: JSON.stringify({ organization_id: 1 }),
     });
-    assert.equal(res.status, 400);
+    assert.equal(res.status, 403);
     body = await res.json();
-    assert.equal(body.error, 'Trial already used for this organization');
-    console.log('✓ legacy trial endpoint rejects repeat trial');
+    assert.equal(body.error, 'Only team captains or admins can manage billing');
+    console.log('✓ portal session forbidden for member');
+
+    // Test 7: Unauthenticated portal returns 401
+    console.log('Test 7: Unauthenticated portal returns 401...');
+    res = await fetch(`${origin}/api/billing/create-portal-session`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ organization_id: 1 }),
+    });
+    assert.equal(res.status, 401);
+    console.log('✓ unauthenticated portal rejected');
 
     console.log('\nAll tests passed!');
   } finally {

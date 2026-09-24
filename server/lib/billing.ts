@@ -84,6 +84,15 @@ export async function canStartTrial(orgId: number): Promise<boolean> {
   return data === true;
 }
 
+export async function createPortalSession(orgId: number): Promise<{ url: string }> {
+  const customerId = await getOrCreateStripeCustomer(orgId);
+  const session = await getStripe().billingPortal.sessions.create({
+    customer: customerId,
+    return_url: `${process.env.APP_URL}/settings`,
+  });
+  return { url: session.url };
+}
+
 export function verifyWebhook(body: Buffer, signature: string | undefined): Stripe.Event {
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
   if (!secret || !signature || !Buffer.isBuffer(body)) throw new Error('Missing webhook secret, signature, or raw body');

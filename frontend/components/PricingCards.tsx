@@ -65,17 +65,28 @@ export function PricingCards({
   currentTier,
   onSelectTier,
   onStartTrial,
+  trialEligible = false,
+  billingInterval = 'month',
+  onBillingIntervalChange,
   loadingTier,
   compact = false,
 }: {
   currentTier?: string
   onSelectTier?: (tier: string) => void
   onStartTrial?: () => void
+  trialEligible?: boolean
+  billingInterval?: 'month' | 'year'
+  onBillingIntervalChange?: (interval: 'month' | 'year') => void
   loadingTier?: string | null
   compact?: boolean
 }) {
   return (
-    <div className={`grid max-w-5xl mx-auto ${compact ? 'gap-3 sm:grid-cols-3' : 'gap-6 md:grid-cols-3'}`}> 
+    <div className="max-w-5xl mx-auto">
+      {onBillingIntervalChange && <div className="mb-4 flex justify-center gap-2" role="group" aria-label="Billing interval">
+        <Button variant={billingInterval === 'month' ? 'default' : 'outline'} aria-pressed={billingInterval === 'month'} onClick={() => onBillingIntervalChange('month')}>Monthly</Button>
+        <Button variant={billingInterval === 'year' ? 'default' : 'outline'} aria-pressed={billingInterval === 'year'} onClick={() => onBillingIntervalChange('year')}>Yearly</Button>
+      </div>}
+      <div className={`grid ${compact ? 'gap-3 sm:grid-cols-3' : 'gap-6 md:grid-cols-3'}`}>
       {PLANS.map((plan) => {
         const isCurrent = currentTier === plan.tier
         return (
@@ -93,10 +104,10 @@ export function PricingCards({
             <CardHeader>
               <CardTitle className="text-xl font-bold">{plan.name}</CardTitle>
               <div className="mt-2 flex items-baseline gap-1">
-                <span className="text-3xl font-bold font-mono">{plan.price}</span>
-                {plan.period && <span className="text-sm text-muted-foreground">{plan.period}</span>}
+                <span className="text-3xl font-bold font-mono">{billingInterval === 'year' && plan.annualPrice ? plan.annualPrice : plan.price}</span>
+                <span className="text-sm text-muted-foreground">/{billingInterval}</span>
               </div>
-              {plan.annualPrice && (
+              {billingInterval === 'month' && plan.annualPrice && (
                 <div className="flex items-baseline gap-1 text-xs text-muted-foreground">
                   <span>or</span>
                   <span className="font-mono font-medium">{plan.annualPrice}</span>
@@ -124,7 +135,7 @@ export function PricingCards({
                   {isCurrent ? 'Current Plan' : loadingTier === plan.tier ? 'Updating…' : `Select ${plan.name}`}
                 </Button>
               )}
-              {onStartTrial && currentTier === 'free' && plan.tier === 'premium' && (
+              {onStartTrial && currentTier === 'free' && trialEligible && plan.tier === 'premium' && (
                 <Button
                   variant="outline"
                   className="mt-2 w-full"
@@ -138,6 +149,7 @@ export function PricingCards({
           </Card>
         )
       })}
+      </div>
     </div>
   )
 }
