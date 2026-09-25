@@ -253,4 +253,23 @@ const stdioPaidEvents = await stdioHandlers.list_game_events({ gameId: 900 })
 assert.equal(JSON.parse(stdioPaidEvents.content[0].text).length, 2, '[mcp-server] old game events returned on Paid')
 console.log('✓ mcp-server handlers enforce 30-day window on Free and restore on Paid')
 
+console.log('\n--- 5. query_stat_breakdown chat tool (gateway/gameActions.ts) ---')
+const { queryStatBreakdown } = await import('../../gateway/gameActions.ts')
+const qsbConfig = { supabaseUrl: 'https://example.test', supabaseSecretKey: 'service-role-key' }
+
+tierState = 'free'
+const freeAllTime = await queryStatBreakdown(qsbConfig, 7, { metric: 'goals' })
+assert.equal(freeAllTime.rows.length, 1, 'Free all-time goals tally only counts windowed games')
+assert.equal(freeAllTime.rows[0].player, 'Recent Star')
+assert.equal(freeAllTime.rows[0].count, 1)
+
+const freeOldGame = await queryStatBreakdown(qsbConfig, 7, { metric: 'goals', gameDate: '2025-08-01', opponent: 'Ancient Rival' })
+assert.deepEqual(freeOldGame.rows, [], 'Free game-scoped breakdown of old game is empty')
+assert(freeOldGame.note.includes("outside the Free plan's 30-day window"), 'archived note explains the window')
+
+tierState = 'plus'
+const paidAllTime = await queryStatBreakdown(qsbConfig, 7, { metric: 'goals' })
+assert.deepEqual(paidAllTime.rows, [{ player: 'Recent Star', count: 2 }, { player: 'Old Timer', count: 1 }], 'Paid all-time goals tally counts every game')
+console.log('✓ query_stat_breakdown enforces 30-day window on Free and restores on Paid')
+
 console.log('\nAll Task 2 free-tier history tests passed!')

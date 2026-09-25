@@ -277,31 +277,28 @@ const vaultConfig = {
 const DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest";
 
 export async function getTeamContext(organizationId: number) {
-  const [players, seasons, games, eventsResult, seasonPlayers] = await Promise.all([
+  const [players, seasons, games, seasonPlayers, tier] = await Promise.all([
     supabase.from("players").select("id, display_name, position, gender_match, is_sub").eq("organization_id", organizationId).order("display_name"),
     supabase.from("seasons").select("id, name, year, organizer").eq("organization_id", organizationId).order("id"),
     supabase.from("games").select("id, season_id, opponent, game_date, result, outcome_override").eq("organization_id", organizationId).order("game_date", { ascending: true }),
-    supabase.from("game_events").select("player_id, related_player_id, event_type, game_id, event_timestamp").eq("organization_id", organizationId),
     supabase.from("season_players").select("player_id, season_id").eq("active", true).eq("organization_id", organizationId),
+    getOrgEffectiveTier(organizationId),
   ]);
 
   const seasonNames = new Map((seasons.data ?? []).map((s: any) => [s.id, `${s.organizer ?? ""} ${s.name} ${s.year}`.trim()]));
   const gameMap = new Map((games.data ?? []).map((g: any) => [g.id, g]));
 
-  // Free-tier read gate: service role bypasses the game_events RLS policy
-  // (20260924150000), so apply the same 30-day window here — events of
-  // games dated before the window are withheld from the model's context,
-  // while the fixtures/results themselves stay visible.
-  const tier = await getOrgEffectiveTier(organizationId);
+  // Free-tier read gate: push filtering to the database query by deriving
+  // allowed game IDs (games within the 30-day window) so service-role reads
+  // do not over-fetch past events, mirroring the game_events RLS policy.
   const freeTier = tier === "free";
-  const events = {
-    data: freeTier
-      ? (eventsResult.data ?? []).filter((e: any) => {
-          const g = gameMap.get(e.game_id);
-          return g != null && gameDateWithinFreeWindow(g.game_date);
-        })
-      : eventsResult.data,
-  };
+  let eventsQuery = supabase.from("game_events").select("player_id, related_player_id, event_type, game_id, event_timestamp").eq("organization_id", organizationId);
+  if (freeTier) {
+    const allowedGameIds = (games.data ?? []).filter((g: any) => gameDateWithinFreeWindow(g.game_date)).map((g: any) => g.id);
+    eventsQuery = eventsQuery.in("game_id", allowedGameIds.length > 0 ? allowedGameIds : [-1]);
+  }
+  const events = await eventsQuery;
+
   const playerMap = new Map((players.data ?? []).map((p: any) => [p.id, p]));
 
   type Stat = { goals: number; assists: number; turnovers: number };

@@ -11,7 +11,7 @@
 // how chat.ts's getTeamContext already inlines its own turnover-type check
 // rather than pulling frontend code into the gateway bundle.
 
-import { type ActionsConfig, sbGet, sbWrite, sbUpsertIgnore } from './supabaseRest.js'
+import { type ActionsConfig, sbGet, sbWrite, sbUpsertIgnore, getOrgEffectiveTier, gameDateWithinFreeWindow } from './supabaseRest.js'
 
 export type { ActionsConfig }
 
@@ -291,24 +291,43 @@ export async function queryStatBreakdown(
 
   let gameIds: number[] | null = null
   let scope = 'all-time'
+  let archived = false
+
+  const free = await getOrgEffectiveTier(config, orgId) === 'free'
 
   if (params.gameDate || params.opponent) {
     const game = await resolveGame(config, orgId, params)
     gameIds = [game.id]
     scope = `${game.game_date} vs ${game.opponent}`
+    // Free-tier read gate: an old game's breakdown is archived, same as the
+    // frontend box score.
+    archived = free && !gameDateWithinFreeWindow(game.game_date)
   } else if (params.seasonName) {
     const season = await resolveSeason(config, orgId, params.seasonName)
-    const games: { id: number }[] = await sbGet(config, `/games?organization_id=eq.${orgId}&season_id=eq.${season.id}&select=id`)
-    gameIds = games.map(g => g.id)
+    const games: { id: number; game_date: string }[] = await sbGet(config, `/games?organization_id=eq.${orgId}&season_id=eq.${season.id}&select=id,game_date`)
+    // Free-tier read gate: only games inside the 30-day window contribute.
+    gameIds = free
+      ? games.filter(g => gameDateWithinFreeWindow(g.game_date)).map(g => g.id)
+      : games.map(g => g.id)
     scope = season.label
+  } else if (free) {
+    // "All-time" on Free means "within the 30-day window".
+    const games: { id: number; game_date: string }[] = await sbGet(config, `/games?organization_id=eq.${orgId}&select=id,game_date`)
+    gameIds = games.filter(g => gameDateWithinFreeWindow(g.game_date)).map(g => g.id)
   }
 
   const eventsPath = gameIds
     ? `/game_events?organization_id=eq.${orgId}&game_id=in.(${gameIds.join(',') || '0'})&select=event_type,player_id,related_player_id`
     : `/game_events?organization_id=eq.${orgId}&select=event_type,player_id,related_player_id`
-  const events: { event_type: string; player_id: number | null; related_player_id: number | null }[] = await sbGet(config, eventsPath)
+  const events: { event_type: string; player_id: number | null; related_player_id: number | null }[] = archived
+    ? []
+    : await sbGet(config, eventsPath)
   const players: PlayerRow[] = await sbGet(config, `/players?organization_id=eq.${orgId}&select=id,display_name`)
   const nameOf = (id: number | null) => players.find(p => p.id === id)?.display_name ?? 'Unknown'
+
+  // When the scope is outside the Free window, say so plainly instead of
+  // reporting a misleading "nothing recorded".
+  const emptyNote = archived ? `Stats for ${scope} are outside the Free plan's 30-day window.` : undefined
 
   if (params.metric === 'assists' && params.byAssistPairing) {
     const tally = new Map<string, { scorer: number; assister: number; count: number }>()
@@ -322,7 +341,7 @@ export async function queryStatBreakdown(
     const rows = [...tally.values()]
       .sort((a, b) => b.count - a.count)
       .map(r => ({ scorer: nameOf(r.scorer), assister: nameOf(r.assister), count: r.count }))
-    return { scope, breakdown: 'assist_pairings', rows, note: rows.length === 0 ? `No assisted goals recorded for ${scope}.` : undefined }
+    return { scope, breakdown: 'assist_pairings', rows, note: rows.length === 0 ? (emptyNote ?? `No assisted goals recorded for ${scope}.`) : undefined }
   }
 
   const tally = new Map<number, number>()
@@ -340,7 +359,7 @@ export async function queryStatBreakdown(
     .map(([id, count]) => ({ player: nameOf(id), count }))
   return {
     scope, breakdown: 'by_player', metric: params.metric, rows,
-    note: rows.length === 0 ? `No ${params.metric} recorded for ${scope}.` : undefined,
+    note: rows.length === 0 ? (emptyNote ?? `No ${params.metric} recorded for ${scope}.`) : undefined,
   }
 }
 

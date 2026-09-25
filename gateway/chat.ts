@@ -103,28 +103,27 @@ type Stat = { goals: number; assists: number; turnovers: number }
 
 export async function getTeamContext(config: ChatConfig, organizationId: number): Promise<string> {
   const orgFilter = `organization_id=eq.${organizationId}`
-  const [players, seasons, games, eventsResult, seasonPlayers] = await Promise.all([
+  const [players, seasons, games, seasonPlayers, freeTier] = await Promise.all([
     supabaseServiceFetch(config, `/players?select=id,display_name,position,gender_match,is_sub&${orgFilter}&order=display_name.asc`),
     supabaseServiceFetch(config, `/seasons?select=id,name,year,organizer&${orgFilter}&order=id.asc`),
     supabaseServiceFetch(config, `/games?select=id,season_id,opponent,game_date,result,outcome_override&${orgFilter}&order=game_date.asc`),
-    supabaseServiceFetch(config, `/game_events?select=player_id,related_player_id,event_type,game_id,event_timestamp&${orgFilter}`),
     supabaseServiceFetch(config, `/season_players?select=player_id,season_id&active=eq.true&${orgFilter}`),
+    getOrgEffectiveTier(config, organizationId).then(tier => tier === 'free'),
   ])
+
+  // Free-tier read gate: push filtering to the database query by deriving
+  // allowed game IDs (games within the 30-day window) so service-role reads
+  // do not over-fetch past events, mirroring the game_events RLS policy.
+  let eventsQuery = `/game_events?select=player_id,related_player_id,event_type,game_id,event_timestamp&${orgFilter}`
+  if (freeTier) {
+    const allowedGameIds = (games ?? []).filter((g: any) => gameDateWithinFreeWindow(g.game_date)).map((g: any) => g.id)
+    const idsFilter = allowedGameIds.length > 0 ? allowedGameIds.join(',') : '-1'
+    eventsQuery += `&game_id=in.(${idsFilter})`
+  }
+  const events = await supabaseServiceFetch(config, eventsQuery)
 
   const seasonNames = new Map((seasons ?? []).map((s: any) => [s.id, `${s.organizer ?? ''} ${s.name} ${s.year}`.trim()]))
   const gameMap = new Map<number, any>((games ?? []).map((g: any) => [g.id, g]))
-
-  // Free-tier read gate: service role bypasses the game_events RLS policy
-  // (20260924150000), so apply the same 30-day window here — events of
-  // games dated before the window are withheld from the model's context,
-  // while the fixtures/results themselves stay visible.
-  const freeTier = await getOrgEffectiveTier(config, organizationId) === 'free'
-  const events = freeTier
-    ? (eventsResult ?? []).filter((e: any) => {
-        const g = gameMap.get(e.game_id)
-        return g != null && gameDateWithinFreeWindow(g.game_date)
-      })
-    : eventsResult
   const playerNames = new Map<number, string>((players ?? []).map((p: any) => [p.id, p.display_name]))
 
   const allTime = new Map<number, Stat>()
