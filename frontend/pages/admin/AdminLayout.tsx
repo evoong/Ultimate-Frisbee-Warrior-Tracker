@@ -3,7 +3,7 @@ import { useAdminRole } from '../../lib/adminClient'
 
 const TABS = [
   { to: '/admin/search', label: 'Search', end: true },
-  { to: '/admin/dashboard', label: 'Dashboard', end: false },
+  { to: '/admin', label: 'Dashboard', end: true },
   { to: '/admin/orgs', label: 'Organizations', end: false },
   { to: '/admin/audit', label: 'Audit log', end: false },
   { to: '/admin/flags', label: 'Feature flags', end: false },

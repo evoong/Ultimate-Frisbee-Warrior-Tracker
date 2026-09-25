@@ -41,9 +41,9 @@ const PAYLOAD = {
 
 function renderPage() {
   return render(
-    <MemoryRouter initialEntries={['/admin/dashboard']}>
+    <MemoryRouter initialEntries={['/admin']}>
       <Routes>
-        <Route path="/admin/dashboard" element={<Dashboard />} />
+        <Route path="/admin" element={<Dashboard />} />
         <Route path="/admin/org/:id" element={<div>org detail stub</div>} />
       </Routes>
     </MemoryRouter>

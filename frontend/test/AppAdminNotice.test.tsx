@@ -113,7 +113,7 @@ const DASH_PAYLOAD = {
 
 const NAV_TABS: [string, string][] = [
   ['Search', '/admin/search'],
-  ['Dashboard', '/admin/dashboard'],
+  ['Dashboard', '/admin'],
   ['Organizations', '/admin/orgs'],
   ['Audit log', '/admin/audit'],
   ['Feature flags', '/admin/flags'],
@@ -149,6 +149,10 @@ describe('admin route wiring', () => {
     )
     expect(await screen.findByRole('heading', { name: 'Dashboard' }, { timeout: 10000 })).toBeInTheDocument()
     expect(await screen.findByText('Game events')).toBeInTheDocument()
+    // Controller ruling: the landing lights the Dashboard tab — the nav
+    // accent marks "you are here".
+    expect(screen.getByRole('link', { name: 'Dashboard' })).toHaveClass('font-semibold', 'text-foreground')
+    expect(screen.getByRole('link', { name: 'Search' })).not.toHaveClass('font-semibold')
   })
 
   it('renders Search at /admin/search', async () => {

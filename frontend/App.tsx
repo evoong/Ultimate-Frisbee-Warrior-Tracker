@@ -277,7 +277,6 @@ export default function App() {
           >
             <Route index element={<AdminDashboard />} />
             <Route path="search" element={<AdminSearch />} />
-            <Route path="dashboard" element={<AdminDashboard />} />
             <Route path="orgs" element={<AdminOrganizations />} />
             <Route path="user/:userId" element={<AdminUserDetail />} />
             <Route path="org/:orgId" element={<AdminOrgDetail />} />
