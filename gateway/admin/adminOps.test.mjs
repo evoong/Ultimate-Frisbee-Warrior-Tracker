@@ -155,7 +155,14 @@ const registry = createRegistry([bump, nuke])
   const { ADMIN_OPERATIONS } = await import('./ops.ts')
   const byName = new Map(ADMIN_OPERATIONS.map(o => [o.name, o]))
 
-  check('all ten operations are registered', ADMIN_OPERATIONS.length === 10)
+  check('all eleven operations are registered', ADMIN_OPERATIONS.length === 11) 
+  check('set_flag is registered', byName.has('set_flag'))
+  check('set_flag is superadmin', byName.get('set_flag')?.minRole === 'superadmin')
+  const flagInput = byName.get('set_flag')?.input
+  check('set_flag accepts global input', flagInput?.safeParse({ key: 'show_turnovers', org_id: null, enabled: true }).success)
+  for (const input of [{ key: '', org_id: null, enabled: true }, { key: 'show_turnovers', org_id: 0, enabled: true }, { key: 'show_turnovers', org_id: 1, enabled: 'yes' }]) {
+    check('set_flag rejects invalid input', !flagInput?.safeParse(input).success)
+  }
   for (const n of ['set_member_role', 'remove_member', 'invite_member', 'revoke_invite',
                    'set_player_link', 'approve_player_link', 'merge_players', 'delete_org',
                    'transfer_captainship', 'create_invite_link']) {
@@ -227,6 +234,56 @@ const registry = createRegistry([bump, nuke])
         JSON.stringify(res.body).includes('at least one captain'))
   check('a last-captain violation audits as denied',
         audits.length === 1 && audits[0].result === 'denied')
+}
+
+{
+  const { ADMIN_OPERATIONS } = await import('./ops.ts')
+  const reg = createRegistry(ADMIN_OPERATIONS)
+  const su = { ...CTX, adminRole: 'superadmin' }
+  const calls = []
+  globalThis.fetch = async (url, init = {}) => {
+    const path = String(url).split('/rest/v1')[1]
+    calls.push({ path, method: init.method ?? 'GET', body: init.body && JSON.parse(init.body) })
+    let rows = []
+    if (path.startsWith('/feature_flags?')) rows = [{ key: 'show_turnovers', default_on: false }]
+    if (path.startsWith('/organizations?')) rows = [{ id: 2 }]
+    if (path.startsWith('/org_feature_flags?') && !init.method) rows = [{ org_id: 2, flag_key: 'show_turnovers', enabled: true }]
+    if (path.startsWith('/org_feature_flags') && init.method === 'POST') rows = [JSON.parse(init.body)]
+    if (path.startsWith('/feature_flags') && init.method === 'PATCH') rows = [JSON.parse(init.body)]
+    return new Response(JSON.stringify(rows), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
+  const run = (mode, input, ctx = su) => dispatchOperation(reg, ctx, 'set_flag', mode, input)
+  const globalInput = { key: 'show_turnovers', org_id: null, enabled: true }
+  let res = await run('preview', globalInput)
+  check('global preview shows current and next', res.status === 200 && res.body.preview.current.default_on === false && res.body.preview.next.enabled === true)
+  check('global preview performs no writes', calls.every(c => c.method === 'GET'))
+  calls.length = 0
+  res = await run('apply', globalInput)
+  check('global apply patches default and timestamp', res.status === 200 && calls.some(c => c.method === 'PATCH' && c.body.default_on === true && !!c.body.updated_at))
+  check('global apply audited once', calls.filter(c => c.path === '/admin_audit_log').length === 1 && calls.find(c => c.path === '/admin_audit_log').body.target.flag_key === 'show_turnovers')
+  calls.length = 0
+  res = await run('apply', { key: 'show_turnovers', org_id: 2, enabled: false })
+  check('equal-to-default deletes override', res.status === 200 && calls.some(c => c.method === 'DELETE' && c.path.startsWith('/org_feature_flags?')) && !calls.some(c => c.method === 'POST' && c.path.startsWith('/org_feature_flags?')))
+  calls.length = 0
+  res = await run('apply', { key: 'show_turnovers', org_id: 2, enabled: true })
+  check('org override records admin', res.status === 200 && calls.some(c => c.method === 'POST' && c.path.startsWith('/org_feature_flags') && c.body.updated_by === su.adminId && !!c.body.updated_at))
+  for (const role of ['support', 'readonly']) {
+    calls.length = 0
+    res = await run('apply', globalInput, { ...su, adminRole: role })
+    check(`${role} cannot set flag`, res.status === 403 && !calls.some(c => c.path.startsWith('/feature_flags?')))
+  }
+  calls.length = 0
+  res = await run('apply', { key: '', org_id: null, enabled: true })
+  check('set_flag invalid input returns 400', res.status === 400 && !calls.some(c => c.path.startsWith('/feature_flags?')))
+  globalThis.fetch = async (url, init = {}) => {
+    const path = String(url).split('/rest/v1')[1]
+    calls.push({ path, method: init.method ?? 'GET', body: init.body && JSON.parse(init.body) })
+    return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
+  calls.length = 0
+  res = await run('apply', globalInput)
+  check('unknown flag returns 404 without mutation', res.status === 404 && !calls.some(c => c.method === 'PATCH'))
+  globalThis.fetch = realFetch
 }
 
 globalThis.fetch = realFetch

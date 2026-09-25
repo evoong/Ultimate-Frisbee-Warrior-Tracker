@@ -19,6 +19,7 @@ const AdminSearch = lazy(() => import('./pages/admin/Search'))
 const AdminUserDetail = lazy(() => import('./pages/admin/UserDetail'))
 const AdminOrgDetail = lazy(() => import('./pages/admin/OrgDetail'))
 const AdminAuditLog = lazy(() => import('./pages/admin/AuditLog'))
+const AdminFlags = lazy(() => import('./pages/admin/Flags'))
 const AdminViewAs = lazy(() => import('./pages/admin/ViewAs'))
 import { useAuth } from './contexts/AuthContext'
 import { Loader2, LogOut } from 'lucide-react'
@@ -275,6 +276,7 @@ export default function App() {
             <Route index element={<AdminSearch />} />
             <Route path="user/:userId" element={<AdminUserDetail />} />
             <Route path="org/:orgId" element={<AdminOrgDetail />} />
+            <Route path="flags" element={<AdminFlags />} />
             <Route path="audit" element={<AdminAuditLog />} />
           </Route>
         )}

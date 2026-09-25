@@ -13,6 +13,7 @@ import { createGateway } from "../gateway/index.js";
 import { nodeAdapter } from "../gateway/node-adapter.js";
 import { createAdminLookup } from "../gateway/admin/adminAuth.js";
 import { handleAdminRequest, isAdminPath } from "../gateway/admin/index.js";
+import { handleFlagsRequest } from "../gateway/flags.js";
 import { createNodeAdapter } from "../gateway/node-adapter.js";
 import { getVaultSecret } from "../gateway/secrets.js";
 import { runJamSync, JAM_SYNC_MONITOR_SLUG, JAM_SYNC_MONITOR_CONFIG } from "../gateway/jamSync.js";
@@ -70,6 +71,19 @@ app.use(
         adminLookup
       ),
     isAdminPath
+  )
+);
+app.use(
+  createNodeAdapter(
+    (request) => handleFlagsRequest(
+      {
+        supabaseUrl: gatewayConfig.supabaseUrl,
+        supabaseSecretKey: process.env.SUPABASE_SECRET_KEY || "",
+        jwksUrl: gatewayConfig.jwksUrl,
+      },
+      request
+    ),
+    (path) => path === "/api/flags"
   )
 );
 app.use(express.json());

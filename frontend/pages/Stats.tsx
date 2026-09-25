@@ -14,7 +14,7 @@ import { useMyPlayerLink, useMyPlayerSeasonIds, useClaimPlayer, useGetTeamPlayer
 import { getLatestJamSeasonWithPlayedGame, getDefaultJamSeasonId, getDefaultSeasonForPlayer } from '../lib/seasonUtils'
 import { isPastGame } from '../lib/gameOrder'
 import { track } from '../lib/analytics'
-import { SHOW_TURNOVERS } from '../lib/features'
+import { useFlags } from '../lib/features'
 import { settleRange } from '../lib/loadingState'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
 import PlayerCombobox from '../components/PlayerCombobox'
@@ -77,12 +77,12 @@ function perGame(total: string | number, gamesPlayed: string | number): string |
 // second cell falls back to G+A -- the strip is two columns at every width by
 // design, and one lonely cell is a different object from the team card
 // beside it.
-function secondaryFor(hero: SeriesKey, p: PlayerLine | null): { label: string; series?: SeriesKey; value: number }[] {
+function secondaryFor(hero: SeriesKey, p: PlayerLine | null, showTurnovers: boolean): { label: string; series?: SeriesKey; value: number }[] {
   const other: SeriesKey = hero === 'goals' ? 'assists' : 'goals'
   const cells: { label: string; series?: SeriesKey; value: number }[] = [
     { label: other === 'goals' ? 'Goals' : 'Assists', series: other, value: p?.[other] ?? 0 },
   ]
-  if (SHOW_TURNOVERS) cells.push({ label: 'Turnovers', series: 'turnovers', value: p?.turnovers ?? 0 })
+  if (showTurnovers) cells.push({ label: 'Turnovers', series: 'turnovers', value: p?.turnovers ?? 0 })
   else cells.push({ label: 'G+A', value: (p?.goals ?? 0) + (p?.assists ?? 0) })
   return cells
 }
@@ -274,6 +274,8 @@ function PlayerStatsView({
   tier: string | null
 }) {
   const { currentTeamId, user } = useAuth()
+  const { flags } = useFlags()
+  const showTurnovers = flags?.show_turnovers ?? false
   const link = useMyPlayerLink()
   const claim = useClaimPlayer()
   const teamLinks = useGetTeamPlayerLinks()
@@ -687,12 +689,12 @@ function PlayerStatsView({
               <Swap busy={rangePending && mine != null}>
                 <Resolve
                   loading={rangePending && mine == null}
-                  className={`grid gap-3 ${SHOW_TURNOVERS ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3'}`}
-                  skeleton={<MetricCardSkeleton count={SHOW_TURNOVERS ? 4 : 3} />}
+                  className={`grid gap-3 ${showTurnovers ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3'}`}
+                  skeleton={<MetricCardSkeleton count={showTurnovers ? 4 : 3} />}
                 >
                   <MetricCard label="Goals" value={mine?.goals ?? 0} series="goals" hint={mine ? perGame(mine.goals, mine.games_played) : undefined} />
                   <MetricCard label="Assists" value={mine?.assists ?? 0} series="assists" hint={mine ? perGame(mine.assists, mine.games_played) : undefined} />
-                  {SHOW_TURNOVERS && (
+                  {showTurnovers && (
                     <MetricCard label="Turnovers" value={mine?.turnovers ?? 0} series="turnovers" hint={mine ? perGame(mine.turnovers, mine.games_played) : undefined} />
                   )}
                   <MetricCard label="Games played" value={mine?.games_played ?? 0} />
@@ -730,7 +732,7 @@ function PlayerStatsView({
                   value={topFinisher?.goals ?? 0}
                   unit="Goals"
                   teamTotal={teamGoals}
-                  secondary={secondaryFor('goals', topFinisher)}
+                  secondary={secondaryFor('goals', topFinisher, showTurnovers)}
                 />
                 <LeaderCard
                   overline="Top playmaker"
@@ -740,7 +742,7 @@ function PlayerStatsView({
                   value={topPlaymaker?.assists ?? 0}
                   unit="Assists"
                   teamTotal={teamAssists}
-                  secondary={secondaryFor('assists', topPlaymaker)}
+                  secondary={secondaryFor('assists', topPlaymaker, showTurnovers)}
                 />
                 <TeamCard icon={<Scales className="h-3.5 w-3.5" weight="bold" />} team={teamLine} />
               </Resolve>
