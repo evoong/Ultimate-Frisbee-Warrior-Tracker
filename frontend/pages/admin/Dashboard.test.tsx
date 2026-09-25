@@ -119,6 +119,46 @@ describe('Dashboard', () => {
     expect(adminGet).toHaveBeenCalledTimes(1)
   })
 
+  it('falls back to defaults when the stored range has from after to', async () => {
+    localStorage.setItem('ufwt_admin_dash_range', JSON.stringify({
+      from: todayIso(), to: addDaysIso(todayIso(), -29), grain: 'day',
+    }))
+    renderPage()
+    await settled()
+
+    expect((screen.getByLabelText('From') as HTMLInputElement).value).toBe(addDaysIso(todayIso(), -29))
+    expect(adminGet.mock.calls[0][0]).toContain(`to=${todayIso()}`)
+    expect(adminGet).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to defaults when the stored range exceeds 370 days', async () => {
+    localStorage.setItem('ufwt_admin_dash_range', JSON.stringify({
+      from: addDaysIso(todayIso(), -400), to: todayIso(), grain: 'day',
+    }))
+    renderPage()
+    await settled()
+
+    expect((screen.getByLabelText('From') as HTMLInputElement).value).toBe(addDaysIso(todayIso(), -29))
+    expect(adminGet.mock.calls[0][0]).toContain(`from=${addDaysIso(todayIso(), -29)}`)
+  })
+
+  it('keeps controls visible and does not fetch or persist while the range is invalid', async () => {
+    renderPage()
+    await settled()
+    expect(adminGet).toHaveBeenCalledTimes(1)
+
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: addDaysIso(todayIso(), -400) } })
+    expect(await screen.findByText(/370 days or fewer/)).toBeInTheDocument()
+
+    // Not stuck on the skeleton: loading cleared, inputs and grain visible.
+    expect(screen.getByLabelText('From')).toBeInTheDocument()
+    expect(screen.getByLabelText('To')).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: 'Grain' })).toBeInTheDocument()
+    // No fetch fired for the invalid range, and it was not persisted.
+    expect(adminGet).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(localStorage.getItem('ufwt_admin_dash_range')!).from).toBe(addDaysIso(todayIso(), -29))
+  })
+
   it('restores grain from localStorage on mount', async () => {
     localStorage.setItem('ufwt_admin_dash_range', JSON.stringify({
       from: addDaysIso(todayIso(), -29), to: todayIso(), grain: 'week',

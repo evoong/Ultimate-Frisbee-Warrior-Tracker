@@ -74,16 +74,26 @@ function defaultRange(): { from: string; to: string; grain: Grain } {
   return { from: addDaysIso(to, -29), to, grain: 'day' }
 }
 
-// Read once on mount; anything malformed falls back to the defaults.
+function rangeValidationError(from: string, to: string): string | null {
+  if (!ISO_DATE.test(from) || !ISO_DATE.test(to)) return 'Enter both dates.'
+  if (from > to) return 'From must be on or before to.'
+  if (Math.round((toUtcMs(to) - toUtcMs(from)) / DAY_MS) > RANGE_CAP_DAYS) {
+    return `Range must be ${RANGE_CAP_DAYS} days or fewer.`
+  }
+  return null
+}
+
+// Read once on mount; anything malformed — shape or semantics — falls back
+// to the defaults, so a bad stored range can never brick the page.
 function loadStoredRange(): { from: string; to: string; grain: Grain } {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return defaultRange()
     const parsed = JSON.parse(raw)
     if (
-      typeof parsed?.from === 'string' && ISO_DATE.test(parsed.from)
-      && typeof parsed?.to === 'string' && ISO_DATE.test(parsed.to)
+      typeof parsed?.from === 'string' && typeof parsed?.to === 'string'
       && GRAINS.includes(parsed?.grain)
+      && rangeValidationError(parsed.from, parsed.to) === null
     ) {
       return { from: parsed.from, to: parsed.to, grain: parsed.grain }
     }
@@ -100,7 +110,7 @@ function StatCard({ label, value }: { label: string; value: number }) {
   )
 }
 
-const AXIS_TICK = { fill: 'hsl(var(--muted-foreground))', fontSize: 11 }
+const AXIS_TICK = { fill: 'hsl(var(--muted-foreground))', fontSize: 11, className: 'nav-mono' }
 
 function SeriesChart({ title, data }: { title: string; data: Bucket[] }) {
   return (
@@ -115,7 +125,14 @@ function SeriesChart({ title, data }: { title: string; data: Bucket[] }) {
               <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeDasharray="0" />
               <XAxis dataKey="bucket" axisLine={false} tickLine={false} tickMargin={8} tick={AXIS_TICK} />
               <YAxis allowDecimals={false} width={36} axisLine={false} tickLine={false} tick={AXIS_TICK} />
-              <Tooltip />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: 'hsl(var(--popover))',
+                  border: '1px solid hsl(var(--border))',
+                  borderRadius: 6,
+                  color: 'hsl(var(--popover-foreground))',
+                }}
+              />
               <Line
                 type="monotone"
                 dataKey="count"
@@ -153,25 +170,24 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
 
-  // Persisted per device, same pattern as Stats' view prefs.
+  const rangeError = rangeValidationError(from, to)
+
+  // Persisted per device, same pattern as Stats' view prefs. Invalid ranges
+  // are never persisted, so a reload can't land on an unrecoverable state.
   useEffect(() => {
+    if (rangeError) return
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ from, to, grain }))
     } catch { /* private mode */ }
-  }, [from, to, grain])
-
-  const rangeError = !ISO_DATE.test(from) || !ISO_DATE.test(to)
-    ? 'Enter both dates.'
-    : from > to
-      ? 'From must be on or before to.'
-      : Math.round((toUtcMs(to) - toUtcMs(from)) / DAY_MS) > RANGE_CAP_DAYS
-        ? `Range must be ${RANGE_CAP_DAYS} days or fewer.`
-        : null
+  }, [from, to, grain, rangeError])
 
   // One fetch per range/grain change — never per tab. Tab state is local on
   // purpose: a dashboard is glanceable, not deep-linkable.
   useEffect(() => {
-    if (rangeError) return
+    if (rangeError) {
+      setLoading(false)
+      return
+    }
     let cancelled = false
     setLoading(true)
     setError(null)
