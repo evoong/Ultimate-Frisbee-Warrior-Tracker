@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -172,6 +172,22 @@ export default function Dashboard() {
 
   const rangeError = rangeValidationError(from, to)
 
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
+
+  // WAI-ARIA tabs pattern: arrow keys move selection and focus within the
+  // tablist; Home/End go to the first/last tab.
+  function onTabKeyDown(event: React.KeyboardEvent, index: number) {
+    let next: number | null = null
+    if (event.key === 'ArrowRight') next = (index + 1) % TABS.length
+    else if (event.key === 'ArrowLeft') next = (index - 1 + TABS.length) % TABS.length
+    else if (event.key === 'Home') next = 0
+    else if (event.key === 'End') next = TABS.length - 1
+    if (next === null) return
+    event.preventDefault()
+    setTab(TABS[next].key)
+    tabRefs.current[next]?.focus()
+  }
+
   // Persisted per device, same pattern as Stats' view prefs. Invalid ranges
   // are never persisted, so a reload can't land on an unrecoverable state.
   useEffect(() => {
@@ -248,20 +264,25 @@ export default function Dashboard() {
       {error ? (
         <div className="space-y-2">
           <p className="text-sm text-destructive" role="alert">{error}</p>
-          <Button variant="outline" size="sm" onClick={() => setReloadKey(key => key + 1)}>Retry</Button>
+          <Button variant="outline" size="sm" disabled={!!rangeError} onClick={() => setReloadKey(key => key + 1)}>Retry</Button>
         </div>
-      ) : loading ? (
+      ) : loading && !data ? (
         <Skeleton className="h-64 w-full" />
-      ) : !data || rangeError ? null : (
+      ) : data ? (
         <>
           <div role="tablist" className="flex gap-4 border-b pb-2 text-sm">
-            {TABS.map(t => (
+            {TABS.map((t, index) => (
               <button
                 key={t.key}
+                ref={el => { tabRefs.current[index] = el }}
                 type="button"
                 role="tab"
+                id={`admin-dash-tab-${t.key}`}
                 aria-selected={tab === t.key}
+                aria-controls={`admin-dash-panel-${t.key}`}
+                tabIndex={tab === t.key ? 0 : -1}
                 onClick={() => setTab(t.key)}
+                onKeyDown={event => onTabKeyDown(event, index)}
                 className={tab === t.key ? 'font-semibold text-foreground' : 'text-muted-foreground hover:text-foreground'}
               >
                 {t.label}
@@ -269,6 +290,11 @@ export default function Dashboard() {
             ))}
           </div>
 
+          <div
+            role="tabpanel"
+            id={`admin-dash-panel-${tab}`}
+            aria-labelledby={`admin-dash-tab-${tab}`}
+          >
           {tab === 'usage' && data && (
             <div className="space-y-6">
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
@@ -369,8 +395,9 @@ export default function Dashboard() {
               </div>
             </div>
           )}
+          </div>
         </>
-      )}
+      ) : null}
     </section>
   )
 }
