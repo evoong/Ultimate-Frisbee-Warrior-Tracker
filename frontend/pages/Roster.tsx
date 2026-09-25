@@ -8,7 +8,7 @@ import { orderRosterPlayers } from '../lib/rosterOrder'
 import { useMyPlayerLink, useMyPlayerSeasonIds } from '../hooks/backend/playerLink'
 import { isPastGame } from '../lib/gameOrder'
 import { bestGame } from '../lib/bestGame'
-import { SHOW_TURNOVERS } from '../lib/features'
+import { useFlags } from '../lib/features'
 import { POSITIONS } from '../lib/positions'
 import { useAuth } from '../contexts/AuthContext'
 import { InlineMultiPicker } from '../components/InlinePicker'
@@ -169,6 +169,8 @@ function PlayerEgoNetworkGraph({ centerName, received, given }: {
 
 export default function Roster() {
   const { can, currentTeamId, isGuest, user } = useAuth()
+  const { flags } = useFlags()
+  const showTurnovers = flags?.show_turnovers ?? false
   const navigate = useNavigate()
   // The selected player mirrors this URL segment (see the effect near
   // handleSelectPlayer below), so a reload, browser back/forward, or a
@@ -376,7 +378,7 @@ export default function Roster() {
     fetchPlayerSeasons({ playerId: player.id })
     // Skipped while turnovers are hidden: nothing renders the breakdown, so
     // the query is a round trip for a card that cannot appear.
-    if (SHOW_TURNOVERS) fetchTurnoverBreakdown({ playerId: player.id })
+    if (showTurnovers) fetchTurnoverBreakdown({ playerId: player.id })
     // Assist Connections is fetched by the seasonFilters-driven effect
     // below, once playerSeasons loads and seeds seasonFilters — not here,
     // since seasonFilters isn't populated yet at selection time.
@@ -936,7 +938,7 @@ export default function Roster() {
         </Card>
 
         {/* Summary Cards */}
-        <div className={`grid gap-2 ${SHOW_TURNOVERS ? 'grid-cols-4' : 'grid-cols-3'}`}>
+        <div className={`grid gap-2 ${showTurnovers ? 'grid-cols-4' : 'grid-cols-3'}`}>
           <Card className="bg-muted/40 border-border">
             <CardContent className="pt-4 pb-3 text-center">
               <div className="text-2xl font-bold text-foreground">{summary.games}</div>
@@ -955,7 +957,7 @@ export default function Roster() {
               <div className="text-xs text-muted-foreground mt-0.5">Assists</div>
             </CardContent>
           </Card>
-          {SHOW_TURNOVERS && (
+          {showTurnovers && (
             <Card className="bg-orange-500/5 border-orange-500/20">
               <CardContent className="pt-4 pb-3 text-center">
                 <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">{summary.turnovers}</div>
@@ -978,7 +980,7 @@ export default function Roster() {
               <div className="flex gap-3 text-center shrink-0">
                 <div><div className="font-bold text-green-600 dark:text-green-400">{bestStat.goals}</div><div className="text-xs text-muted-foreground">G</div></div>
                 <div><div className="font-bold text-blue-600 dark:text-blue-400">{bestStat.assists}</div><div className="text-xs text-muted-foreground">A</div></div>
-                {SHOW_TURNOVERS && <div><div className="font-bold text-orange-600 dark:text-orange-400">{bestStat.turnovers}</div><div className="text-xs text-muted-foreground">TO</div></div>}
+                {showTurnovers && <div><div className="font-bold text-orange-600 dark:text-orange-400">{bestStat.turnovers}</div><div className="text-xs text-muted-foreground">TO</div></div>}
               </div>
             </CardContent>
           </Card>
@@ -1077,7 +1079,7 @@ export default function Roster() {
         </Card>
 
         {/* Turnovers by Type */}
-        {SHOW_TURNOVERS && (turnoverBreakdown as TurnoverBreakdownRow[] | undefined)?.length ? (
+        {showTurnovers && (turnoverBreakdown as TurnoverBreakdownRow[] | undefined)?.length ? (
           <Card className="bg-card text-card-foreground border-border">
             <CardHeader>
               <CardTitle className="text-base">Turnovers by Type</CardTitle>
@@ -1113,7 +1115,7 @@ export default function Roster() {
                   <div className="w-6 text-center">In</div>
                   <div className="w-8 text-center text-green-600 dark:text-green-400">G</div>
                   <div className="w-8 text-center text-blue-600 dark:text-blue-400">A</div>
-                  {SHOW_TURNOVERS && <div className="w-8 text-center text-orange-600 dark:text-orange-400">TO</div>}
+                  {showTurnovers && <div className="w-8 text-center text-orange-600 dark:text-orange-400">TO</div>}
                 </div>
                 {filteredStats.map(stat => (
                   <div key={stat.game_id} className={`flex items-center gap-3 px-3 py-2.5 rounded-lg ${stat.in ? 'bg-background' : 'bg-muted/40 opacity-60'}`}>
@@ -1138,7 +1140,7 @@ export default function Roster() {
                     </div>
                     <div className="w-8 text-center font-bold text-green-600 dark:text-green-400">{stat.in ? stat.goals : '-'}</div>
                     <div className="w-8 text-center font-bold text-blue-600 dark:text-blue-400">{stat.in ? stat.assists : '-'}</div>
-                    {SHOW_TURNOVERS && <div className="w-8 text-center font-bold text-orange-600 dark:text-orange-400">{stat.in ? stat.turnovers : '-'}</div>}
+                    {showTurnovers && <div className="w-8 text-center font-bold text-orange-600 dark:text-orange-400">{stat.in ? stat.turnovers : '-'}</div>}
                   </div>
                 ))}
               </div>
@@ -1164,7 +1166,7 @@ export default function Roster() {
                   <div className="w-10 text-center">GP</div>
                   <div className="w-10 text-center text-green-600 dark:text-green-400">G</div>
                   <div className="w-10 text-center text-blue-600 dark:text-blue-400">A</div>
-                  {SHOW_TURNOVERS && <div className="w-10 text-center text-orange-600 dark:text-orange-400">TO</div>}
+                  {showTurnovers && <div className="w-10 text-center text-orange-600 dark:text-orange-400">TO</div>}
                 </div>
                 {seasonTrend.map(row => (
                   <div key={row.seasonId} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-background">
@@ -1172,7 +1174,7 @@ export default function Roster() {
                     <div className="w-10 text-center text-sm text-muted-foreground">{row.games}</div>
                     <div className="w-10 text-center font-bold text-green-600 dark:text-green-400">{row.goals}</div>
                     <div className="w-10 text-center font-bold text-blue-600 dark:text-blue-400">{row.assists}</div>
-                    {SHOW_TURNOVERS && <div className="w-10 text-center font-bold text-orange-600 dark:text-orange-400">{row.turnovers}</div>}
+                    {showTurnovers && <div className="w-10 text-center font-bold text-orange-600 dark:text-orange-400">{row.turnovers}</div>}
                   </div>
                 ))}
               </div>

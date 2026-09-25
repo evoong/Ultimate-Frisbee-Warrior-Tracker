@@ -3,7 +3,7 @@ import {
   Bar, BarChart, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { ChartBar, TrendUp } from '@phosphor-icons/react'
-import { SHOW_TURNOVERS } from '../../lib/features'
+import { useFlags } from '../../lib/features'
 import { Skeleton } from '../../lib/shadcn/skeleton'
 import Swap from '../Swap'
 import { useMediaQuery } from '../../lib/shadcn/use-media-query'
@@ -29,7 +29,6 @@ const ALL_SERIES: { key: SeriesKey; label: string; dataKey: string; token: strin
 
 // The legend, the bars and the tooltip all walk this one list, so a gated
 // series leaves the chart in one step and takes its swatch with it.
-const SERIES = ALL_SERIES.filter(s => s.key !== 'turnovers' || SHOW_TURNOVERS)
 
 // The name column. Recharts wants a number, not a class, so this is the one
 // piece of the chart's layout that has to come through JS. 104px is ~13% of
@@ -89,14 +88,14 @@ function NameTick({ x, y, payload, rows, width, showRank }: any) {
  * bar you happened to land on is an accident of pointer position. Every
  * series shows here whether or not it is currently drawn.
  */
-function ChartTooltip({ active, payload }: any) {
+function ChartTooltip({ active, payload, series }: any) {
   if (!active || !payload?.length) return null
   const row: Row | undefined = payload[0]?.payload
   if (!row) return null
   return (
     <div className="st-tip">
       <p className="st-name mb-1.5">{row.name}</p>
-      {SERIES.map(s => (
+      {series.map((s: { key: keyof Row; label: string; cls: string }) => (
         <div key={s.key} className={`st-tip-row ${s.cls}`}>
           <span className="st-tip-swatch" />
           <span>{s.label}</span>
@@ -120,16 +119,22 @@ export default function PerformanceChart({ players, loading, error, emptyLabel }
 }) {
   // A Set rather than one active key: the legend toggles, so any combination
   // is a valid state. The last-one-standing guard exists because an empty
-  // chart is not a state anyone chooses on purpose.
+  // chart is not a state anyone chooses on purpose. `null` means "every
+  // series currently on display" -- the flag resolves after first paint, so
+  // seeding the Set from `series` once would leave a late-arriving turnovers
+  // series stuck invisible until the user clicked it on.
   const wide = useMediaQuery('(min-width: 640px)')
   const axisWidth = wide ? AXIS_WIDE : AXIS_NARROW
 
-  const [shown, setShown] = useState<Set<SeriesKey>>(() => new Set<SeriesKey>(SERIES.map(s => s.key)))
-  const toggle = (key: SeriesKey) => setShown(prev => {
+  const { flags } = useFlags()
+  const series = useMemo(() => ALL_SERIES.filter(s => s.key !== 'turnovers' || flags?.show_turnovers), [flags])
+  const [shown, setShown] = useState<Set<SeriesKey> | null>(null)
+  const activeShown = shown ?? new Set(series.map(s => s.key))
+  const toggle = (key: SeriesKey) => setShown(() => {
+    const prev = new Set(activeShown)
     if (prev.has(key) && prev.size === 1) return prev
-    const next = new Set(prev)
-    if (next.has(key)) next.delete(key); else next.add(key)
-    return next
+    if (prev.has(key)) prev.delete(key); else prev.add(key)
+    return prev
   })
 
   const rows: Row[] = useMemo(
@@ -137,7 +142,7 @@ export default function PerformanceChart({ players, loading, error, emptyLabel }
     [players],
   )
 
-  const active = SERIES.filter(s => shown.has(s.key))
+  const active = series.filter(s => activeShown.has(s.key))
   // Bars are a fixed 9px so a two-series view does not inflate into two fat
   // slabs; the row grows with how many are drawn instead.
   const rowHeight = 16 + active.length * 13
@@ -159,13 +164,13 @@ export default function PerformanceChart({ players, loading, error, emptyLabel }
           Leaderboard
         </span>
         <div className="-mr-1 flex items-center gap-0.5">
-          {SERIES.map(s => (
+          {series.map(s => (
             <button
               key={s.key}
               type="button"
               className={`st-legend ${s.cls}`}
-              data-active={shown.has(s.key)}
-              aria-pressed={shown.has(s.key)}
+              data-active={activeShown.has(s.key)}
+              aria-pressed={activeShown.has(s.key)}
               onClick={() => toggle(s.key)}
             >
               <span className="st-legend-swatch" />
@@ -219,7 +224,7 @@ export default function PerformanceChart({ players, loading, error, emptyLabel }
                   tick={<NameTick rows={rows} width={axisWidth} showRank={wide} />}
                 />
                 <Tooltip
-                  content={<ChartTooltip />}
+                  content={<ChartTooltip series={series} />}
                   cursor={{ fill: 'hsl(0 0% 50% / 0.09)' }}
                   animationDuration={140}
                 />

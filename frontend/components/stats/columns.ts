@@ -1,4 +1,3 @@
-import { SHOW_TURNOVERS } from '../../lib/features'
 import type { PlayerLine } from './types'
 
 // The rankings table's column system. Every non-name column -- the six
@@ -32,14 +31,17 @@ export const STAT_LABELS: Record<StatKey, string> = { goals: 'G', assists: 'A', 
 // The stats a formula column may be built from. Gated rather than filtered
 // out of STAT_LABELS, because a column the user built while a stat was live
 // still has to be able to render its own label.
-export const VISIBLE_STAT_KEYS: StatKey[] = (Object.keys(STAT_LABELS) as StatKey[])
-  .filter(k => k !== 'turnovers' || SHOW_TURNOVERS)
+export function getVisibleStatKeys(showTurnovers: boolean): StatKey[] {
+  return (Object.keys(STAT_LABELS) as StatKey[])
+    .filter(k => k !== 'turnovers' || showTurnovers)
+}
 
 /** Whether every stat a column reads is currently on display. A column built
  *  from a gated stat is hidden, not deleted -- it is still in localStorage
  *  and comes back with the stat. */
-export function isColumnAvailable(col: ColumnConfig): boolean {
-  return (col.terms ?? []).every(t => VISIBLE_STAT_KEYS.includes(t.stat))
+export function isColumnAvailable(col: ColumnConfig, showTurnovers: boolean): boolean {
+  const visibleKeys = getVisibleStatKeys(showTurnovers)
+  return (col.terms ?? []).every(t => visibleKeys.includes(t.stat))
 }
 
 const ALL_DEFAULT_COLUMNS: ColumnConfig[] = [
@@ -51,7 +53,9 @@ const ALL_DEFAULT_COLUMNS: ColumnConfig[] = [
   { id: 'avgA', label: 'A/gm', color: 'st-assists', builtin: true, terms: [{ stat: 'assists', sign: 1 }], perGame: true },
 ]
 
-export const DEFAULT_COLUMNS: ColumnConfig[] = ALL_DEFAULT_COLUMNS.filter(isColumnAvailable)
+export function getDefaultColumns(showTurnovers: boolean): ColumnConfig[] {
+  return ALL_DEFAULT_COLUMNS.filter(col => isColumnAvailable(col, showTurnovers))
+}
 
 export const CUSTOM_COLUMNS_KEY = 'ufwt_stats_custom_columns'
 export const HIDDEN_COLUMNS_KEY = 'ufwt_stats_hidden_columns'
