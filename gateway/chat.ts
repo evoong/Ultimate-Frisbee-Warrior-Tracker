@@ -6,6 +6,7 @@ import type { GatewayConfig } from './index.js'
 import { getVaultSecret } from './secrets.js'
 import { cookieNames, parseCookies } from './cookies.js'
 import { verifyAccessToken } from './jwt.js'
+import { getOrgEffectiveTier, gameDateWithinFreeWindow } from './supabaseRest.js'
 import { CHAT_FUNCTION_DECLARATIONS, WRITE_FUNCTIONS, callChatFunction, type ActionsConfig } from './gameActions.js'
 import { createMembershipLookup, hasAtLeast, type TeamRole } from './membership.js'
 
@@ -100,15 +101,26 @@ async function requireTeamMember(
 
 type Stat = { goals: number; assists: number; turnovers: number }
 
-async function getTeamContext(config: ChatConfig, organizationId: number): Promise<string> {
+export async function getTeamContext(config: ChatConfig, organizationId: number): Promise<string> {
   const orgFilter = `organization_id=eq.${organizationId}`
-  const [players, seasons, games, events, seasonPlayers] = await Promise.all([
+  const [players, seasons, games, seasonPlayers, freeTier] = await Promise.all([
     supabaseServiceFetch(config, `/players?select=id,display_name,position,gender_match,is_sub&${orgFilter}&order=display_name.asc`),
     supabaseServiceFetch(config, `/seasons?select=id,name,year,organizer&${orgFilter}&order=id.asc`),
     supabaseServiceFetch(config, `/games?select=id,season_id,opponent,game_date,result,outcome_override&${orgFilter}&order=game_date.asc`),
-    supabaseServiceFetch(config, `/game_events?select=player_id,related_player_id,event_type,game_id,event_timestamp&${orgFilter}`),
     supabaseServiceFetch(config, `/season_players?select=player_id,season_id&active=eq.true&${orgFilter}`),
+    getOrgEffectiveTier(config, organizationId).then(tier => tier === 'free'),
   ])
+
+  // Free-tier read gate: push filtering to the database query by deriving
+  // allowed game IDs (games within the 30-day window) so service-role reads
+  // do not over-fetch past events, mirroring the game_events RLS policy.
+  let eventsQuery = `/game_events?select=player_id,related_player_id,event_type,game_id,event_timestamp&${orgFilter}`
+  if (freeTier) {
+    const allowedGameIds = (games ?? []).filter((g: any) => gameDateWithinFreeWindow(g.game_date)).map((g: any) => g.id)
+    const idsFilter = allowedGameIds.length > 0 ? allowedGameIds.join(',') : '-1'
+    eventsQuery += `&game_id=in.(${idsFilter})`
+  }
+  const events = await supabaseServiceFetch(config, eventsQuery)
 
   const seasonNames = new Map((seasons ?? []).map((s: any) => [s.id, `${s.organizer ?? ''} ${s.name} ${s.year}`.trim()]))
   const gameMap = new Map<number, any>((games ?? []).map((g: any) => [g.id, g]))
@@ -281,10 +293,14 @@ async function getTeamContext(config: ChatConfig, organizationId: number): Promi
 
   const currentDate = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
 
+  const eventsNote = freeTier
+    ? `\nDATA WINDOW: this team is on the Free plan — the data above covers only the last 30 days of games. Older history exists but is not available; never state an "all-time" total as complete, and if asked about totals or history beyond the window, say the Free plan only shows the last 30 days.`
+    : ''
+
   return `You are a helpful assistant for the Ultimate Frisbee Warriors team tracking app. You have access to the following live team data:
 
 CURRENT DATE: ${currentDate} — use this to resolve relative date questions (today, this week, last game, upcoming, how long ago, etc).
-
+${eventsNote}
 DATA FORMAT LEGEND (read this first — exactly what each table below contains, its columns, and how to read a row):
 
 - SEASONS — one row per season, printed as its display label: "<organizer> <name> <year>", e.g. "Jam Summer 2026". This label is the season's ONLY name anywhere in this prompt or in the app; there is no separate season id or short name.

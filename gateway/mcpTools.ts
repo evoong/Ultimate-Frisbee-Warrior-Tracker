@@ -28,7 +28,7 @@ import {
   EVENT_TYPES,
   type EventType,
 } from './gameActions.js'
-import { sbGet, sbWrite, sbUpsertIgnore } from './supabaseRest.js'
+import { sbGet, sbWrite, sbUpsertIgnore, getOrgEffectiveTier, gameDateWithinFreeWindow } from './supabaseRest.js'
 
 type GameRow = {
   id: number; season_id: number | null; opponent: string; game_date: string; game_time: string | null
@@ -91,8 +91,15 @@ function computeScore(events: { event_type: string }[]): { ourScore: number; the
   }
 }
 
-async function gameSummary(config: ActionsConfig, g: GameRow, seasons: SeasonRow[]) {
-  const events: { event_type: string }[] = await sbGet(config, `/game_events?game_id=eq.${g.id}&select=event_type`)
+// `free` is the org's effective tier resolved by the *caller* (once per tool
+// call, not per game) so list_games doesn't pay an RPC per row.
+async function gameSummary(config: ActionsConfig, g: GameRow, seasons: SeasonRow[], free: boolean) {
+  // Free-tier read gate, mirroring the game_events RLS policy: events of
+  // games older than the 30-day window are withheld, so the derived score
+  // falls back to 0-0 exactly like the frontend box score does.
+  const events: { event_type: string }[] = !free || gameDateWithinFreeWindow(g.game_date)
+    ? await sbGet(config, `/game_events?game_id=eq.${g.id}&select=event_type`)
+    : []
   const { ourScore, theirScore } = computeScore(events)
   const season = g.season_id != null ? seasons.find(s => s.id === g.season_id) : undefined
   return {
@@ -130,6 +137,7 @@ export function registerUfwtMcpTools(server: McpServer, config: ActionsConfig, o
     },
   }, async ({ status, seasonId, seasonName, limit }) => {
     try {
+      const free = await getOrgEffectiveTier(config, orgId) === 'free'
       const season = await resolveSeason(config, orgId, seasonId, seasonName)
       const seasons = await getAllSeasons(config, orgId)
       let games = await getAllGamesFull(config, orgId)
@@ -138,7 +146,7 @@ export function registerUfwtMcpTools(server: McpServer, config: ActionsConfig, o
       if (status === 'upcoming') games = games.filter(g => !isPastGame(g, today))
       if (status === 'past') games = games.filter(g => isPastGame(g, today))
       games = sortGamesUpcomingFirst(games, today).slice(0, limit ?? 15)
-      const summaries = await Promise.all(games.map(g => gameSummary(config, g, seasons)))
+      const summaries = await Promise.all(games.map(g => gameSummary(config, g, seasons, free)))
       return ok(summaries)
     } catch (err) {
       return fail(err)
@@ -151,9 +159,10 @@ export function registerUfwtMcpTools(server: McpServer, config: ActionsConfig, o
     inputSchema: {},
   }, async () => {
     try {
+      const free = await getOrgEffectiveTier(config, orgId) === 'free'
       const g = await resolveGame(config, orgId)
       const seasons = await getAllSeasons(config, orgId)
-      return ok(await gameSummary(config, g, seasons))
+      return ok(await gameSummary(config, g, seasons, free))
     } catch (err) {
       return fail(err)
     }
@@ -165,10 +174,13 @@ export function registerUfwtMcpTools(server: McpServer, config: ActionsConfig, o
     inputSchema: { gameId: z.number().int().optional() },
   }, async ({ gameId }) => {
     try {
+      const free = await getOrgEffectiveTier(config, orgId) === 'free'
       const g = await resolveGame(config, orgId, gameId)
       const seasons = await getAllSeasons(config, orgId)
-      const summary = await gameSummary(config, g, seasons)
-      const events = await sbGet(config, `/game_events?game_id=eq.${g.id}&select=id,event_type,event_timestamp,player_id,related_player_id,notes&order=event_timestamp.desc`)
+      const summary = await gameSummary(config, g, seasons, free)
+      const events = !free || gameDateWithinFreeWindow(g.game_date)
+        ? await sbGet(config, `/game_events?game_id=eq.${g.id}&select=id,event_type,event_timestamp,player_id,related_player_id,notes&order=event_timestamp.desc`)
+        : []
       const players = await sbGet(config, `/players?organization_id=eq.${orgId}&select=id,display_name`)
       const nameById = new Map((players ?? []).map((p: any) => [p.id, p.display_name]))
       const recentEvents = (events ?? []).map((e: any) => ({
@@ -263,8 +275,13 @@ export function registerUfwtMcpTools(server: McpServer, config: ActionsConfig, o
     inputSchema: { gameId: z.number().int().optional() },
   }, async ({ gameId }) => {
     try {
+      const free = await getOrgEffectiveTier(config, orgId) === 'free'
       const game = await resolveGame(config, orgId, gameId)
-      const events = await sbGet(config, `/game_events?game_id=eq.${game.id}&select=id,event_type,event_timestamp,player_id,related_player_id,notes&order=event_timestamp.desc`)
+      // Free-tier read gate: old games' events are archived for free orgs,
+      // same as the box score in the frontend.
+      const events = !free || gameDateWithinFreeWindow(game.game_date)
+        ? await sbGet(config, `/game_events?game_id=eq.${game.id}&select=id,event_type,event_timestamp,player_id,related_player_id,notes&order=event_timestamp.desc`)
+        : []
       const players = await sbGet(config, `/players?organization_id=eq.${orgId}&select=id,display_name`)
       const nameById = new Map((players ?? []).map((p: any) => [p.id, p.display_name]))
       return ok((events ?? []).map((e: any) => ({
@@ -297,11 +314,17 @@ export function registerUfwtMcpTools(server: McpServer, config: ActionsConfig, o
       const today = todayLocalStr()
       const playedGameIds = new Set(games.filter(g => isPastGame(g, today)).map(g => g.id))
 
-      const idsFilter = gameIds.length > 0 ? `(${gameIds.join(',')})` : '(-1)'
-      const events = await sbGet(config, `/game_events?game_id=in.${idsFilter}&select=player_id,related_player_id,event_type,game_id`)
+      const free = await getOrgEffectiveTier(config, orgId) === 'free'
+      // Free-tier read gate on the event totals only: attendance (lineups)
+      // and games_played keep counting the full fixture list, matching the
+      // design's "attendance remains visible" split.
+      const statGameIds = free ? games.filter(g => gameDateWithinFreeWindow(g.game_date)).map(g => g.id) : gameIds
+      const statIdsFilter = statGameIds.length > 0 ? `(${statGameIds.join(',')})` : '(-1)'
+      const events = await sbGet(config, `/game_events?game_id=in.${statIdsFilter}&select=player_id,related_player_id,event_type,game_id`)
       const playersData: { id: number; display_name: string }[] = await sbGet(config, `/players?organization_id=eq.${orgId}&select=id,display_name`)
       const playersMap = new Map((playersData ?? []).map(p => [p.id, p] as const))
 
+      const idsFilter = gameIds.length > 0 ? `(${gameIds.join(',')})` : '(-1)'
       const lineupRows = await sbGet(config, `/game_lineups?game_id=in.${idsFilter}&select=game_id,player_id`)
       const attendance = new Map<number, Set<number>>()
       ;(lineupRows ?? []).forEach((r: any) => {

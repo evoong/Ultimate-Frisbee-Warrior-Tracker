@@ -313,7 +313,7 @@ export default function App() {
           openFeedback={() => setFeedbackOpen(true)}
         />
         <PasskeysDialog open={passkeysOpen} onOpenChange={setPasskeysOpen} />
-        <OrganizationSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} tier={entitlement.tier} isEmployeeGranted={entitlement.isEmployeeGranted} trialEndsAt={entitlement.trialEndsAt} onPlanChange={entitlement.refresh} />
+        <OrganizationSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} tier={entitlement.tier} isEmployeeGranted={entitlement.isEmployeeGranted} trialEndsAt={entitlement.trialEndsAt} trialStartedAt={entitlement.trialStartedAt} planSource={entitlement.planSource} onPlanChange={entitlement.refresh} />
         <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
         <SidebarInset>
           {/* A utility strip, not a page header. The page's name used to sit
@@ -384,7 +384,7 @@ export default function App() {
       {readOnlyNotice}
 
       <PasskeysDialog open={passkeysOpen} onOpenChange={setPasskeysOpen} />
-      <OrganizationSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} tier={entitlement.tier} isEmployeeGranted={entitlement.isEmployeeGranted} trialEndsAt={entitlement.trialEndsAt} onPlanChange={entitlement.refresh} />
+      <OrganizationSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} tier={entitlement.tier} isEmployeeGranted={entitlement.isEmployeeGranted} trialEndsAt={entitlement.trialEndsAt} trialStartedAt={entitlement.trialStartedAt} planSource={entitlement.planSource} onPlanChange={entitlement.refresh} />
       <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
 
       <AdBanner tier={entitlement.tier} />

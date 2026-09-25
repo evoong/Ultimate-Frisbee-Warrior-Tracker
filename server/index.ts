@@ -25,7 +25,8 @@ import { insertReport, listOpenClusters, attachReportToCluster, createCluster, t
 import { judgeReport } from "../gateway/feedbackJudge.js";
 import { sbGet } from "../gateway/supabaseRest.js";
 import { track, trackError, shutdown } from "./lib/posthog.js";
-import { consumeAiMessage, refundAiMessage } from "./lib/tierLimits.js";
+import { consumeAiMessage, refundAiMessage, getOrgEffectiveTier, gameDateWithinFreeWindow } from "./lib/tierLimits.js";
+import { createCheckoutSession, createPortalSession, canStartTrial, verifyWebhook, processWebhook } from "./lib/billing.js";
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
@@ -72,6 +73,31 @@ app.use(
     isAdminPath
   )
 );
+
+// Stripe webhook MUST be before express.json() to receive raw body for signature verification
+app.post(
+  "/api/billing/webhook",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    let event;
+    try {
+      event = verifyWebhook(req.body, req.headers["stripe-signature"] as string | undefined);
+    } catch (err) {
+      // Unsigned/invalid request: reject, never grant anything (spec §4.4).
+      return res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+    try {
+      const outcome = await processWebhook(event);
+      return res.json({ received: true, outcome });
+    } catch (err) {
+      // Processing failure: 500 so Stripe retries; idempotency guard makes
+      // the retry safe.
+      Sentry.captureException(err);
+      return res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+);
+
 app.use(express.json());
 
 // Vercel serverless filesystem is read-only except /tmp; use /tmp/uploads there
@@ -170,13 +196,46 @@ async function classifyChatCaller(webRequest: Request, organizationId: number): 
 }
 
 
-app.post("/api/org/plan", async (req, res) => {
+// ── Stripe Billing Routes ─────────────────────────────────────────────────────
+app.post("/api/billing/create-portal-session", async (req, res) => {
+  try {
+    const organizationId = Number(req.body?.organization_id);
+    if (!Number.isSafeInteger(organizationId) || organizationId <= 0) {
+      return res.status(400).json({ error: "Invalid organization_id" });
+    }
+    const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
+      headers: { cookie: req.headers.cookie ?? "" },
+    });
+    const caller = await classifyChatCaller(webRequest, organizationId);
+    if (!caller.ok) return res.status(caller.status).json({ error: caller.error });
+    if (!hasAtLeast(caller.role, "captain")) {
+      return res.status(403).json({ error: "Only team captains or admins can manage billing" });
+    }
+    const { url } = await createPortalSession(organizationId);
+    await track(caller.sub, "portal_opened", { organization_id: organizationId });
+    return res.json({ url });
+  } catch (err: unknown) {
+    Sentry.captureException(err);
+    return res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+app.post("/api/billing/create-checkout-session", async (req, res) => {
   try {
     const organizationId = Number(req.body?.organization_id);
     const tier = req.body?.tier;
-    if (!Number.isInteger(organizationId) || organizationId <= 0 || !["free", "plus", "premium"].includes(tier)) {
-      return res.status(400).json({ error: "Invalid organization_id or tier" });
+    const interval = req.body?.interval;
+    const isTrial = req.body?.is_trial === true;
+    const prices = {
+      plus: { month: process.env.STRIPE_PRICE_PLUS_MONTHLY, year: process.env.STRIPE_PRICE_PLUS_YEARLY },
+      premium: { month: process.env.STRIPE_PRICE_PREMIUM_MONTHLY, year: process.env.STRIPE_PRICE_PREMIUM_YEARLY },
+    };
+    if (!Number.isSafeInteger(organizationId) || organizationId <= 0 ||
+      (tier !== "plus" && tier !== "premium") || (interval !== "month" && interval !== "year") ||
+      typeof req.body?.is_trial !== "boolean" || (isTrial && tier !== "premium")) {
+      return res.status(400).json({ error: "Invalid billing selection" });
     }
+    const priceId = prices[tier as 'plus' | 'premium'][interval as 'month' | 'year'];
+    if (!priceId) return res.status(503).json({ error: "Billing price not configured" });
 
     const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
       headers: { cookie: req.headers.cookie ?? "" },
@@ -184,18 +243,18 @@ app.post("/api/org/plan", async (req, res) => {
     const caller = await classifyChatCaller(webRequest, organizationId);
     if (!caller.ok) return res.status(caller.status).json({ error: caller.error });
     if (!hasAtLeast(caller.role, "captain")) {
-      return res.status(403).json({ error: "Only team captains or admins can change subscription plans" });
+      return res.status(403).json({ error: "Only team captains or admins can change subscription" });
     }
 
-    const { data, error } = await supabase
-      .from("organizations")
-      .update({ tier, plan_source: "stripe", trial_ends_at: new Date().toISOString() })
-      .eq("id", organizationId)
-      .select()
-      .single();
-    if (error) throw error;
+    if (isTrial) {
+      if (!await canStartTrial(organizationId)) {
+        return res.status(400).json({ error: "Trial already used for this organization" });
+      }
+    }
 
-    return res.json({ success: true, organization: data });
+    const { url } = await createCheckoutSession(organizationId, priceId, isTrial);
+    await track(caller.sub, "checkout_started", { organization_id: organizationId, price_id: priceId, is_trial: isTrial });
+    return res.json({ url });
   } catch (err: unknown) {
     Sentry.captureException(err);
     return res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
@@ -217,17 +276,29 @@ const vaultConfig = {
 // averaging ~0.6s per reply vs gemma's ~20s+ (and occasional transient 500s).
 const DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest";
 
-async function getTeamContext(organizationId: number) {
-  const [players, seasons, games, events, seasonPlayers] = await Promise.all([
+export async function getTeamContext(organizationId: number) {
+  const [players, seasons, games, seasonPlayers, tier] = await Promise.all([
     supabase.from("players").select("id, display_name, position, gender_match, is_sub").eq("organization_id", organizationId).order("display_name"),
     supabase.from("seasons").select("id, name, year, organizer").eq("organization_id", organizationId).order("id"),
     supabase.from("games").select("id, season_id, opponent, game_date, result, outcome_override").eq("organization_id", organizationId).order("game_date", { ascending: true }),
-    supabase.from("game_events").select("player_id, related_player_id, event_type, game_id, event_timestamp").eq("organization_id", organizationId),
     supabase.from("season_players").select("player_id, season_id").eq("active", true).eq("organization_id", organizationId),
+    getOrgEffectiveTier(organizationId),
   ]);
 
   const seasonNames = new Map((seasons.data ?? []).map((s: any) => [s.id, `${s.organizer ?? ""} ${s.name} ${s.year}`.trim()]));
   const gameMap = new Map((games.data ?? []).map((g: any) => [g.id, g]));
+
+  // Free-tier read gate: push filtering to the database query by deriving
+  // allowed game IDs (games within the 30-day window) so service-role reads
+  // do not over-fetch past events, mirroring the game_events RLS policy.
+  const freeTier = tier === "free";
+  let eventsQuery = supabase.from("game_events").select("player_id, related_player_id, event_type, game_id, event_timestamp").eq("organization_id", organizationId);
+  if (freeTier) {
+    const allowedGameIds = (games.data ?? []).filter((g: any) => gameDateWithinFreeWindow(g.game_date)).map((g: any) => g.id);
+    eventsQuery = eventsQuery.in("game_id", allowedGameIds.length > 0 ? allowedGameIds : [-1]);
+  }
+  const events = await eventsQuery;
+
   const playerMap = new Map((players.data ?? []).map((p: any) => [p.id, p]));
 
   type Stat = { goals: number; assists: number; turnovers: number };
@@ -400,10 +471,14 @@ async function getTeamContext(organizationId: number) {
 
   const currentDate = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
 
+  const eventsNote = freeTier
+    ? `\nDATA WINDOW: this team is on the Free plan — the data above covers only the last 30 days of games. Older history exists but is not available; never state an "all-time" total as complete, and if asked about totals or history beyond the window, say the Free plan only shows the last 30 days.`
+    : "";
+
   return `You are a helpful assistant for the Ultimate Frisbee Warriors team tracking app. You have access to the following live team data:
 
 CURRENT DATE: ${currentDate} — use this to resolve relative date questions (today, this week, last game, upcoming, how long ago, etc).
-
+${eventsNote}
 DATA FORMAT LEGEND (read this first — exactly what each table below contains, its columns, and how to read a row):
 
 - SEASONS — one row per season, printed as its display label: "<organizer> <name> <year>", e.g. "Jam Summer 2026". This label is the season's ONLY name anywhere in this prompt or in the app; there is no separate season id or short name.

@@ -53,7 +53,7 @@ select is_empty(
       where n.nspname = 'public'
         and c.relkind in ('r', 'p')
         and c.relname not in ('standings', 'feedback_clusters', 'feedback_reports',
-                              'platform_admins', 'admin_audit_log', 'deleted_rows_archive')
+                              'platform_admins', 'admin_audit_log', 'deleted_rows_archive', 'processed_stripe_events')
         and not exists (select 1 from pg_policy p where p.polrelid = c.oid) $$,
   'every table in public has at least one policy'
 );

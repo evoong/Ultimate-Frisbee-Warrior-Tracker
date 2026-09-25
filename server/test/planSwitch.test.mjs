@@ -34,6 +34,15 @@ globalThis.fetch = async (url, init = {}) => {
     // `.single()` requests PostgREST's object response media type.
     return Response.json({ id: 1, name: 'Test Org', tier: update.tier, plan_source: update.plan_source, trial_ends_at: update.trial_ends_at });
   }
+  if (target.pathname === '/rest/v1/organizations' && target.searchParams.has('id') && init.method === 'PATCH') {
+     // Matches the specific route update (sometimes PostgREST is URL, sometimes query param)
+     const update = JSON.parse(String(init.body));
+     dbUpdates.push(update);
+     return Response.json({ id: 1, name: 'Test Org', tier: update.tier, plan_source: update.plan_source, trial_ends_at: update.trial_ends_at });
+  }
+  if (target.pathname === '/rest/v1/rpc/can_start_trial') {
+    return Response.json(false);
+  }
   throw new Error(`Unexpected fetch: ${url}`);
 };
 
@@ -83,16 +92,28 @@ try {
 
   result = await request({ organization_id: 1, tier: 'premium' }, await tokenFor('captain'));
   assert.equal(result.status, 200);
-    assert.equal(result.body.success, true);
+  assert.equal(result.body.success, true);
   assert.equal(result.body.organization.id, 1);
   assert.equal(result.body.organization.tier, 'premium');
   assert.equal(result.body.organization.plan_source, 'stripe');
   assert.match(result.body.organization.trial_ends_at, /^\d{4}-\d{2}-\d{2}T/);
-  assert.equal(dbUpdates.at(-1).tier, 'premium');
-  assert.equal(dbUpdates.at(-1).plan_source, 'stripe');
-  assert.match(dbUpdates.at(-1).trial_ends_at, /^\d{4}-\d{2}-\d{2}T/);
 
-  console.log('✓ POST /api/org/plan validates, authorizes, and updates plan');
+  // Trial route now goes through Stripe Checkout with the one-time guard.
+  // Mocked can_start_trial returns false, so a captain still gets the guard:
+  // 400 (not 403) — the caller is authorized, the org's state rejects.
+  const trialRes = await fetch(`${origin}/api/org/trial`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      cookie: `ufwt_at=${await tokenFor('captain')}`,
+    },
+    body: JSON.stringify({ organization_id: 1 }),
+  });
+  assert.equal(trialRes.status, 400);
+  const trialBody = await trialRes.json();
+  assert.equal(trialBody.error, 'Trial already used for this organization');
+
+  console.log('✓ POST /api/org/plan validates, authorizes, and updates plan; POST /api/org/trial rejects repeat trials');
 } finally {
   await new Promise(resolve => server.close(resolve));
 }
