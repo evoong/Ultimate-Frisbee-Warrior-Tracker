@@ -64,6 +64,26 @@ describe('Flags', () => {
     expect(table).toHaveTextContent('show_turnovers')
   })
 
+  it('renders updated_by in overrides table', async () => {
+    adminGet.mockResolvedValueOnce(DATA)
+    renderPage()
+    await waitFor(() => screen.getByText('Test Org'))
+
+    const table = screen.getByRole('table')
+    expect(screen.getByText('Updated by')).toBeInTheDocument()
+    expect(table).toHaveTextContent('aaaaaaaa')
+  })
+
+  it('renders error message in place of tables when load fails', async () => {
+    adminGet.mockRejectedValueOnce(new Error('Failed to load feature flags.'))
+    renderPage()
+    await waitFor(() => screen.getByRole('alert'))
+
+    expect(screen.getByText('Failed to load feature flags.')).toBeInTheDocument()
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    expect(screen.queryByText('Global registry')).not.toBeInTheDocument()
+  })
+
   it('opens set_flag dialog on registry toggle click', async () => {
     adminGet.mockResolvedValueOnce(DATA)
     adminOp.mockResolvedValue({ preview: { ok: true } })

@@ -19,14 +19,21 @@ export default function Flags() {
   const { role } = useAdminRole()
   const [data, setData] = useState<FlagsPayload | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [dialog, setDialog] = useState<{ title: string; input: Record<string, unknown> } | null>(null)
 
   const isSuperadmin = adminRoleAtLeast(role, 'superadmin')
 
   async function refresh() {
     setLoading(true)
-    setData(await adminGet<FlagsPayload>('/flags'))
-    setLoading(false)
+    setError(null)
+    try {
+      setData(await adminGet<FlagsPayload>('/flags'))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load feature flags.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { void refresh() }, [])
@@ -48,6 +55,20 @@ export default function Flags() {
   if (loading) return <Skeleton className="h-64 w-full" />
 
   const registry = data?.registry ?? []
+
+  if (error) {
+    return (
+      <section className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-semibold">Feature flags</h1>
+          <p className="text-sm text-muted-foreground">
+            Global defaults and per-organization overrides. Every change is recorded in the audit log.
+          </p>
+        </div>
+        <p className="text-sm text-destructive" role="alert">{error}</p>
+      </section>
+    )
+  }
 
   return (
     <section className="space-y-6">
@@ -108,6 +129,7 @@ export default function Flags() {
                   <th className="p-3">Flag</th>
                   <th className="p-3">State</th>
                   <th className="p-3">Updated</th>
+                  <th className="p-3">Updated by</th>
                   <th className="p-3 text-right">Actions</th>
                 </tr>
               </thead>
@@ -119,6 +141,9 @@ export default function Flags() {
                     <td className="p-3">{row.enabled ? 'On' : 'Off'}</td>
                     <td className="p-3 text-xs text-muted-foreground">
                       {new Date(row.updated_at).toLocaleString()}
+                    </td>
+                    <td className="p-3 font-mono text-xs text-muted-foreground">
+                      {row.updated_by ? row.updated_by.slice(0, 8) : '—'}
                     </td>
                     <td className="p-3 text-right">
                       <Button
