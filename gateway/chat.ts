@@ -6,6 +6,7 @@ import type { GatewayConfig } from './index.js'
 import { getVaultSecret } from './secrets.js'
 import { cookieNames, parseCookies } from './cookies.js'
 import { verifyAccessToken } from './jwt.js'
+import { getOrgEffectiveTier, gameDateWithinFreeWindow } from './supabaseRest.js'
 import { CHAT_FUNCTION_DECLARATIONS, WRITE_FUNCTIONS, callChatFunction, type ActionsConfig } from './gameActions.js'
 import { createMembershipLookup, hasAtLeast, type TeamRole } from './membership.js'
 
@@ -100,9 +101,9 @@ async function requireTeamMember(
 
 type Stat = { goals: number; assists: number; turnovers: number }
 
-async function getTeamContext(config: ChatConfig, organizationId: number): Promise<string> {
+export async function getTeamContext(config: ChatConfig, organizationId: number): Promise<string> {
   const orgFilter = `organization_id=eq.${organizationId}`
-  const [players, seasons, games, events, seasonPlayers] = await Promise.all([
+  const [players, seasons, games, eventsResult, seasonPlayers] = await Promise.all([
     supabaseServiceFetch(config, `/players?select=id,display_name,position,gender_match,is_sub&${orgFilter}&order=display_name.asc`),
     supabaseServiceFetch(config, `/seasons?select=id,name,year,organizer&${orgFilter}&order=id.asc`),
     supabaseServiceFetch(config, `/games?select=id,season_id,opponent,game_date,result,outcome_override&${orgFilter}&order=game_date.asc`),
@@ -112,6 +113,18 @@ async function getTeamContext(config: ChatConfig, organizationId: number): Promi
 
   const seasonNames = new Map((seasons ?? []).map((s: any) => [s.id, `${s.organizer ?? ''} ${s.name} ${s.year}`.trim()]))
   const gameMap = new Map<number, any>((games ?? []).map((g: any) => [g.id, g]))
+
+  // Free-tier read gate: service role bypasses the game_events RLS policy
+  // (20260924150000), so apply the same 30-day window here — events of
+  // games dated before the window are withheld from the model's context,
+  // while the fixtures/results themselves stay visible.
+  const freeTier = await getOrgEffectiveTier(config, organizationId) === 'free'
+  const events = freeTier
+    ? (eventsResult ?? []).filter((e: any) => {
+        const g = gameMap.get(e.game_id)
+        return g != null && gameDateWithinFreeWindow(g.game_date)
+      })
+    : eventsResult
   const playerNames = new Map<number, string>((players ?? []).map((p: any) => [p.id, p.display_name]))
 
   const allTime = new Map<number, Stat>()
@@ -281,10 +294,14 @@ async function getTeamContext(config: ChatConfig, organizationId: number): Promi
 
   const currentDate = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
 
+  const eventsNote = freeTier
+    ? `\nDATA WINDOW: this team is on the Free plan — the data above covers only the last 30 days of games. Older history exists but is not available; never state an "all-time" total as complete, and if asked about totals or history beyond the window, say the Free plan only shows the last 30 days.`
+    : ''
+
   return `You are a helpful assistant for the Ultimate Frisbee Warriors team tracking app. You have access to the following live team data:
 
 CURRENT DATE: ${currentDate} — use this to resolve relative date questions (today, this week, last game, upcoming, how long ago, etc).
-
+${eventsNote}
 DATA FORMAT LEGEND (read this first — exactly what each table below contains, its columns, and how to read a row):
 
 - SEASONS — one row per season, printed as its display label: "<organizer> <name> <year>", e.g. "Jam Summer 2026". This label is the season's ONLY name anywhere in this prompt or in the app; there is no separate season id or short name.

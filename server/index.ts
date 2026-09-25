@@ -25,7 +25,7 @@ import { insertReport, listOpenClusters, attachReportToCluster, createCluster, t
 import { judgeReport } from "../gateway/feedbackJudge.js";
 import { sbGet } from "../gateway/supabaseRest.js";
 import { track, trackError, shutdown } from "./lib/posthog.js";
-import { consumeAiMessage, refundAiMessage } from "./lib/tierLimits.js";
+import { consumeAiMessage, refundAiMessage, getOrgEffectiveTier, gameDateWithinFreeWindow } from "./lib/tierLimits.js";
 import { createCheckoutSession, createPortalSession, canStartTrial, verifyWebhook, processWebhook } from "./lib/billing.js";
 
 const app = express();
@@ -276,8 +276,8 @@ const vaultConfig = {
 // averaging ~0.6s per reply vs gemma's ~20s+ (and occasional transient 500s).
 const DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest";
 
-async function getTeamContext(organizationId: number) {
-  const [players, seasons, games, events, seasonPlayers] = await Promise.all([
+export async function getTeamContext(organizationId: number) {
+  const [players, seasons, games, eventsResult, seasonPlayers] = await Promise.all([
     supabase.from("players").select("id, display_name, position, gender_match, is_sub").eq("organization_id", organizationId).order("display_name"),
     supabase.from("seasons").select("id, name, year, organizer").eq("organization_id", organizationId).order("id"),
     supabase.from("games").select("id, season_id, opponent, game_date, result, outcome_override").eq("organization_id", organizationId).order("game_date", { ascending: true }),
@@ -287,6 +287,21 @@ async function getTeamContext(organizationId: number) {
 
   const seasonNames = new Map((seasons.data ?? []).map((s: any) => [s.id, `${s.organizer ?? ""} ${s.name} ${s.year}`.trim()]));
   const gameMap = new Map((games.data ?? []).map((g: any) => [g.id, g]));
+
+  // Free-tier read gate: service role bypasses the game_events RLS policy
+  // (20260924150000), so apply the same 30-day window here — events of
+  // games dated before the window are withheld from the model's context,
+  // while the fixtures/results themselves stay visible.
+  const tier = await getOrgEffectiveTier(organizationId);
+  const freeTier = tier === "free";
+  const events = {
+    data: freeTier
+      ? (eventsResult.data ?? []).filter((e: any) => {
+          const g = gameMap.get(e.game_id);
+          return g != null && gameDateWithinFreeWindow(g.game_date);
+        })
+      : eventsResult.data,
+  };
   const playerMap = new Map((players.data ?? []).map((p: any) => [p.id, p]));
 
   type Stat = { goals: number; assists: number; turnovers: number };
@@ -459,10 +474,14 @@ async function getTeamContext(organizationId: number) {
 
   const currentDate = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
 
+  const eventsNote = freeTier
+    ? `\nDATA WINDOW: this team is on the Free plan — the data above covers only the last 30 days of games. Older history exists but is not available; never state an "all-time" total as complete, and if asked about totals or history beyond the window, say the Free plan only shows the last 30 days.`
+    : "";
+
   return `You are a helpful assistant for the Ultimate Frisbee Warriors team tracking app. You have access to the following live team data:
 
 CURRENT DATE: ${currentDate} — use this to resolve relative date questions (today, this week, last game, upcoming, how long ago, etc).
-
+${eventsNote}
 DATA FORMAT LEGEND (read this first — exactly what each table below contains, its columns, and how to read a row):
 
 - SEASONS — one row per season, printed as its display label: "<organizer> <name> <year>", e.g. "Jam Summer 2026". This label is the season's ONLY name anywhere in this prompt or in the app; there is no separate season id or short name.
