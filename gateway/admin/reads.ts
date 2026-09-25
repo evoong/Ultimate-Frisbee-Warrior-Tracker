@@ -48,6 +48,13 @@ export async function handleAdminRead(
     }
   }
 
+  if (head === 'flags') {
+    return {
+      status: 200,
+      body: await sbWrite(ctx.config, 'POST', '/rpc/admin_flags', {}),
+    }
+  }
+
   if (head === 'audit') {
     const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 50) || 50, 1), AUDIT_PAGE_MAX)
     // Keyset pagination on the identity primary key: the log is append-only,

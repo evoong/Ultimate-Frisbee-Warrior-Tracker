@@ -14,7 +14,7 @@ import { track } from '../lib/analytics'
 import { POSITIONS } from '../lib/positions'
 import { isTurnoverEvent } from '../lib/eventUtils'
 import { shouldShowEventsLoading } from '../lib/eventLoading'
-import { SHOW_TURNOVERS } from '../lib/features'
+import { useFlags } from '../lib/features'
 import { sortGamesUpcomingFirst, isPastGame, isWithinLivePollWindow } from '../lib/gameOrder'
 import { todayLocalStr } from '../lib/seasonUtils'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
@@ -98,6 +98,8 @@ const OUTCOME_OPTIONS = ['Win', 'Loss', 'Tie', 'Default Win', 'Default Loss', 'F
 
 export default function Schedule() {
   const { can, currentTeamId, isGuest, user } = useAuth()
+  const { flags } = useFlags()
+  const showTurnovers = flags?.show_turnovers ?? false
   const entitlement = useEffectiveTier(currentTeamId)
   const navigate = useNavigate()
   // The selected game mirrors this URL segment (see the effect near
@@ -2177,7 +2179,7 @@ export default function Schedule() {
                       <th className="text-left font-medium px-3 pb-2">Player</th>
                       <th className="w-10 text-center font-medium text-green-600 dark:text-green-400 pb-2">G</th>
                       <th className="w-10 text-center font-medium text-blue-600 dark:text-blue-400 pb-2">A</th>
-                      {SHOW_TURNOVERS && <th className="w-10 text-center font-medium text-orange-600 dark:text-orange-400 pb-2">TO</th>}
+                      {showTurnovers && <th className="w-10 text-center font-medium text-orange-600 dark:text-orange-400 pb-2">TO</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -2187,7 +2189,7 @@ export default function Schedule() {
                         <td className="px-3 py-2 font-medium text-foreground">{p.name}</td>
                         <td className="w-10 text-center font-bold text-green-600 dark:text-green-400">{p.goals}</td>
                         <td className="w-10 text-center font-bold text-blue-600 dark:text-blue-400">{p.assists}</td>
-                        {SHOW_TURNOVERS && <td className="w-10 text-center font-bold text-orange-600 dark:text-orange-400">{p.turnovers}</td>}
+                        {showTurnovers && <td className="w-10 text-center font-bold text-orange-600 dark:text-orange-400">{p.turnovers}</td>}
                       </tr>
                     ))}
                   </tbody>

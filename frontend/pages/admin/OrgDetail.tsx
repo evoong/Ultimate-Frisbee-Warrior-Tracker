@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { adminGet, adminOp } from '../../lib/adminClient'
+import { adminGet, adminOp, adminRoleAtLeast, useAdminRole } from '../../lib/adminClient'
 import { Skeleton } from '../../lib/shadcn/skeleton'
 import { Button } from '../../lib/shadcn/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from '../../lib/shadcn/dialog'
@@ -10,6 +10,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import OperationDialog from './OperationDialog'
 
 type Member = { user_id: string; email: string; role: 'captain' | 'editor' | 'member' }
+type FlagRow = {
+  key: string
+  description: string
+  default_on: boolean
+  override: boolean | null
+  effective: boolean
+}
 type OrgDetailPayload = {
   organization: { id: number; name: string; is_public: boolean; created_at: string }
   members: Member[]
@@ -17,6 +24,14 @@ type OrgDetailPayload = {
   counts: { games: number; players: number; seasons: number }
   pending_invites: { id: number; email: string; role: string; expires_at: string }[]
   legacy_organization_members: { role: string; email: string }[]
+  metrics?: {
+    chat_messages: number
+    game_events: number
+    strategy_plays: number
+    attendance: number
+    last_activity: string | null
+  }
+  feature_flags?: FlagRow[]
 }
 
 const TEAM_ROLES = ['captain', 'editor', 'member'] as const
@@ -26,6 +41,7 @@ export default function OrgDetail({ orgId: propOrgId }: { orgId?: string }) {
   const { orgId: paramOrgId } = useParams<{ orgId: string }>()
   const orgId = propOrgId ?? paramOrgId!
   const navigate = useNavigate()
+  const { role } = useAdminRole()
   const [data, setData] = useState<OrgDetailPayload | null>(null)
   const [loading, setLoading] = useState(true)
   const [inviteEmail, setInviteEmail] = useState('')
@@ -79,8 +95,21 @@ export default function OrgDetail({ orgId: propOrgId }: { orgId?: string }) {
     })
   }
 
+  function openSetFlag(flag: FlagRow) {
+    setDialog({
+      name: 'set_flag',
+      title: `Toggle Feature Flag: ${flag.key}`,
+      input: { key: flag.key, org_id: Number(orgId), enabled: !flag.effective },
+    })
+  }
+
   function closeDialog() {
     setDialog(null)
+  }
+
+  function dialogDone() {
+    setDialog(null)
+    void refresh()
   }
 
   if (loading) return <Skeleton className="h-64 w-full" />
@@ -88,6 +117,25 @@ export default function OrgDetail({ orgId: propOrgId }: { orgId?: string }) {
 
   const org = data.organization
   const captain = data.members.find(m => m.role === 'captain')
+  const isSuperadmin = adminRoleAtLeast(role, 'superadmin')
+
+  const stats = [
+    { label: 'Members', value: data.members.length },
+    { label: 'Teams', value: data.teams.length },
+    { label: 'Players', value: data.counts?.players ?? 0 },
+    { label: 'Seasons', value: data.counts?.seasons ?? 0 },
+    { label: 'Games', value: data.counts?.games ?? 0 },
+    { label: 'Game events', value: data.metrics?.game_events ?? 0 },
+    { label: 'AI messages', value: data.metrics?.chat_messages ?? 0 },
+    { label: 'Strategy plays', value: data.metrics?.strategy_plays ?? 0 },
+    { label: 'Attendance', value: data.metrics?.attendance ?? 0 },
+    {
+      label: 'Last activity',
+      value: data.metrics?.last_activity
+        ? new Date(data.metrics.last_activity).toLocaleDateString()
+        : 'None',
+    },
+  ]
 
   return (
     <section className="space-y-6">
@@ -97,6 +145,16 @@ export default function OrgDetail({ orgId: propOrgId }: { orgId?: string }) {
           <p className="text-sm text-muted-foreground">Org #{org.id} · {org.is_public ? 'Public' : 'Private'} · {data.members.length} members</p>
         </div>
       </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
+        {stats.map(s => (
+          <div key={s.label} className="rounded border bg-card p-3 text-card-foreground">
+            <div className="text-xs text-muted-foreground">{s.label}</div>
+            <div className="mt-1 text-xl font-semibold">{s.value}</div>
+          </div>
+        ))}
+      </div>
+
       <div className="rounded border p-4 space-y-4">
         <h2 className="font-semibold">Invite member</h2>
         <div className="flex gap-2">
@@ -116,6 +174,7 @@ export default function OrgDetail({ orgId: propOrgId }: { orgId?: string }) {
           )}
         </div>
       </div>
+
       <div className="rounded border">
         <table className="w-full text-sm">
           <thead>
@@ -143,13 +202,55 @@ export default function OrgDetail({ orgId: propOrgId }: { orgId?: string }) {
         </table>
       </div>
 
+      <div className="rounded border p-4 space-y-4">
+        <div>
+          <h2 className="font-semibold">Feature flags</h2>
+          <p className="text-xs text-muted-foreground">Runtime flags and organization-level overrides.</p>
+        </div>
+        {(!data.feature_flags || data.feature_flags.length === 0) ? (
+          <p className="text-sm text-muted-foreground">No feature flags registered.</p>
+        ) : (
+          <div className="divide-y rounded border">
+            {data.feature_flags.map(flag => (
+              <div key={flag.key} className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-sm font-medium">{flag.key}</span>
+                    <span className="rounded bg-muted px-2 py-0.5 text-xs font-medium">
+                      {flag.override === null ? 'Default' : `Override (${flag.override ? 'On' : 'Off'})`}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">{flag.description}</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="space-x-2 text-xs text-muted-foreground">
+                    <span>Default: {flag.default_on ? 'On' : 'Off'}</span>
+                    <span>·</span>
+                    <span>Effective: {flag.effective ? 'On' : 'Off'}</span>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!isSuperadmin}
+                    title={!isSuperadmin ? 'Requires superadmin role' : undefined}
+                    onClick={() => openSetFlag(flag)}
+                  >
+                    {flag.effective ? 'Turn off' : 'Turn on'}
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {dialog && (
         <OperationDialog
           name={dialog.name}
           title={dialog.title}
           input={dialog.input}
           confirmPhrase={dialog.confirmPhrase}
-          onDone={closeDialog}
+          onDone={dialogDone}
           onCancel={closeDialog}
         />
       )}

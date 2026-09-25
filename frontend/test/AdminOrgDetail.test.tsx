@@ -6,10 +6,15 @@ import OrgDetail from '../pages/admin/OrgDetail'
 const mockAdminGet = vi.hoisted(() => vi.fn())
 const mockAdminOp = vi.hoisted(() => vi.fn())
 
-vi.mock('../lib/adminClient', () => ({
-  adminGet: (...args: unknown[]) => mockAdminGet(...args),
-  adminOp: (...args: unknown[]) => mockAdminOp(...args),
-}))
+vi.mock('../lib/adminClient', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/adminClient')>()
+  return {
+    ...actual,
+    adminGet: (...args: unknown[]) => mockAdminGet(...args),
+    adminOp: (...args: unknown[]) => mockAdminOp(...args),
+    useAdminRole: () => ({ role: 'superadmin', loading: false }),
+  }
+})
 
 const ORG = {
   organization: { id: 1, name: 'Warriors', is_public: true, created_at: '2026-01-01T00:00:00Z' },
