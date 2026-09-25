@@ -21,6 +21,8 @@ const AdminOrgDetail = lazy(() => import('./pages/admin/OrgDetail'))
 const AdminAuditLog = lazy(() => import('./pages/admin/AuditLog'))
 const AdminFlags = lazy(() => import('./pages/admin/Flags'))
 const AdminViewAs = lazy(() => import('./pages/admin/ViewAs'))
+const AdminOrganizations = lazy(() => import('./pages/admin/Organizations'))
+const AdminDashboard = lazy(() => import('./pages/admin/Dashboard'))
 import { useAuth } from './contexts/AuthContext'
 import { Loader2, LogOut } from 'lucide-react'
 import { visibleNavItems, tabForPath, pathForTab, isKnownPath, renamedPathFor, type Tab } from './lib/nav'
@@ -273,7 +275,9 @@ export default function App() {
               </Suspense>
             }
           >
-            <Route index element={<AdminSearch />} />
+            <Route index element={<AdminDashboard />} />
+            <Route path="search" element={<AdminSearch />} />
+            <Route path="orgs" element={<AdminOrganizations />} />
             <Route path="user/:userId" element={<AdminUserDetail />} />
             <Route path="org/:orgId" element={<AdminOrgDetail />} />
             <Route path="flags" element={<AdminFlags />} />

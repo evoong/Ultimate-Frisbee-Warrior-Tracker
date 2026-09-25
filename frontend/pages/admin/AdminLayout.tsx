@@ -2,9 +2,11 @@ import { NavLink, Outlet } from 'react-router-dom'
 import { useAdminRole } from '../../lib/adminClient'
 
 const TABS = [
-  { to: '/admin', label: 'Search', end: true },
-  { to: '/admin/flags', label: 'Feature flags', end: false },
+  { to: '/admin/search', label: 'Search', end: true },
+  { to: '/admin', label: 'Dashboard', end: true },
+  { to: '/admin/orgs', label: 'Organizations', end: false },
   { to: '/admin/audit', label: 'Audit log', end: false },
+  { to: '/admin/flags', label: 'Feature flags', end: false },
 ]
 
 export default function AdminLayout() {
