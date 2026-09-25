@@ -176,7 +176,7 @@ select is(
 -- migration comment); pinned so the two cannot drift silently.
 select is(
   public.admin_dashboard('2026-09-01'::date, '2026-09-25'::date, 'day') -> 'billing' -> 'ai_cap_by_tier',
-  '{"free": 5, "pro": 100, "premium": null}'::jsonb,
+  '{"free": 5, "plus": 100, "premium": 500}'::jsonb,
   'ai_cap_by_tier mirrors the hardcoded caps');
 
 -- Engagement: active + dormant partitions every org for the range.

@@ -4,7 +4,7 @@
 -- from public/anon/authenticated at the bottom — same conventions as
 -- 20260924000000_admin_org_profile_flags.sql. Payload shapes are pinned in
 -- docs/superpowers/specs/2026-09-25-admin-orgs-dashboard-design.md §RPCs and
--- in supabase/tests/22_admin_dashboard.test.sql.
+-- in supabase/tests/23_admin_dashboard.test.sql.
 
 create or replace function public.admin_list_organizations(
   p_q text, p_sort text, p_dir text, p_limit int, p_offset int
@@ -183,9 +183,9 @@ begin
       'ai_messages_in_range', (select count(*) from public.chat_logs
                                 where created_at >= v_from and created_at < v_to + 1),
       -- Hardcoded: mirrors the cap case statement in consume_ai_message
-      -- (20260922000003_enforce_org_tier_limits.sql). No cap table exists;
+      -- (20260923140114_cap_premium_ai_usage.sql). No cap table exists;
       -- if that case statement changes, this constant changes with it.
-      'ai_cap_by_tier', '{"free": 5, "pro": 100, "premium": null}'::jsonb
+      'ai_cap_by_tier', '{"free": 5, "plus": 100, "premium": 500}'::jsonb
     ),
     'engagement', jsonb_build_object(
       -- Documented limitation: auth.users.last_sign_in_at is a single "last"
