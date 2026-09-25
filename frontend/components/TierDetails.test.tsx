@@ -82,7 +82,7 @@ describe('TierDetails', () => {
 
   it('renders stats history archive notice on Free tier', () => {
     render(<FreeTierBanner tier="free" />)
-    expect(screen.getByText('Free tier: stats reflect the last 30 days. Upgrade for complete history.')).toBeInTheDocument()
+    expect(screen.getByText('Free tier: stats reflect the last 30 days. Upgrade for complete all-time history.')).toBeInTheDocument()
   })
 
   it('hides stats history archive notice on non-Free tier', () => {

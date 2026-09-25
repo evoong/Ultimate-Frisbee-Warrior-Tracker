@@ -109,8 +109,10 @@ export async function resolveSeason(config: ActionsConfig, orgId: number, nameQu
   return matches[0]!
 }
 
-export async function currentScore(config: ActionsConfig, gameId: number): Promise<{ our_score: number; their_score: number }> {
-  const events: { event_type: string }[] = await sbGet(config, `/game_events?game_id=eq.${gameId}&select=event_type`)
+export async function currentScore(config: ActionsConfig, orgId: number, game: { id: number; game_date: string }): Promise<{ our_score: number; their_score: number }> {
+  const free = await getOrgEffectiveTier(config, orgId) === 'free'
+  if (free && !gameDateWithinFreeWindow(game.game_date)) return { our_score: 0, their_score: 0 }
+  const events: { event_type: string }[] = await sbGet(config, `/game_events?game_id=eq.${game.id}&select=event_type`)
   return {
     our_score: events.filter(e => e.event_type === 'Goal').length,
     their_score: events.filter(e => e.event_type === 'Opponent Goal').length,
@@ -218,7 +220,7 @@ export async function createGameEvent(
     event_timestamp: new Date().toISOString(),
     notes: params.notes ?? null,
   })
-  const score = await currentScore(config, game.id)
+  const score = await currentScore(config, orgId, game)
   return { game: { date: game.game_date, opponent: game.opponent }, player: player?.display_name ?? null, assister: assister?.display_name ?? null, ...score }
 }
 
@@ -227,7 +229,7 @@ export async function undoLastEvent(config: ActionsConfig, orgId: number, params
   const events = await sbGet(config, `/game_events?game_id=eq.${game.id}&select=id,event_type,player_id,related_player_id&order=event_timestamp.desc&limit=1`)
   if (events.length === 0) throw new Error(`No events logged yet for the game vs ${game.opponent} on ${game.game_date}.`)
   const deleted = await sbWrite(config, 'DELETE', `/game_events?id=eq.${events[0].id}`)
-  const score = await currentScore(config, game.id)
+  const score = await currentScore(config, orgId, game)
   return { game: { date: game.game_date, opponent: game.opponent }, undone: deleted[0], ...score }
 }
 

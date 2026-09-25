@@ -272,4 +272,27 @@ const paidAllTime = await queryStatBreakdown(qsbConfig, 7, { metric: 'goals' })
 assert.deepEqual(paidAllTime.rows, [{ player: 'Recent Star', count: 2 }, { player: 'Old Timer', count: 1 }], 'Paid all-time goals tally counts every game')
 console.log('✓ query_stat_breakdown enforces 30-day window on Free and restores on Paid')
 
+console.log('\n--- 6. currentScore gate on chat write tools (gateway/gameActions.ts) ---')
+const { createGameEvent, undoLastEvent } = await import('../../gateway/gameActions.ts')
+
+tierState = 'free'
+const freeWriteOld = await createGameEvent(qsbConfig, 7, { eventType: 'Goal', playerName: 'Old Timer', gameDate: '2025-08-01', opponent: 'Ancient Rival' })
+assert.deepEqual({ our_score: freeWriteOld.our_score, their_score: freeWriteOld.their_score }, { our_score: 0, their_score: 0 },
+  'Free write to old game reports gated 0-0 score (archived event counts not disclosed)')
+
+const freeUndoOld = await undoLastEvent(qsbConfig, 7, { gameDate: '2025-08-01', opponent: 'Ancient Rival' })
+assert.deepEqual({ our_score: freeUndoOld.our_score, their_score: freeUndoOld.their_score }, { our_score: 0, their_score: 0 },
+  'Free undo on old game reports gated 0-0 score')
+
+const freeWriteRecent = await createGameEvent(qsbConfig, 7, { eventType: 'Opponent Goal', gameDate: threeDaysAgoDate, opponent: 'Fresh Rival' })
+assert.deepEqual({ our_score: freeWriteRecent.our_score, their_score: freeWriteRecent.their_score }, { our_score: 1, their_score: 0 },
+  'Free write to recent game reports live score (fixture events only; mock POST is a no-op)')
+
+tierState = 'plus'
+const paidWriteOld = await createGameEvent(qsbConfig, 7, { eventType: 'Goal', playerName: 'Old Timer', gameDate: '2025-08-01', opponent: 'Ancient Rival' })
+assert.deepEqual({ our_score: paidWriteOld.our_score, their_score: paidWriteOld.their_score }, { our_score: 2, their_score: 0 },
+  'Paid write to old game reports full score')
+
+console.log('✓ currentScore gates archived counts on Free writes and restores on Paid')
+
 console.log('\nAll Task 2 free-tier history tests passed!')
