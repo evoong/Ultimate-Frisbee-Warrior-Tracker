@@ -9,6 +9,8 @@ import type { AdminCtx } from './operations.js'
 // through to the operation dispatcher.
 
 const AUDIT_PAGE_MAX = 200
+const ORGS_PAGE_MAX = 200
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
 
 export async function handleAdminRead(
   ctx: AdminCtx,
@@ -52,6 +54,45 @@ export async function handleAdminRead(
     return {
       status: 200,
       body: await sbWrite(ctx.config, 'POST', '/rpc/admin_flags', {}),
+    }
+  }
+
+  if (head === 'orgs') {
+    // Same clamp recipe as the audit route: out-of-range and unparsable
+    // limits land inside 1..200 rather than trusting the client.
+    const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? 50) || 50, 1), ORGS_PAGE_MAX)
+    const offset = Math.max(Number(url.searchParams.get('offset') ?? 0) || 0, 0)
+    return {
+      status: 200,
+      body: await sbWrite(ctx.config, 'POST', '/rpc/admin_list_organizations', {
+        p_q: url.searchParams.get('q'),
+        p_sort: url.searchParams.get('sort'),
+        p_dir: url.searchParams.get('dir'),
+        p_limit: limit,
+        p_offset: offset,
+      }),
+    }
+  }
+
+  if (head === 'dashboard') {
+    // Dates are validated here because a malformed range is a client bug;
+    // grain is not, because the RPC's whitelist is the authority and its
+    // raise is the accepted error path.
+    const from = url.searchParams.get('from')
+    const to = url.searchParams.get('to')
+    if (from !== null && !ISO_DATE.test(from)) {
+      return { status: 400, body: { error: 'from must be YYYY-MM-DD' } }
+    }
+    if (to !== null && !ISO_DATE.test(to)) {
+      return { status: 400, body: { error: 'to must be YYYY-MM-DD' } }
+    }
+    return {
+      status: 200,
+      body: await sbWrite(ctx.config, 'POST', '/rpc/admin_dashboard', {
+        p_from: from,
+        p_to: to,
+        p_grain: url.searchParams.get('grain'),
+      }),
     }
   }
 
