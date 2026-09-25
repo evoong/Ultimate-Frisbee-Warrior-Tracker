@@ -122,7 +122,7 @@ function SeriesChart({ title, data }: { title: string; data: Bucket[] }) {
         <div className="mt-3" style={{ height: 220 }}>
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={data} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
-              <CartesianGrid vertical={false} stroke="hsl(var(--border))" strokeDasharray="0" />
+              <CartesianGrid vertical={false} stroke="hsl(var(--border))" />
               <XAxis dataKey="bucket" axisLine={false} tickLine={false} tickMargin={8} tick={AXIS_TICK} />
               <YAxis allowDecimals={false} width={36} axisLine={false} tickLine={false} tick={AXIS_TICK} />
               <Tooltip
@@ -201,15 +201,6 @@ export default function Dashboard() {
     return () => { cancelled = true }
   }, [from, to, grain, rangeError, reloadKey])
 
-  if (loading) {
-    return (
-      <section className="space-y-6">
-        <h1 className="text-2xl font-semibold">Dashboard</h1>
-        <Skeleton className="h-64 w-full" />
-      </section>
-    )
-  }
-
   return (
     <section className="space-y-6">
       <h1 className="text-2xl font-semibold">Dashboard</h1>
@@ -259,6 +250,8 @@ export default function Dashboard() {
           <p className="text-sm text-destructive" role="alert">{error}</p>
           <Button variant="outline" size="sm" onClick={() => setReloadKey(key => key + 1)}>Retry</Button>
         </div>
+      ) : loading ? (
+        <Skeleton className="h-64 w-full" />
       ) : !data || rangeError ? null : (
         <>
           <div role="tablist" className="flex gap-4 border-b pb-2 text-sm">

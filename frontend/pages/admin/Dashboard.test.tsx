@@ -98,6 +98,17 @@ describe('Dashboard', () => {
     expect(adminGet.mock.calls[1][0]).toMatch(/grain=week/)
   })
 
+  it('keeps range controls mounted while loading', () => {
+    adminGet.mockImplementation(() => new Promise(() => {}))
+    renderPage()
+
+    expect(screen.getByLabelText('From')).toBeInTheDocument()
+    expect(screen.getByLabelText('To')).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: 'Grain' })).toBeInTheDocument()
+    // Loading affects the content area only: skeleton shown, tabs not yet.
+    expect(screen.queryByRole('tab', { name: 'Usage' })).not.toBeInTheDocument()
+  })
+
   it('refetches when the range changes', async () => {
     renderPage()
     await settled()

@@ -116,7 +116,7 @@ export default function AdminTable<T extends { id: string | number }>({
         </tbody>
       </table>
       <div className="flex items-center justify-between border-t p-3">
-        <span className="text-xs text-muted-foreground">{range}</span>
+        <span className="nav-mono text-xs text-muted-foreground">{range}</span>
         <div className="space-x-2">
           <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => onPageChange(page - 1)}>
             Previous
