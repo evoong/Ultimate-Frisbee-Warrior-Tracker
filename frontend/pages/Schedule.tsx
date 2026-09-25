@@ -39,6 +39,7 @@ import LiveBadge from '../components/schedule/LiveBadge'
 import type { MatchData, MatchDetail, MatchOutcome } from '../components/schedule/types'
 import { useAuth } from '../contexts/AuthContext'
 import { useEffectiveTier } from '../hooks/useEffectiveTier'
+import { ArchivedBoxScoreNotice, isArchivedGameDate } from '../components/TierNotices'
 import { ArrowClockwise, ArrowCounterClockwise, ArrowsLeftRight, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, CaretUp, CaretUpDown, Check, DotsSixVertical, FloppyDisk, ListBullets, Minus, NoteBlank, PencilSimple, Plus, PlusCircle, Table, Target, Trash, TrendUp, Trophy, Users, Warning, X } from '@phosphor-icons/react'
 
 // A game counts as "imminent" from 30 minutes before its start time to 30
@@ -2164,7 +2165,9 @@ export default function Schedule() {
           <Card className="bg-card text-card-foreground border-border">
             <CardHeader><CardTitle className="text-base">Box Score</CardTitle></CardHeader>
             <CardContent>
-              {playerStats.length === 0 ? (
+              {entitlement.tier === 'free' && isArchivedGameDate(selectedGame.game_date) ? (
+                <ArchivedBoxScoreNotice tier={entitlement.tier} gameDate={selectedGame.game_date} />
+              ) : playerStats.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-4">No events recorded for this game.</p>
               ) : (
                 <table className="w-full text-sm">

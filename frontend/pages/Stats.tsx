@@ -17,6 +17,7 @@ import { track } from '../lib/analytics'
 import { SHOW_TURNOVERS } from '../lib/features'
 import { settleRange } from '../lib/loadingState'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
+import { FreeTierBanner } from '../components/TierNotices'
 import PlayerCombobox from '../components/PlayerCombobox'
 import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
@@ -213,6 +214,7 @@ export default function Stats() {
 
   return (
     <div className="stats-scope space-y-5">
+      <FreeTierBanner tier={entitlement.tier} />
       <StatsHeader
         title="Stats"
         tabs={visibleTabs}
