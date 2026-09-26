@@ -94,12 +94,19 @@ globalThis.fetch = async (url, init = {}) => {
     return rows
   }
 
-  if (path === '/rest/v1/players') return respond(PLAYERS)
+  function filterEq(rows, search, param) {
+    const m = search.match(new RegExp(`(?:[?&])${param}=eq\\.(\\d+)`))
+    return m ? rows.filter(r => r[param] === Number(m[1])) : rows
+  }
+
+  const SEASON_PLAYERS = []
+
+  if (path === '/rest/v1/players') return respond(filterEq(PLAYERS, search, 'id'))
   if (path === '/rest/v1/seasons') return respond(SEASONS)
   if (path === '/rest/v1/games') return respond(filterGames(GAMES))
   if (path === '/rest/v1/game_events') return respond(filterEvents(GAME_EVENTS))
   if (path === '/rest/v1/game_lineups') return respond(LINEUPS)
-  if (path === '/rest/v1/season_players') return respond([])
+  if (path === '/rest/v1/season_players') return respond(filterEq(SEASON_PLAYERS, search, 'player_id'))
   if (path === '/rest/v1/game_lineup_groups') return respond([])
 
   throw new Error(`Unexpected fetch in freeTierHistory.test.mjs: ${url}`)
@@ -294,5 +301,14 @@ assert.deepEqual({ our_score: paidWriteOld.our_score, their_score: paidWriteOld.
   'Paid write to old game reports full score')
 
 console.log('✓ currentScore gates archived counts on Free writes and restores on Paid')
+
+console.log('\n--- 7. Player-scoped getTeamContext ---')
+{
+  const scopedContext = await gatewayContext(chatConfig, 7, { playerId: 702, playerName: 'Recent Star' })
+  assert.ok(scopedContext.includes('SCOPED VIEW'), 'scoped context carries the scoped-view instruction')
+  assert.ok(scopedContext.includes('Recent Star'), 'linked player is present')
+  assert.ok(!scopedContext.includes('Old Timer ('), "teammate's player section is absent when scoped")
+}
+console.log('✓ player-scoped getTeamContext filters the linked member view')
 
 console.log('\nAll Task 2 free-tier history tests passed!')

@@ -39,6 +39,10 @@ interface Env {
   // exact token in the browser bundle as VITE_PUBLIC_POSTHOG_KEY.
   POSTHOG_PROJECT_TOKEN?: string;
   POSTHOG_HOST?: string;
+  // LangSmith tracing: the API key is a wrangler secret (never a var);
+  // absent = tracing off. The project name is public config.
+  LANGSMITH_API_KEY?: string;
+  LANGSMITH_PROJECT?: string;
 }
 
 // Minimal local alias so this file doesn't need @cloudflare/workers-types.
@@ -109,6 +113,8 @@ async function handleAppRequest(request: Request, env: Env, ctx: ExecutionContex
           geminiModel: env.GEMINI_MODEL,
           posthogProjectToken: env.POSTHOG_PROJECT_TOKEN,
           posthogHost: env.POSTHOG_HOST,
+          langsmithApiKey: env.LANGSMITH_API_KEY,
+          langsmithProject: env.LANGSMITH_PROJECT,
         };
         if (url.pathname === "/api/chat" && request.method === "POST") {
           return handleChatRequest(chatConfig, request);

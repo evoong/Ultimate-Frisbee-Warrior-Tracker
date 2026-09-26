@@ -29,6 +29,26 @@ import {
   type EventType,
 } from './gameActions.js'
 import { sbGet, sbWrite, sbUpsertIgnore, getOrgEffectiveTier, gameDateWithinFreeWindow } from './supabaseRest.js'
+import { hasAtLeast, type TeamRole } from './membership.js'
+
+// The MCP twins of gameActions.ts's WRITE_FUNCTIONS: registered tools
+// that write. Names here are the registerTool() names, which differ from
+// the chat function names (update_game_event / delete_game_event exist
+// only here). canUseMcpTool is the single gate the agent's per-call wrap
+// consults.
+export const MCP_WRITE_TOOLS: ReadonlySet<string> = new Set([
+  'create_game_event',
+  'update_game_event',
+  'delete_game_event',
+  'create_lineup_group',
+  'add_to_lineup',
+  'remove_from_lineup',
+])
+
+export function canUseMcpTool(role: TeamRole | null, toolName: string): boolean {
+  if (role === null) return false
+  return MCP_WRITE_TOOLS.has(toolName) ? hasAtLeast(role, 'editor') : true
+}
 
 type GameRow = {
   id: number; season_id: number | null; opponent: string; game_date: string; game_time: string | null
