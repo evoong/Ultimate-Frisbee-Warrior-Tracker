@@ -213,4 +213,47 @@ describe('Dashboard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(screen.getByText('Game events')).toBeInTheDocument())
   })
+
+  it('wires the ARIA tabs pattern: tabpanel ids and arrow-key navigation', async () => {
+    renderPage()
+    await settled()
+
+    const usageTab = screen.getByRole('tab', { name: 'Usage' })
+    expect(usageTab).toHaveAttribute('aria-controls', 'admin-dash-panel-usage')
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'admin-dash-panel-usage')
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'admin-dash-tab-usage')
+
+    usageTab.focus()
+    fireEvent.keyDown(usageTab, { key: 'ArrowRight' })
+    const billingTab = screen.getByRole('tab', { name: 'Billing & AI' })
+    expect(billingTab).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'admin-dash-panel-billing')
+
+    fireEvent.keyDown(billingTab, { key: 'Home' })
+    expect(screen.getByRole('tab', { name: 'Usage' })).toHaveAttribute('aria-selected', 'true')
+
+    const opsTab = screen.getByRole('tab', { name: 'Ops' })
+    fireEvent.keyDown(opsTab, { key: 'End' })
+    expect(screen.getByRole('tab', { name: 'Ops' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('keeps loaded data visible during a transient invalid range edit', async () => {
+    renderPage()
+    await settled()
+
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2027-01-01' } })
+
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Usage' })).toBeInTheDocument()
+    expect(screen.getByText('Game events')).toBeInTheDocument()
+  })
+
+  it('disables Retry while the range is invalid', async () => {
+    adminGet.mockImplementation(() => Promise.reject(new Error('boom')))
+    renderPage()
+    expect(await screen.findByRole('button', { name: 'Retry' })).toBeEnabled()
+
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2025-01-01' } })
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDisabled()
+  })
 })
