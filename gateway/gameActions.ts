@@ -12,6 +12,7 @@
 // rather than pulling frontend code into the gateway bundle.
 
 import { type ActionsConfig, sbGet, sbWrite, sbUpsertIgnore, getOrgEffectiveTier, gameDateWithinFreeWindow } from './supabaseRest.js'
+import type { ChatScope } from './agent/context.js'
 
 export type { ActionsConfig }
 
@@ -281,7 +282,8 @@ export async function createLineupGroup(config: ActionsConfig, orgId: number, pa
 // hand-counting (and self-contradicting) despite the earlier all-time fix.
 export async function queryStatBreakdown(
   config: ActionsConfig, orgId: number,
-  params: { metric: StatMetric; seasonName?: string; gameDate?: string; opponent?: string; byAssistPairing?: boolean }
+  params: { metric: StatMetric; seasonName?: string; gameDate?: string; opponent?: string; byAssistPairing?: boolean },
+  scope?: ChatScope
 ): Promise<unknown> {
   // A silently-mistyped metric (e.g. "assist" instead of "assists") would
   // otherwise match no branch below and produce an empty tally that's
@@ -292,7 +294,7 @@ export async function queryStatBreakdown(
   }
 
   let gameIds: number[] | null = null
-  let scope = 'all-time'
+  let scopeLabel = 'all-time'
   let archived = false
 
   const free = await getOrgEffectiveTier(config, orgId) === 'free'
@@ -300,7 +302,7 @@ export async function queryStatBreakdown(
   if (params.gameDate || params.opponent) {
     const game = await resolveGame(config, orgId, params)
     gameIds = [game.id]
-    scope = `${game.game_date} vs ${game.opponent}`
+    scopeLabel = `${game.game_date} vs ${game.opponent}`
     // Free-tier read gate: an old game's breakdown is archived, same as the
     // frontend box score.
     archived = free && !gameDateWithinFreeWindow(game.game_date)
@@ -311,7 +313,7 @@ export async function queryStatBreakdown(
     gameIds = free
       ? games.filter(g => gameDateWithinFreeWindow(g.game_date)).map(g => g.id)
       : games.map(g => g.id)
-    scope = season.label
+    scopeLabel = season.label
   } else if (free) {
     // "All-time" on Free means "within the 30-day window".
     const games: { id: number; game_date: string }[] = await sbGet(config, `/games?organization_id=eq.${orgId}&select=id,game_date`)
@@ -324,17 +326,26 @@ export async function queryStatBreakdown(
   const events: { event_type: string; player_id: number | null; related_player_id: number | null }[] = archived
     ? []
     : await sbGet(config, eventsPath)
+  // Player-scope gate (spec: a linked member's tool results are filtered to
+  // their own player, exactly like the prompt context). Applied after fetch
+  // so it composes with the free-tier game_id filter instead of fighting it.
+  const scopedEvents = scope
+    ? params.metric === 'assists'
+      ? events.filter(e => e.related_player_id === scope.playerId)
+      : events.filter(e => e.player_id === scope.playerId)
+    : events
   const players: PlayerRow[] = await sbGet(config, `/players?organization_id=eq.${orgId}&select=id,display_name`)
   const nameOf = (id: number | null) => players.find(p => p.id === id)?.display_name ?? 'Unknown'
 
   // When the scope is outside the Free window, say so plainly instead of
   // reporting a misleading "nothing recorded".
-  const emptyNote = archived ? `Stats for ${scope} are outside the Free plan's 30-day window.` : undefined
+  const emptyNote = archived ? `Stats for ${scopeLabel} are outside the Free plan's 30-day window.` : undefined
 
   if (params.metric === 'assists' && params.byAssistPairing) {
     const tally = new Map<string, { scorer: number; assister: number; count: number }>()
-    for (const e of events) {
+    for (const e of scopedEvents) {
       if (e.event_type !== 'Goal' || !e.player_id || !e.related_player_id) continue
+      if (scope && e.player_id !== scope.playerId && e.related_player_id !== scope.playerId) continue
       const key = `${e.player_id}:${e.related_player_id}`
       const row = tally.get(key) ?? { scorer: e.player_id, assister: e.related_player_id, count: 0 }
       row.count++
@@ -343,11 +354,14 @@ export async function queryStatBreakdown(
     const rows = [...tally.values()]
       .sort((a, b) => b.count - a.count)
       .map(r => ({ scorer: nameOf(r.scorer), assister: nameOf(r.assister), count: r.count }))
-    return { scope, breakdown: 'assist_pairings', rows, note: rows.length === 0 ? (emptyNote ?? `No assisted goals recorded for ${scope}.`) : undefined }
+    return { scope: scopeLabel, breakdown: 'assist_pairings', rows, note: rows.length === 0 ? (emptyNote ?? `No assisted goals recorded for ${scopeLabel}.`) : undefined }
   }
 
   const tally = new Map<number, number>()
-  for (const e of events) {
+  for (const e of scopedEvents) {
+    // (the id keys are player ids; for a scoped member every surviving event
+    // already IS the linked player under the metric's own semantics, so no
+    // extra filter is needed here)
     if (params.metric === 'goals' && e.event_type === 'Goal' && e.player_id) {
       tally.set(e.player_id, (tally.get(e.player_id) ?? 0) + 1)
     } else if (params.metric === 'assists' && e.event_type === 'Goal' && e.related_player_id) {
@@ -360,8 +374,8 @@ export async function queryStatBreakdown(
     .sort((a, b) => b[1] - a[1])
     .map(([id, count]) => ({ player: nameOf(id), count }))
   return {
-    scope, breakdown: 'by_player', metric: params.metric, rows,
-    note: rows.length === 0 ? (emptyNote ?? `No ${params.metric} recorded for ${scope}.`) : undefined,
+    scope: scopeLabel, breakdown: 'by_player', metric: params.metric, rows,
+    note: rows.length === 0 ? (emptyNote ?? `No ${params.metric} recorded for ${scopeLabel}.`) : undefined,
   }
 }
 
@@ -378,14 +392,14 @@ export const WRITE_FUNCTIONS: ReadonlySet<string> = new Set([
   'create_lineup_group',
 ])
 
-export async function callChatFunction(config: ActionsConfig, orgId: number, name: string, args: Record<string, unknown>): Promise<unknown> {
+export async function callChatFunction(config: ActionsConfig, orgId: number, name: string, args: Record<string, unknown>, scope?: ChatScope): Promise<unknown> {
   switch (name) {
     case 'create_game_event': return createGameEvent(config, orgId, args as any)
     case 'undo_last_event': return undoLastEvent(config, orgId, args as any)
     case 'add_to_lineup': return addToLineup(config, orgId, args as any)
     case 'remove_from_lineup': return removeFromLineup(config, orgId, args as any)
     case 'create_lineup_group': return createLineupGroup(config, orgId, args as any)
-    case 'query_stat_breakdown': return queryStatBreakdown(config, orgId, args as any)
+    case 'query_stat_breakdown': return queryStatBreakdown(config, orgId, args as any, scope)
     default: throw new Error(`Unknown function: ${name}`)
   }
 }
