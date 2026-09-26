@@ -55,7 +55,10 @@ export default function AdminTable<T extends { id: string | number }>({
   }
 
   return (
-    <div className="rounded border">
+    // The panel is the thing that is too narrow, not the document (the same
+    // rule as the stats tables' .st-scroll): narrow viewports scroll the
+    // table inside its frame rather than pushing the page wide.
+    <div className="overflow-x-auto rounded border">
       <table className="w-full text-sm" aria-label={ariaLabel}>
         <thead>
           <tr className="border-b bg-muted/50 text-left">
