@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { lazy, Suspense } from 'react'
 import AuditLog from './AuditLog'
 
 const adminGet = vi.hoisted(() => vi.fn())
@@ -61,6 +62,31 @@ describe('AuditLog', () => {
     adminGet.mockResolvedValueOnce({ rows: [], next_cursor: null })
     renderPage()
     await waitFor(() => screen.getByText(/no entries/i))
+  })
+
+  // Regression (CI-only red, first seen after #156, x64 runners 3/3): the
+  // empty state used to render on the FIRST paint because busy started
+  // false — while the mount effect's fetch was in flight. On the real route
+  // the page lazy-mounts OUTSIDE act (the admin chunk resolves after the
+  // test's render() returns), so that first paint is observable:
+  // AppAdminNotice's findByText latched the transient node, then busy=true
+  // detached it and the assert failed with "element could not be found in
+  // the document". Siblings (Organizations, Flags) initialize their loading
+  // state true for exactly this reason — a fetch is in flight from mount.
+  // This test lazy-mounts the same way, so the transient is visible to a
+  // plain query: absent after the fix, present on any revert.
+  it('does not flash the empty state while the first load is in flight', async () => {
+    adminGet.mockImplementationOnce(() => new Promise(() => {}))
+    const LazyAuditLog = lazy(() => Promise.resolve({ default: AuditLog }))
+    render(
+      <MemoryRouter>
+        <Suspense fallback={<div>loading…</div>}>
+          <LazyAuditLog />
+        </Suspense>
+      </MemoryRouter>
+    )
+    await screen.findByLabelText(/filter by operation/i)
+    expect(screen.queryByText(/no entries/i)).not.toBeInTheDocument()
   })
 
   it('loads more appends rows using cursor', async () => {
