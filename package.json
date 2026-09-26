@@ -38,6 +38,9 @@
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.8.2",
     "@google/genai": "^2.10.0",
+    "@langchain/core": "^1.2.12",
+    "@langchain/google-genai": "^2.3.2",
+    "@langchain/langgraph": "^1.4.18",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@posthog/ai": "^8.10.1",
     "@posthog/mcp": "^0.13.0",
@@ -52,6 +55,7 @@
     "dotenv": "^17.4.2",
     "express": "^4.18.2",
     "jose": "^6.2.3",
+    "langsmith": "^0.10.5",
     "multer": "^2.2.0",
     "pg": "^8.11.3",
     "postgres": "^3.4.9",
