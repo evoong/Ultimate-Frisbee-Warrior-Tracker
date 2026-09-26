@@ -146,9 +146,9 @@ const supabase = createClient(
   process.env.SUPABASE_SECRET_KEY || ""
 );
 
-// Dedicated client for AI Observability — @posthog/ai's Gemini wrapper needs
-// a raw PostHog instance to attach $ai_generation/$ai_span events to.
-// flushAt/flushInterval kept low since /api/chat can run as a short-lived
+// Dedicated client for AI Observability — manual captures only: one $ai_span
+// per tool call (via onSpan) and one $ai_generation per request. flushAt/
+// flushInterval kept low since /api/chat can run as a short-lived
 // Vercel function.
 const posthogAi = new PostHog(process.env.POSTHOG_PROJECT_TOKEN!, {
   host: process.env.POSTHOG_HOST,

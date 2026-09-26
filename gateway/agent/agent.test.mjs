@@ -57,6 +57,18 @@ const base = { systemPrompt: 'sys', history: [], message: 'hi' }
   assert.equal(reply, 'direct answer')
 }
 {
+  // Zod-invalid tool arg -> ToolMessage error, not a rejection; dispatch untouched.
+  const dispatch = []
+  const tools = makeChatTools({ dispatch: async (n, a) => { dispatch.push([n, a]); return { rows: [] } }, role: 'captain' })
+  const reply = await runToolAgent({
+    ...base,
+    model: new StubModel([toolCallMsg('query_stat_breakdown', { metric: 'bogus' }), new AIMessage('handled gracefully')]),
+    tools,
+  })
+  assert.equal(reply, 'handled gracefully')
+  assert.equal(dispatch.length, 0, 'invalid arg never reaches dispatch')
+}
+{
   // Endless tool calls hit the recursion limit and throw, never loop.
   const tools = makeChatTools({ dispatch: async () => ({}), role: 'captain' })
   await assert.rejects(

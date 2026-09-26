@@ -51,8 +51,16 @@ export async function runToolAgent(opts: AgentOptions): Promise<string> {
         results.push(new ToolMessage({ tool_call_id: call.id ?? '', content: JSON.stringify({ error: `Unknown tool ${call.name}` }) }))
         continue
       }
-      const out = await tool.invoke(call.args ?? {})
-      results.push(new ToolMessage({ tool_call_id: call.id ?? '', content: typeof out === 'string' ? out : JSON.stringify(out) }))
+      // Contract: no error thrown inside a tool call may reject runToolAgent.
+      // DynamicStructuredTool.invoke throws ToolInputParsingException on zod
+      // schema mismatch BEFORE the func runs; relay any error as a
+      // ToolMessage the model can explain, instead of aborting the graph.
+      try {
+        const out = await tool.invoke(call.args ?? {})
+        results.push(new ToolMessage({ tool_call_id: call.id ?? '', content: typeof out === 'string' ? out : JSON.stringify(out ?? null) }))
+      } catch (err) {
+        results.push(new ToolMessage({ tool_call_id: call.id ?? '', content: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }) }))
+      }
     }
     return { messages: results }
   }
