@@ -24,6 +24,7 @@ set search_path = ''
 as $$
 declare
   v_email text;
+  v_uid_text text := p_user_id::text;
 begin
   select email into v_email from auth.users where id = p_user_id;
   if not found then
@@ -67,15 +68,15 @@ begin
     'feedback_report_count', (
       select count(*) from public.feedback_reports r where r.reporter_user_id = p_user_id
     ),
-    -- Per-member usage. chat_logs.user_id is populated by the LangGraph
-    -- rewrite (PR #158); rows written before it carry null and do not count.
+    -- Per-member usage. Both created_by and user_id are text columns in this
+    -- schema, so v_uid_text (p_user_id::text) is used rather than bare uuid.
     'metrics', jsonb_build_object(
       'events_recorded', (select count(*) from public.game_events
-                           where created_by = p_user_id),
+                           where created_by = v_uid_text),
       'chat_messages',   (select count(*) from public.chat_logs
-                           where user_id = p_user_id),
+                           where user_id = v_uid_text),
       'last_event_at',   (select max(created_at) from public.game_events
-                           where created_by = p_user_id)
+                           where created_by = v_uid_text)
     )
   );
 end;
