@@ -26,7 +26,12 @@ export default function AdminAuditLog() {
   const [cursor, setCursor] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  // True from mount: a fetch is in flight the moment the page mounts, and
+  // the lazy route means that first paint is observable — busy=false here
+  // flashed "No entries yet." over the in-flight load (and let tests latch
+  // the transient node before busy detached it). Same pattern as
+  // Organizations/Flags' loading useState(true).
+  const [busy, setBusy] = useState(true)
   const [expanded, setExpanded] = useState<number | null>(null)
 
   const load = useCallback(async (reset: boolean) => {
