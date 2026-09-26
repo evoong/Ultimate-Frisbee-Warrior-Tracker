@@ -134,26 +134,33 @@ export function createMembershipLookup(config: MembershipConfig): MembershipLook
         `${config.supabaseUrl}/rest/v1/player_links` +
         `?select=player_id&user_id=eq.${encodeURIComponent(userId)}` +
         `&team_id=eq.${encodeURIComponent(String(teamId))}&status=eq.approved&limit=1`
-      const res = await fetch(url, {
-        headers: {
-          apikey: config.supabaseSecretKey,
-          Authorization: `Bearer ${config.supabaseSecretKey}`,
-        },
-      })
-      if (!res.ok) {
-        const err = new Error(`player link lookup failed: ${res.status} ${await res.text().catch(() => '')}`)
+      // Every failure mode lands in the same catch: a fetch that never
+      // reached Supabase (refused connection, DNS, timeout), a 2xx body
+      // that fails to parse, a non-2xx, or a non-array body. All are
+      // reported through onLookupError and rethrown; none are cached --
+      // a transient outage must not read as "unlinked" for the rest of
+      // the TTL, and must never resolve null.
+      try {
+        const res = await fetch(url, {
+          headers: {
+            apikey: config.supabaseSecretKey,
+            Authorization: `Bearer ${config.supabaseSecretKey}`,
+          },
+        })
+        if (!res.ok) {
+          throw new Error(`player link lookup failed: ${res.status} ${await res.text().catch(() => '')}`)
+        }
+        const rows = (await res.json()) as { player_id: number }[]
+        if (!Array.isArray(rows)) {
+          throw new Error('player link lookup returned a non-array body')
+        }
+        const playerId = rows.length > 0 ? rows[0].player_id : null
+        linkCache.set(key, { at: Date.now(), playerId })
+        return playerId
+      } catch (err) {
         config.onLookupError?.(err)
         throw err
       }
-      const rows = (await res.json()) as { player_id: number }[]
-      if (!Array.isArray(rows)) {
-        const err = new Error('player link lookup returned a non-array body')
-        config.onLookupError?.(err)
-        throw err
-      }
-      const playerId = rows.length > 0 ? rows[0].player_id : null
-      linkCache.set(key, { at: Date.now(), playerId })
-      return playerId
     },
   }
 }

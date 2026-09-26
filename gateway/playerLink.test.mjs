@@ -3,8 +3,12 @@ import { createMembershipLookup } from './membership.ts'
 
 const realFetch = globalThis.fetch.bind(globalThis)
 let mode = 'empty'
+// Count fetches for u1 only: with mode = 'approved' a fresh fetch would
+// also return 101, so the cache re-hit can only be proven by showing the
+// repeat call fires no second fetch.
+let u1Fetches = 0
 globalThis.fetch = async (url) => {
-  const u = String(url)
+  if (String(url).includes('u1')) u1Fetches++
   if (mode === 'approved') {
     return Response.json([{ player_id: 101 }])
   }
@@ -34,6 +38,7 @@ try {
 
   mode = 'approved'
   assert.equal(await lookup.playerLinkFor('u1', 1), 101, '30s TTL cache serves repeat calls for the same user')
+  assert.equal(u1Fetches, 1, 'the repeat call is served from the TTL cache without a second fetch')
   console.log('✓ gateway/playerLink.test.mjs all passed')
 } finally {
   globalThis.fetch = realFetch
