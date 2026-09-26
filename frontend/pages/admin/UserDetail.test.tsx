@@ -87,4 +87,34 @@ describe('UserDetail', () => {
     renderPage()
     await waitFor(() => screen.getByText(/could not load/i))
   })
+
+  it('renders the usage metrics strip when the payload carries metrics', async () => {
+    adminGet.mockResolvedValueOnce({
+      user: USER,
+      memberships: MEMBERSHIPS,
+      player_links: [],
+      feedback_report_count: 2,
+      metrics: { events_recorded: 34, chat_messages: 12, last_event_at: '2026-09-20T00:00:00Z' },
+    })
+    renderPage()
+    await waitFor(() => screen.getByText('Usage'))
+    expect(screen.getByText('34')).toBeInTheDocument()
+    expect(screen.getByText('12')).toBeInTheDocument()
+    expect(screen.getByText('2')).toBeInTheDocument()
+    expect(screen.getByText(/9\/20\/2026/)).toBeInTheDocument()
+  })
+
+  it('omits the usage strip entirely when metrics are absent (older payload)', async () => {
+    adminGet.mockResolvedValueOnce({ user: USER, memberships: MEMBERSHIPS, player_links: [] })
+    renderPage()
+    await waitFor(() => screen.getByText(USER.email))
+    expect(screen.queryByText('Usage')).not.toBeInTheDocument()
+  })
+
+  it('shows the join date on each membership row', async () => {
+    adminGet.mockResolvedValueOnce({ user: USER, memberships: MEMBERSHIPS, player_links: [] })
+    renderPage()
+    await waitFor(() => screen.getByText('Warriors'))
+    expect(screen.getByText(/joined 1\/2\/2026/)).toBeInTheDocument()
+  })
 })

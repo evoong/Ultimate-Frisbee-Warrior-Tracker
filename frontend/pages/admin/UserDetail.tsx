@@ -30,6 +30,21 @@ interface State {
   memberships: Membership[]
   player_links: PlayerLink[]
   pending_invites: any[]
+  feedback_report_count?: number
+  metrics?: {
+    events_recorded: number
+    chat_messages: number
+    last_event_at: string | null
+  }
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded border p-3">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="nav-mono mt-1 text-lg font-semibold">{value}</p>
+    </div>
+  )
 }
 
 export default function UserDetail() {
@@ -90,6 +105,21 @@ export default function UserDetail() {
         </p>
       </div>
 
+      {data.metrics && (
+        <section>
+          <h2 className="font-semibold mb-2">Usage</h2>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <Stat label="Events recorded" value={data.metrics.events_recorded.toLocaleString()} />
+            <Stat label="Chat messages" value={data.metrics.chat_messages.toLocaleString()} />
+            <Stat
+              label="Last event"
+              value={data.metrics.last_event_at ? new Date(data.metrics.last_event_at).toLocaleDateString() : '—'}
+            />
+            <Stat label="Feedback reports" value={(data.feedback_report_count ?? 0).toLocaleString()} />
+          </div>
+        </section>
+      )}
+
       <section>
         <h2 className="font-semibold mb-2">Memberships</h2>
         {data.memberships.length === 0 ? (
@@ -101,6 +131,7 @@ export default function UserDetail() {
                 <div>
                   <code className="font-medium">{m.name}</code>
                   <span className="ml-2 text-xs text-muted-foreground">({m.role})</span>
+                  <span className="ml-2 text-xs text-muted-foreground">joined {new Date(m.since).toLocaleDateString()}</span>
                 </div>
                 <button
                   className="rounded border px-2 py-1 text-xs"
