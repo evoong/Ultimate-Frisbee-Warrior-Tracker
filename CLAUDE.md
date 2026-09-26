@@ -10,6 +10,7 @@
 4. Start both dev servers from `.claude/launch.json`: "Express API Server" (port 3001) and "Vite Frontend" (port 5199, cwd `frontend`). The frontend alone will run but backend-dependent features (chat, uploads) need the Express server too.
 5. Production development: connect directly to cloud Supabase using root `.env`. `npm run server` and `npm run dev` must not start or alter local Supabase.
 6. Local QA: run `npm run qa:reset` to rebuild an isolated Docker Supabase stack on `127.0.0.1`. QA commands source `.env.local`, reject non-local URLs, and never use root `.env` credentials. Use local QA for migrations, RLS tests, gateway integration tests, and destructive test cases.
+7. **QA environment is disabled on this device** (the Ubuntu dev box) because the Docker stack takes ~1GB RAM across 10 containers. It is kept **stopped by default** — do not run `npx supabase start` unless the human explicitly asks for local QA. `npx supabase stop` frees the resources (keeps the DB volume); `npx supabase stop --no-backup` also wipes it. Feature work against cloud Supabase (mode 5) needs no local stack.
 
 ## MCP server (AI tool access)
 - `MCP_ORGANIZATION_ID` is required for the local stdio server

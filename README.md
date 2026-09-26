@@ -68,4 +68,13 @@ Optional: import a scrubbed prod snapshot (approved tables only):
 QA_PROD_SOURCE_URL=postgresql://... npm run qa:import-prod
 ```
 
+Stop the stack when done — it holds ~1GB RAM in 10 containers:
+
+```bash
+npx supabase stop          # stop containers (keeps DB volume)
+npx supabase stop --no-backup  # stop and wipe the local DB volume
+```
+
+**On the Ubuntu dev box this stack is disabled by default** — keep it stopped unless actively running local QA.
+
 See `docs/QA_ENVIRONMENT.md` for details.
