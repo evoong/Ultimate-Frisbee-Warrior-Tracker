@@ -9,6 +9,7 @@ import { verifyAccessToken } from './jwt.js'
 import { getOrgEffectiveTier, gameDateWithinFreeWindow } from './supabaseRest.js'
 import { CHAT_FUNCTION_DECLARATIONS, WRITE_FUNCTIONS, callChatFunction, type ActionsConfig } from './gameActions.js'
 import { createMembershipLookup, hasAtLeast, type TeamRole } from './membership.js'
+import { isValidSessionId } from './sessionId.js'
 
 // Chat needs privileged (service-role) Supabase access to read all team data
 // regardless of caller identity, plus a Gemini key. Team-context/log queries
@@ -47,7 +48,7 @@ async function supabaseServiceFetch(config: ChatConfig, path: string): Promise<a
   return res.json()
 }
 
-async function insertChatLogs(config: ChatConfig, organizationId: number, rows: { session_id: string; role: string; content: string }[]): Promise<void> {
+async function insertChatLogs(config: ChatConfig, organizationId: number, userId: string, rows: { session_id: string; role: string; content: string }[]): Promise<void> {
   await fetch(`${config.supabaseUrl}/rest/v1/chat_logs`, {
     method: 'POST',
     headers: {
@@ -55,7 +56,7 @@ async function insertChatLogs(config: ChatConfig, organizationId: number, rows: 
       Authorization: `Bearer ${config.supabaseSecretKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(rows.map(r => ({ ...r, organization_id: organizationId }))),
+    body: JSON.stringify(rows.map(r => ({ ...r, organization_id: organizationId, user_id: userId }))),
   }).catch(() => void 0)
 }
 
@@ -467,6 +468,7 @@ export async function handleChatRequest(config: ChatConfig, request: Request): P
     }
     if (!message || !session_id) return json({ error: 'message and session_id required' }, 400)
     if (!organization_id) return json({ error: 'organization_id required' }, 400)
+    if (!isValidSessionId(session_id)) return json({ error: 'session_id must be a UUID' }, 400)
 
     const user = await requireTeamMember(config, request, Number(organization_id))
     if (!user.ok) return json({ error: user.error }, user.status)
@@ -492,7 +494,7 @@ export async function handleChatRequest(config: ChatConfig, request: Request): P
       await posthog.shutdown()
     }
 
-    await insertChatLogs(config, teamId, [
+    await insertChatLogs(config, teamId, user.sub, [
       { session_id, role: 'user', content: message },
       { session_id, role: 'assistant', content: reply },
     ])
@@ -510,13 +512,14 @@ export async function handleChatHistoryRequest(config: ChatConfig, request: Requ
     const organizationId = Number(url.searchParams.get('organization_id'))
     if (!sessionId) return json({ error: 'session_id required' }, 400)
     if (!organizationId) return json({ error: 'organization_id required' }, 400)
+    if (!isValidSessionId(sessionId)) return json({ error: 'session_id must be a UUID' }, 400)
 
     const user = await requireTeamMember(config, request, Number(organizationId))
     if (!user.ok) return json({ error: user.error }, user.status)
 
     const rows = await supabaseServiceFetch(
       config,
-      `/chat_logs?select=role,content,created_at&session_id=eq.${encodeURIComponent(sessionId)}&organization_id=eq.${organizationId}&order=created_at.asc`
+      `/chat_logs?select=role,content,created_at&session_id=eq.${encodeURIComponent(sessionId)}&organization_id=eq.${organizationId}&user_id=eq.${encodeURIComponent(user.sub)}&order=created_at.asc`
     )
     return json(rows ?? [])
   } catch (err: unknown) {
@@ -531,11 +534,12 @@ export async function handleChatHistoryDeleteRequest(config: ChatConfig, request
     const organizationId = Number(url.searchParams.get('organization_id'))
     if (!sessionId) return json({ error: 'session_id required' }, 400)
     if (!organizationId) return json({ error: 'organization_id required' }, 400)
+    if (!isValidSessionId(sessionId)) return json({ error: 'session_id must be a UUID' }, 400)
 
     const user = await requireTeamMember(config, request, Number(organizationId))
     if (!user.ok) return json({ error: user.error }, user.status)
 
-    const res = await fetch(`${config.supabaseUrl}/rest/v1/chat_logs?session_id=eq.${encodeURIComponent(sessionId)}&organization_id=eq.${organizationId}`, {
+    const res = await fetch(`${config.supabaseUrl}/rest/v1/chat_logs?session_id=eq.${encodeURIComponent(sessionId)}&organization_id=eq.${organizationId}&user_id=eq.${encodeURIComponent(user.sub)}`, {
       method: 'DELETE',
       headers: {
         apikey: config.supabaseSecretKey,

@@ -19,6 +19,7 @@ import { getVaultSecret } from "../gateway/secrets.js";
 import { runJamSync, JAM_SYNC_MONITOR_SLUG, JAM_SYNC_MONITOR_CONFIG } from "../gateway/jamSync.js";
 import { CHAT_FUNCTION_DECLARATIONS, WRITE_FUNCTIONS, callChatFunction, type ActionsConfig } from "../gateway/gameActions.js";
 import { createMembershipLookup, hasAtLeast, type TeamRole } from "../gateway/membership.js";
+import { isValidSessionId } from "../gateway/sessionId.js";
 import { parseCookies, cookieNames } from "../gateway/cookies.js";
 import { verifyAccessToken } from "../gateway/jwt.js";
 import { decideEscalation, DISPATCH_THRESHOLD, CONFLICT_MARGIN, type TriageOutcome, type VariantTally } from "../gateway/feedbackTriage.js";
@@ -561,6 +562,7 @@ app.post("/api/chat", async (req, res) => {
     };
     if (!message || !session_id) return res.status(400).json({ error: "message and session_id required" });
     if (!organization_id) return res.status(400).json({ error: "organization_id required" });
+    if (!isValidSessionId(session_id)) return res.status(400).json({ error: "session_id must be a UUID" });
 
     const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
       headers: { cookie: req.headers.cookie ?? "" },
@@ -675,8 +677,8 @@ app.post("/api/chat", async (req, res) => {
 
     // Save both turns to chat_logs
     const { error: chatLogError } = await supabase.from("chat_logs").insert([
-      { session_id, role: "user", content: message, organization_id: teamId },
-      { session_id, role: "assistant", content: reply, organization_id: teamId },
+      { session_id, role: "user", content: message, organization_id: teamId, user_id: caller.sub },
+      { session_id, role: "assistant", content: reply, organization_id: teamId, user_id: caller.sub },
     ]);
     if (chatLogError) throw chatLogError;
 
@@ -710,6 +712,7 @@ app.get("/api/chat/history", async (req, res) => {
     const { session_id, organization_id } = req.query as { session_id: string; organization_id: string };
     if (!session_id) return res.status(400).json({ error: "session_id required" });
     if (!organization_id) return res.status(400).json({ error: "organization_id required" });
+    if (!isValidSessionId(session_id)) return res.status(400).json({ error: "session_id must be a UUID" });
 
     const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
       headers: { cookie: req.headers.cookie ?? "" },
@@ -723,6 +726,7 @@ app.get("/api/chat/history", async (req, res) => {
       .select("role, content, created_at")
       .eq("session_id", session_id)
       .eq("organization_id", teamId)
+      .eq("user_id", caller.sub)
       .order("created_at", { ascending: true });
 
     if (error) throw error;
@@ -739,6 +743,7 @@ app.delete("/api/chat/history", async (req, res) => {
     const { session_id, organization_id } = req.query as { session_id: string; organization_id: string };
     if (!session_id) return res.status(400).json({ error: "session_id required" });
     if (!organization_id) return res.status(400).json({ error: "organization_id required" });
+    if (!isValidSessionId(session_id)) return res.status(400).json({ error: "session_id must be a UUID" });
 
     const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
       headers: { cookie: req.headers.cookie ?? "" },
@@ -748,7 +753,7 @@ app.delete("/api/chat/history", async (req, res) => {
     if (!caller.ok) return res.status(caller.status).json({ error: caller.error });
     distinctId = caller.sub;
 
-    const { error } = await supabase.from("chat_logs").delete().eq("session_id", session_id).eq("organization_id", teamId);
+    const { error } = await supabase.from("chat_logs").delete().eq("session_id", session_id).eq("organization_id", teamId).eq("user_id", caller.sub);
     if (error) throw error;
     await track(distinctId, "chat_history_cleared", { organization_id, session_id });
     res.json({ ok: true });

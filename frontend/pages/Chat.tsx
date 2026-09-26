@@ -36,10 +36,16 @@ function renderMarkdown(text: string) {
   })
 }
 
+// Same shape as gateway/sessionId.ts, duplicated on purpose: the frontend
+// bundle never imports gateway code. Old `s_<ts>_<rand>` values fail the
+// regex and are silently re-minted; their rows are unreachable under the
+// new owner-scoped RLS anyway (user_id was never written for them).
+const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
 function getSessionId() {
   let id = localStorage.getItem('ufwt_chat_session')
-  if (!id) {
-    id = `s_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
+  if (!id || !SESSION_ID_RE.test(id)) {
+    id = crypto.randomUUID()
     localStorage.setItem('ufwt_chat_session', id)
   }
   return id
