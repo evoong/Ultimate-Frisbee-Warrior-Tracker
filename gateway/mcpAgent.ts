@@ -13,7 +13,7 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { McpAgent } from 'agents/mcp'
-import { registerUfwtMcpTools } from './mcpTools.js'
+import { registerUfwtMcpTools, canUseMcpTool } from './mcpTools.js'
 import type { McpAuthProps } from './mcpOAuth.js'
 import { createMembershipLookup } from './membership.js'
 import * as Sentry from '@sentry/cloudflare'
@@ -84,8 +84,10 @@ class UfwtMcpBase extends McpAgent<Env, {}, McpAuthProps> {
     // access for the whole life of the warm instance -- well past the 30s the
     // design allows for a revocation to take effect. executeToolHandler is the
     // single point every tool call passes through, so wrapping it covers all
-    // 14 tools without touching mcpTools.ts. The lookup caches for 30s, so this
-    // costs at most one query per 30s per user.
+    // 14 tools; the write-tier rule itself lives in mcpTools.ts's
+    // canUseMcpTool, so write tools additionally require editor or captain.
+    // The lookup caches for 30s, so this costs at most one query per 30s per
+    // user.
     const server = this.server as unknown as {
       executeToolHandler?: (tool: unknown, args: unknown, extra: unknown) => Promise<unknown>
     }
@@ -96,8 +98,14 @@ class UfwtMcpBase extends McpAgent<Env, {}, McpAuthProps> {
       throw new Error('MCP: cannot install the per-call membership check (SDK shape changed)')
     }
     server.executeToolHandler = async (tool, args, extra) => {
-      if ((await lookup.roleFor(userId, orgId)) === null) {
-        throw new Error(`MCP: ${email} is no longer a member of team ${orgId}`)
+      const role = await lookup.roleFor(userId, orgId)
+      const toolName = (tool as { name?: string })?.name ?? ''
+      if (!canUseMcpTool(role, toolName)) {
+        throw new Error(
+          role === null
+            ? `MCP: ${email} is no longer a member of team ${orgId}`
+            : `MCP: ${email} must be an editor or captain to use ${toolName} on team ${orgId}`
+        )
       }
       return inner.call(server, tool, args, extra)
     }

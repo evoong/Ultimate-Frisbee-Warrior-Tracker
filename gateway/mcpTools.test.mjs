@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { registerUfwtMcpTools } from './mcpTools.ts'
+import { registerUfwtMcpTools, MCP_WRITE_TOOLS, canUseMcpTool } from './mcpTools.ts'
 import { sbGet, sbWrite } from './supabaseRest.ts'
 
 let failed = 0
@@ -235,6 +235,35 @@ const mcpServerHandlersB = await loadMcpServerHandlers(ORG_B)
   const gone = await fetchEvent(event.id)
   check('[mcp-server] same-org delete_game_event actually removed the row', gone === undefined)
 }
+
+// Write tools follow the spec's editor-tier rule (same gate as chat's
+// WRITE_FUNCTIONS, Task 7). Kept next to the classification so a new
+// registered tool fails here until someone classifies it.
+const MCP_READ_ONLY = new Set([
+  'list_games', 'get_current_game', 'get_game_details', 'list_game_events',
+  'get_player_stats', 'list_seasons', 'list_roster', 'list_lineups',
+])
+const MCP_REGISTERED = [
+  'list_games', 'get_current_game', 'get_game_details', 'create_game_event',
+  'update_game_event', 'delete_game_event', 'list_game_events', 'get_player_stats',
+  'list_seasons', 'list_roster', 'list_lineups', 'create_lineup_group',
+  'add_to_lineup', 'remove_from_lineup',
+]
+
+for (const name of MCP_WRITE_TOOLS) {
+  check(`MCP_WRITE_TOOLS name "${name}" is a registered tool`, MCP_REGISTERED.includes(name))
+}
+for (const name of MCP_REGISTERED) {
+  check(`MCP tool "${name}" is classified exactly once (write xor read-only)`,
+    MCP_WRITE_TOOLS.has(name) !== MCP_READ_ONLY.has(name))
+}
+check('member cannot use an MCP write tool', canUseMcpTool('member', 'create_game_event') === false)
+check('editor can use an MCP write tool', canUseMcpTool('editor', 'create_game_event') === true)
+check('captain can use an MCP write tool', canUseMcpTool('captain', 'add_to_lineup') === true)
+check('member can use an MCP read tool', canUseMcpTool('member', 'list_games') === true)
+check('no role means no tool at all', canUseMcpTool(null, 'list_games') === false)
+check('unknown tool names pass only with a role (fail on lookup elsewhere)',
+  canUseMcpTool('member', 'not_a_tool') === true)
 
 console.log(failed === 0 ? '\nall mcpTools checks passed' : `\n${failed} FAILED`)
 process.exit(failed === 0 ? 0 : 1)
