@@ -329,9 +329,17 @@ export async function queryStatBreakdown(
   // Player-scope gate (spec: a linked member's tool results are filtered to
   // their own player, exactly like the prompt context). Applied after fetch
   // so it composes with the free-tier game_id filter instead of fighting it.
+  // Assists split by direction: a by-player assist total counts only goals
+  // the linked player set up (related_player_id), while assist PAIRINGS keep
+  // events where either endpoint is the linked player — "who assisted my
+  // goals" is data about the linked player too (spec ruling), and the
+  // pairing branch's in-loop guard re-checks exactly that either-endpoint
+  // rule as a live safety, not dead code.
   const scopedEvents = scope
     ? params.metric === 'assists'
-      ? events.filter(e => e.related_player_id === scope.playerId)
+      ? params.byAssistPairing
+        ? events.filter(e => e.player_id === scope.playerId || e.related_player_id === scope.playerId)
+        : events.filter(e => e.related_player_id === scope.playerId)
       : events.filter(e => e.player_id === scope.playerId)
     : events
   const players: PlayerRow[] = await sbGet(config, `/players?organization_id=eq.${orgId}&select=id,display_name`)

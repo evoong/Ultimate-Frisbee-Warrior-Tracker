@@ -51,6 +51,12 @@ try {
   assert.equal(scopedAssists.rows.length, 1, 'scoped assist pairing keeps rows involving the linked player')
   assert.equal(scopedAssists.rows[0].count, 1)
 
+  const scopedScorerPairings = await queryStatBreakdown(config, 7, { metric: 'assists', byAssistPairing: true }, { playerId: 702, playerName: 'Recent Star' })
+  assert.equal(scopedScorerPairings.rows.length, 1, "linked player's own goals' pairings survive (they are data about them)")
+  assert.equal(scopedScorerPairings.rows[0].scorer, 'Recent Star', 'row has the linked player as scorer')
+  assert.equal(scopedScorerPairings.rows[0].assister, 'Old Timer')
+  assert.equal(scopedScorerPairings.rows[0].count, 1)
+
   const scopedOther = await queryStatBreakdown(config, 7, { metric: 'goals' }, { playerId: 701, playerName: 'Old Timer' })
   assert.deepEqual(scopedOther.rows.map(r => r.player), ['Old Timer'], 'the other player sees their own goals only')
 
