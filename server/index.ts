@@ -6,8 +6,6 @@ import { createClient } from "@supabase/supabase-js";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import { GoogleGenAI } from "@posthog/ai/gemini";
-import type { Content } from "@google/genai";
 import { PostHog } from "posthog-node";
 import { createGateway } from "../gateway/index.js";
 import { nodeAdapter } from "../gateway/node-adapter.js";
@@ -17,7 +15,9 @@ import { handleFlagsRequest } from "../gateway/flags.js";
 import { createNodeAdapter } from "../gateway/node-adapter.js";
 import { getVaultSecret } from "../gateway/secrets.js";
 import { runJamSync, JAM_SYNC_MONITOR_SLUG, JAM_SYNC_MONITOR_CONFIG } from "../gateway/jamSync.js";
-import { CHAT_FUNCTION_DECLARATIONS, WRITE_FUNCTIONS, callChatFunction, type ActionsConfig } from "../gateway/gameActions.js";
+import { runChatAgent } from "../gateway/agent/agent.js";
+import { makeChatTools } from "../gateway/agent/tools.js";
+import { callChatFunction, type ActionsConfig } from "../gateway/gameActions.js";
 import { getTeamContext as buildTeamContext, type ChatScope } from "../gateway/agent/context.js";
 import { createMembershipLookup, hasAtLeast, type TeamRole } from "../gateway/membership.js";
 import { isValidSessionId } from "../gateway/sessionId.js";
@@ -302,15 +302,6 @@ export function getTeamContext(organizationId: number, scope?: ChatScope) {
   );
 }
 
-// Retry transient Gemini errors (was tuned against gemma-4-31b-it, which
-// could fail its transient 500 several times in a row; kept as a general
-// safety net now that the model has switched to gemini-flash-lite).
-function isTransientGeminiError(err: unknown): boolean {
-  const text = err instanceof Error ? err.message : String(err);
-  return text.includes('"code":500') || text.includes("INTERNAL") || text.includes("UNAVAILABLE");
-}
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
 app.post("/api/chat", async (req, res) => {
   const startedAt = Date.now();
   let usedToolCall = false;
@@ -335,11 +326,29 @@ app.post("/api/chat", async (req, res) => {
 
     // From here on only teamId is used. The raw body value never reaches a
     // query again, matching the same invariant in gateway/chat.ts.
-    const systemContext = await getTeamContext(teamId);
+
+    // Player scope (spec: captain/editor = full team; member with an
+    // approved link = their player only; member unlinked = full team).
+    // playerLinkFor throws on outage so a broken lookup can never widen
+    // the context (Task 3).
+    let scope: ChatScope | undefined;
+    if (caller.role === "member") {
+      const linkedId = await membership.playerLinkFor(caller.sub, teamId);
+      if (linkedId != null) {
+        const { data: linkedPlayer } = await supabase
+          .from("players")
+          .select("display_name")
+          .eq("id", linkedId)
+          .limit(1)
+          .single();
+        if (linkedPlayer?.display_name) scope = { playerId: linkedId, playerName: linkedPlayer.display_name };
+      }
+    }
+
+    const systemContext = await getTeamContext(teamId, scope);
     const geminiApiKey = await getVaultSecret(vaultConfig, "gemini_api_key", process.env.GEMINI_API_KEY);
     const geminiModel = (await getVaultSecret(vaultConfig, "gemini_model", process.env.GEMINI_MODEL)) ?? DEFAULT_GEMINI_MODEL;
     if (!geminiApiKey) return res.status(500).json({ error: "Gemini API key not configured" });
-    const genai = new GoogleGenAI({ apiKey: geminiApiKey, posthog: posthogAi });
     const actionsConfig: ActionsConfig = { supabaseUrl: process.env.SUPABASE_URL || "", supabaseSecretKey: process.env.SUPABASE_SECRET_KEY || "" };
 
     if (!await consumeAiMessage(teamId)) {
@@ -348,65 +357,12 @@ app.post("/api/chat", async (req, res) => {
     quotaOrgId = teamId;
     quotaConsumed = true;
 
-    // PostHog's Gemini wrapper only instruments models.generateContent (not
-    // the chats.create()/sendMessage() session helper), so the conversation
-    // history is threaded through generateContent calls by hand below —
-    // mirroring what Chat.sendMessage does internally in @google/genai.
     const aiTraceId = crypto.randomUUID();
-    const aiProperties = { $ai_session_id: session_id };
-    const genaiConfig = { systemInstruction: systemContext, tools: [{ functionDeclarations: CHAT_FUNCTION_DECLARATIONS }] };
-    const contents: Content[] = history.map((h: any) => ({
-      role: h.role === "assistant" ? "model" : "user",
-      parts: [{ text: h.content }],
-    }));
-    contents.push({ role: "user", parts: [{ text: message }] });
-
-    // Retry transient Gemini errors, but only for this first turn: once a
-    // function-call round below has actually executed a real DB write,
-    // blindly retrying on a later transient error could log the same event
-    // twice, so anything past this point surfaces the error instead.
-    const MAX_ATTEMPTS = 5;
-    let response;
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      try {
-        response = await genai.models.generateContent({
-          model: geminiModel, contents, config: genaiConfig,
-          posthogDistinctId: distinctId,
-          posthogTraceId: aiTraceId,
-          posthogProperties: aiProperties,
-        });
-        break;
-      } catch (err) {
-        if (attempt === MAX_ATTEMPTS || !isTransientGeminiError(err)) throw err;
-        await sleep(600 * attempt);
-      }
-    }
-    if (!response) throw new Error("unreachable");
-
-    // The model confirms with the user in plain text before calling
-    // anything (see the system prompt's "YOU CAN LOG DATA" instructions),
-    // so a function call here means the user just confirmed.
-    const MAX_FUNCTION_ROUNDS = 4;
-    for (let round = 0; round < MAX_FUNCTION_ROUNDS; round++) {
-      const calls = response.functionCalls;
-      if (!calls || calls.length === 0) break;
-      usedToolCall = true;
-
-      const modelContent = response.candidates?.[0]?.content;
-      if (modelContent) contents.push(modelContent);
-
-      const parts = await Promise.all(calls.map(async (call) => {
-        const spanStart = Date.now();
-        let output: unknown;
-        let error: string | undefined;
-        try {
-          output = WRITE_FUNCTIONS.has(call.name!) && !hasAtLeast(caller.role, "member")
-            ? { error: "you do not have permission to change this team's data" }
-            : await callChatFunction(actionsConfig, teamId, call.name!, call.args ?? {});
-        } catch (err) {
-          Sentry.captureException(err);
-          error = err instanceof Error ? err.message : String(err);
-        }
+    const tools = makeChatTools({
+      dispatch: (name, args) => callChatFunction(actionsConfig, teamId, name, args, scope),
+      role: caller.role,
+      onSpan: (name, args, result, latencyMs) => {
+        usedToolCall = true;
         posthogAi.capture({
           distinctId,
           event: "$ai_span",
@@ -414,26 +370,38 @@ app.post("/api/chat", async (req, res) => {
             $ai_trace_id: aiTraceId,
             $ai_session_id: session_id,
             $ai_span_id: crypto.randomUUID(),
-            $ai_span_name: call.name,
-            $ai_input_state: call.args,
-            $ai_output_state: error ? { error } : output,
-            $ai_latency: (Date.now() - spanStart) / 1000,
+            $ai_span_name: name,
+            $ai_input_state: args,
+            $ai_output_state: result.error ? { error: result.error } : result.output,
+            $ai_latency: latencyMs / 1000,
           },
         });
-        return error
-          ? { functionResponse: { name: call.name!, response: { error } } }
-          : { functionResponse: { name: call.name!, response: { output } } };
-      }));
-      contents.push({ role: "user", parts });
-
-      response = await genai.models.generateContent({
-        model: geminiModel, contents, config: genaiConfig,
-        posthogDistinctId: distinctId,
-        posthogTraceId: aiTraceId,
-        posthogProperties: aiProperties,
-      });
-    }
-    const reply = response.text ?? "";
+      },
+    });
+    const agentStart = Date.now();
+    const reply = await runChatAgent({
+      apiKey: geminiApiKey,
+      model: geminiModel,
+      systemPrompt: systemContext,
+      history,
+      message,
+      tools,
+      langSmith: process.env.LANGSMITH_API_KEY
+        ? { apiKey: process.env.LANGSMITH_API_KEY, project: process.env.LANGSMITH_PROJECT ?? "ufwt-chat" }
+        : undefined,
+    });
+    posthogAi.capture({
+      distinctId,
+      event: "$ai_generation",
+      properties: {
+        $ai_trace_id: aiTraceId,
+        $ai_session_id: session_id,
+        $ai_model: geminiModel,
+        $ai_latency: (Date.now() - agentStart) / 1000,
+        $ai_output: reply,
+        $ai_org_id: teamId,
+      },
+    });
     await posthogAi.flush();
 
     // Save both turns to chat_logs

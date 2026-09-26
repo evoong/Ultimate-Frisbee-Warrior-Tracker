@@ -1,5 +1,3 @@
-import { GoogleGenAI } from '@posthog/ai/gemini'
-import type { Content } from '@google/genai'
 import { PostHog } from 'posthog-node'
 import * as Sentry from '@sentry/cloudflare'
 import type { GatewayConfig } from './index.js'
@@ -8,16 +6,16 @@ import { cookieNames, parseCookies } from './cookies.js'
 import { verifyAccessToken } from './jwt.js'
 import { getTeamContext as buildTeamContext, type ChatScope } from './agent/context.js'
 export { getTeamContext } from './agent/context.js'
-import { CHAT_FUNCTION_DECLARATIONS, WRITE_FUNCTIONS, callChatFunction, type ActionsConfig } from './gameActions.js'
+import { runChatAgent } from './agent/agent.js'
+import { makeChatTools } from './agent/tools.js'
+import { callChatFunction, type ActionsConfig } from './gameActions.js'
 import { createMembershipLookup, hasAtLeast, type TeamRole } from './membership.js'
 import { isValidSessionId } from './sessionId.js'
 
 // Chat needs privileged (service-role) Supabase access to read all team data
 // regardless of caller identity, plus a Gemini key. Team-context/log queries
-// use raw fetch (portable), but the Gemini call itself uses the official SDK
-// — same as server/index.ts — via its browser/fetch build, so behavior matches
-// Vercel exactly. The SDK itself does not retry transient errors, so this
-// module retries them itself (see isTransientGeminiError).
+// use raw fetch (portable); the model round-trips go through the shared
+// LangGraph agent (agent/agent.ts), which owns retries and tool rounds.
 export interface ChatConfig extends GatewayConfig {
   supabaseSecretKey: string
   // Optional: Supabase Vault (see secrets.ts) is the primary source for
@@ -27,6 +25,10 @@ export interface ChatConfig extends GatewayConfig {
   geminiModel?: string
   posthogProjectToken?: string
   posthogHost?: string
+  // LangSmith tracing: absent/blank key = tracing fully off (Global
+  // Constraint #5).
+  langsmithApiKey?: string
+  langsmithProject?: string
 }
 
 // Switched from gemma-4-31b-it: side-by-side timing showed gemini-flash-lite
@@ -77,7 +79,8 @@ async function requireTeamMember(
   config: ChatConfig,
   request: Request,
   organizationId: number,
-  required: TeamRole = 'member'
+  required: TeamRole = 'member',
+  lookup?: ReturnType<typeof createMembershipLookup>
 ): Promise<ChatCaller> {
   const url = new URL(request.url)
   const token = parseCookies(request)[cookieNames(url).accessToken]
@@ -88,12 +91,12 @@ async function requireTeamMember(
   // A guest holds a real, verified anonymous JWT: authenticated, not permitted.
   if (claims.isAnonymous) return { ok: false, status: 403, error: 'not a member of this team' }
 
-  const lookup = createMembershipLookup({
+  const resolved = lookup ?? createMembershipLookup({
     supabaseUrl: config.supabaseUrl,
     supabaseSecretKey: config.supabaseSecretKey,
     onLookupError: (err) => Sentry.captureException(err),
   })
-  const role = await lookup.roleFor(claims.sub, organizationId)
+  const role = await resolved.roleFor(claims.sub, organizationId)
   if (!hasAtLeast(role, required)) {
     return { ok: false, status: 403, error: 'not a member of this team' }
   }
@@ -101,117 +104,6 @@ async function requireTeamMember(
   return { ok: true, sub: claims.sub, email: claims.email, role: role as TeamRole }
 }
 
-
-function isTransientGeminiError(err: unknown): boolean {
-  const text = err instanceof Error ? err.message : String(err)
-  return text.includes('"code":500') || text.includes('INTERNAL') || text.includes('UNAVAILABLE')
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
-
-async function callGemini(
-  posthog: PostHog, apiKey: string, model: string, systemInstruction: string,
-  history: { role: string; content: string }[], message: string,
-  actionsConfig: ActionsConfig, organizationId: number, callerRole: TeamRole,
-  sessionId: string, distinctId: string
-): Promise<string> {
-  // PostHog's Gemini wrapper only instruments models.generateContent (not
-  // the chats.create()/sendMessage() session helper), so the conversation
-  // history is threaded through generateContent calls by hand below —
-  // mirroring what Chat.sendMessage does internally in @google/genai.
-  const genai = new GoogleGenAI({ apiKey, posthog })
-  const traceId = crypto.randomUUID()
-  const posthogProperties = { $ai_session_id: sessionId }
-  const config = { systemInstruction, tools: [{ functionDeclarations: CHAT_FUNCTION_DECLARATIONS }] }
-
-  const contents: Content[] = history.map(h => ({
-    role: h.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: h.content }],
-  }))
-  contents.push({ role: 'user', parts: [{ text: message }] })
-
-  // Retry transient Gemini errors, but only for this first turn (was tuned
-  // against gemma-4-31b-it, which could fail its transient 500 several
-  // times in a row). Once a function call round below has actually
-  // executed a real DB write, blindly retrying on a later transient error
-  // could log the same event twice, so anything past this point surfaces
-  // the error instead of retrying.
-  const MAX_ATTEMPTS = 5
-  let response
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    try {
-      response = await genai.models.generateContent({
-        model, contents, config,
-        posthogDistinctId: distinctId,
-        posthogTraceId: traceId,
-        posthogProperties,
-      })
-      break
-    } catch (err) {
-      if (attempt === MAX_ATTEMPTS || !isTransientGeminiError(err)) throw err
-      await sleep(600 * attempt)
-    }
-  }
-  if (!response) throw new Error('unreachable')
-
-  // The model confirms with the user in plain text before calling anything
-  // (see the system prompt's "YOU CAN LOG DATA" instructions), so a
-  // function call here means the user just confirmed — execute it for
-  // real and hand the result back so the model can report what happened.
-  const MAX_FUNCTION_ROUNDS = 4
-  for (let round = 0; round < MAX_FUNCTION_ROUNDS; round++) {
-    const calls = response.functionCalls
-    if (!calls || calls.length === 0) break
-
-    const modelContent = response.candidates?.[0]?.content
-    if (modelContent) contents.push(modelContent)
-
-    const parts = await Promise.all(calls.map(async call => {
-      const start = Date.now()
-      let output: unknown
-      let error: string | undefined
-      try {
-        // Writes require member-tier on this team. A guest never reaches
-        // here (requireTeamMember rejects anonymous/non-member callers
-        // before callGemini is even invoked), but a future read-only role
-        // would, and the model must not be the thing that decides.
-        output = WRITE_FUNCTIONS.has(call.name!) && !hasAtLeast(callerRole, 'member')
-          ? { error: "you do not have permission to change this team's data" }
-          : await callChatFunction(actionsConfig, organizationId, call.name!, call.args ?? {})
-      } catch (err) {
-        error = err instanceof Error ? err.message : String(err)
-      }
-      posthog.capture({
-        distinctId,
-        event: '$ai_span',
-        properties: {
-          $ai_trace_id: traceId,
-          $ai_session_id: sessionId,
-          $ai_span_id: crypto.randomUUID(),
-          $ai_span_name: call.name,
-          $ai_input_state: call.args,
-          $ai_output_state: error ? { error } : output,
-          $ai_latency: (Date.now() - start) / 1000,
-        },
-      })
-      return error
-        ? { functionResponse: { name: call.name!, response: { error } } }
-        : { functionResponse: { name: call.name!, response: { output } } }
-    }))
-    contents.push({ role: 'user', parts })
-
-    response = await genai.models.generateContent({
-      model, contents, config,
-      posthogDistinctId: distinctId,
-      posthogTraceId: traceId,
-      posthogProperties,
-    })
-  }
-
-  return response.text ?? ''
-}
 
 export async function handleChatRequest(config: ChatConfig, request: Request): Promise<Response> {
   try {
@@ -223,26 +115,84 @@ export async function handleChatRequest(config: ChatConfig, request: Request): P
     if (!organization_id) return json({ error: 'organization_id required' }, 400)
     if (!isValidSessionId(session_id)) return json({ error: 'session_id must be a UUID' }, 400)
 
-    const user = await requireTeamMember(config, request, Number(organization_id))
+    const lookup = createMembershipLookup({
+      supabaseUrl: config.supabaseUrl,
+      supabaseSecretKey: config.supabaseSecretKey,
+      onLookupError: (err) => Sentry.captureException(err),
+    })
+    const user = await requireTeamMember(config, request, Number(organization_id), 'member', lookup)
     if (!user.ok) return json({ error: user.error }, user.status)
 
-    // From here on, only this value is used. It has been checked against the
-    // caller's membership; the raw body value never reaches a query again, and
-    // nothing the model emits can change it.
     const teamId = Number(organization_id)
 
-    const systemContext = await buildTeamContext(config, teamId)
+    // Player scope (spec: captain/editor = full team; member with an
+    // approved link = their player only; member unlinked = full team).
+    // playerLinkFor throws on outage so a broken lookup can never widen
+    // the context (Task 3).
+    let scope: ChatScope | undefined
+    if (user.role === 'member') {
+      const linkedId = await lookup.playerLinkFor(user.sub, teamId)
+      if (linkedId != null) {
+        const rows = await supabaseServiceFetch(config, `/players?select=display_name&id=eq.${linkedId}`)
+        const name = Array.isArray(rows) && rows[0]?.display_name ? rows[0].display_name : null
+        if (name) scope = { playerId: linkedId, playerName: name }
+      }
+    }
+
+    const systemContext = await buildTeamContext(config, teamId, scope)
+    // (buildTeamContext is the local alias for agent/context.ts's
+    // getTeamContext, imported in Task 6; the re-export stays for
+    // freeTierHistory.test.mjs.)
     const geminiApiKey = await getVaultSecret(config, 'gemini_api_key', config.geminiApiKey)
     const geminiModel = await getVaultSecret(config, 'gemini_model', config.geminiModel) ?? DEFAULT_GEMINI_MODEL
     if (!geminiApiKey) return json({ error: 'Gemini API key not configured' }, 500)
     const actionsConfig: ActionsConfig = { supabaseUrl: config.supabaseUrl, supabaseSecretKey: config.supabaseSecretKey }
 
-    // Per-request client (Workers has no module-scope access to `env`), so
-    // it's shut down (not flushed) once this request's events are queued.
     const posthog = new PostHog(config.posthogProjectToken!, { host: config.posthogHost, flushAt: 1, flushInterval: 0 })
     let reply: string
     try {
-      reply = await callGemini(posthog, geminiApiKey, geminiModel, systemContext, history, message, actionsConfig, teamId, user.role, session_id, user.sub)
+      const traceId = crypto.randomUUID()
+      const tools = makeChatTools({
+        dispatch: (name, args) => callChatFunction(actionsConfig, teamId, name, args, scope),
+        role: user.role,
+        onSpan: (name, args, result, latencyMs) => posthog.capture({
+          distinctId: user.sub,
+          event: '$ai_span',
+          properties: {
+            $ai_trace_id: traceId,
+            $ai_session_id: session_id,
+            $ai_span_id: crypto.randomUUID(),
+            $ai_span_name: name,
+            $ai_input_state: args,
+            $ai_output_state: result.error ? { error: result.error } : result.output,
+            $ai_latency: latencyMs / 1000,
+          },
+        }),
+      })
+      const agentStart = Date.now()
+      reply = await runChatAgent({
+        apiKey: geminiApiKey,
+        model: geminiModel,
+        systemPrompt: systemContext,
+        history,
+        message,
+        tools,
+        langSmith: config.langsmithApiKey ? { apiKey: config.langsmithApiKey, project: config.langsmithProject ?? 'ufwt-chat' } : undefined,
+      })
+      // Replaces the @posthog/ai wrapper's auto $ai_generation: one manual
+      // event per request keeps PostHog's AI observability dashboards alive.
+      posthog.capture({
+        distinctId: user.sub,
+        event: '$ai_generation',
+        properties: {
+          $ai_trace_id: traceId,
+          $ai_session_id: session_id,
+          $ai_model: geminiModel,
+          $ai_latency: (Date.now() - agentStart) / 1000,
+          $ai_output: reply,
+          $ai_org_id: teamId,
+        },
+      })
     } finally {
       await posthog.shutdown()
     }
