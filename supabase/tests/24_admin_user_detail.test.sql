@@ -17,7 +17,7 @@ select is(
 
 -- user detail metrics shape, against the QA seed's known admin user
 select is(
-  (select count(*)::int from public.game_events where created_by = (select id from auth.users where email = 'ericxvoong+admin@gmail.com')),
+  (select count(*)::int from public.game_events where created_by = (select id::text from auth.users where email = 'ericxvoong+admin@gmail.com')),
   (select (public.admin_user_detail((select id from auth.users where email = 'ericxvoong+admin@gmail.com'))::jsonb->'metrics'->>'events_recorded')::int),
   'metrics.events_recorded matches game_events.created_by count');
 
