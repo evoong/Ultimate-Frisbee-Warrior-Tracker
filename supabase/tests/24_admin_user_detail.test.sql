@@ -21,13 +21,11 @@ select is(
   (select (public.admin_user_detail((select id from auth.users where email = 'captain@local.test'))::jsonb->'metrics'->>'events_recorded')::int),
   'metrics.events_recorded matches game_events.created_by count');
 
-select has_key(
-  (select public.admin_user_detail((select id from auth.users where email = 'captain@local.test'))::jsonb->'metrics'),
-  'chat_messages',
+select ok(
+  (select public.admin_user_detail((select id from auth.users where email = 'captain@local.test'))::jsonb->'metrics' ? 'chat_messages'),
   'metrics carries chat_messages');
-select has_key(
-  (select public.admin_user_detail((select id from auth.users where email = 'captain@local.test'))::jsonb->'metrics'),
-  'last_event_at',
+select ok(
+  (select public.admin_user_detail((select id from auth.users where email = 'captain@local.test'))::jsonb->'metrics' ? 'last_event_at'),
   'metrics carries last_event_at');
 
 -- every pre-existing key survived the replace
