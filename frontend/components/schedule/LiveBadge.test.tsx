@@ -21,4 +21,13 @@ describe('LiveBadge', () => {
     expect(screen.getByRole('status')).not.toHaveAttribute('aria-live')
     vi.useRealTimers()
   })
+
+  it('uses the broadcast ping animation with reduced-motion escape during the actual game', () => {
+    render(<LiveBadge />)
+    const dot = screen.getByRole('status').querySelector('span[aria-hidden="true"]')
+    const ping = dot?.querySelector('span')
+    expect(ping?.className).toContain('animate-ping')
+    expect(ping?.className).toContain('motion-reduce:animate-none')
+  })
 })
+
