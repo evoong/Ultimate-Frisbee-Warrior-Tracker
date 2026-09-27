@@ -21,6 +21,13 @@ export function isPastGame(g: GameLike, today: string = todayLocalStr()): boolea
 }
 
 const POLL_WINDOW_AFTER_START_MS = 5 * 60 * 60 * 1000
+const ACTUAL_GAME_PRE_MS = 5 * 60 * 1000
+const ACTUAL_GAME_DURATION_MS = 90 * 60 * 1000
+
+export function isActualGame(g: GameLike, now: number = Date.now()): boolean {
+  const start = gameStartsAt(g).getTime()
+  return now >= start - ACTUAL_GAME_PRE_MS && now <= start + ACTUAL_GAME_DURATION_MS
+}
 
 export function isWithinLivePollWindow(g: GameLike, now: number = Date.now()): boolean {
   return now <= gameStartsAt(g).getTime() + POLL_WINDOW_AFTER_START_MS

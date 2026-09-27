@@ -15,7 +15,7 @@ import { POSITIONS } from '../lib/positions'
 import { isTurnoverEvent } from '../lib/eventUtils'
 import { shouldShowEventsLoading } from '../lib/eventLoading'
 import { useFlags } from '../lib/features'
-import { sortGamesUpcomingFirst, isPastGame, isWithinLivePollWindow } from '../lib/gameOrder'
+import { sortGamesUpcomingFirst, isPastGame, isWithinLivePollWindow, isActualGame } from '../lib/gameOrder'
 import { todayLocalStr } from '../lib/seasonUtils'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
@@ -1409,7 +1409,7 @@ export default function Schedule() {
                     {selectedGame.season_id && getSeasonLabel(selectedGame.season_id) ? ` · ${getSeasonLabel(selectedGame.season_id)}` : ''}
                   </span>
                 </div>
-                <LiveBadge active={isWithinLivePollWindow(selectedGame)} />
+                <LiveBadge active={isActualGame(selectedGame)} />
               </div>
 
             <div className="flex items-center justify-center gap-3 mt-4">

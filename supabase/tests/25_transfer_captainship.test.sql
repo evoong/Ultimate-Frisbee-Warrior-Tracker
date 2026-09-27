@@ -52,9 +52,10 @@ select lives_ok(
 -- Confirm roles after transfer: target is captain, former captain is editor
 select results_eq(
   format(
-    $$ select role from public.team_members where team_id = 1 and user_id in (%L::uuid, %L::uuid) order by user_id $$,
+    $$ select role from public.team_members where team_id = 1 and user_id in (%L::uuid, %L::uuid) order by (user_id = %L::uuid) desc $$,
     (select id from t_uids where email = 'captain@local.test'),
-    (select id from t_uids where email = 'editor@local.test')
+    (select id from t_uids where email = 'editor@local.test'),
+    (select id from t_uids where email = 'captain@local.test')
   ),
   $$ values ('editor'::text), ('captain'::text) $$,
   'target promoted to captain, former captain demoted to editor'

@@ -17,22 +17,20 @@ select is(
 
 -- user detail metrics shape, against the QA seed's known admin user
 select is(
-  (select count(*)::int from public.game_events where created_by = (select id from auth.users where email = 'ericxvoong+admin@gmail.com')),
-  (select (public.admin_user_detail((select id from auth.users where email = 'ericxvoong+admin@gmail.com'))::jsonb->'metrics'->>'events_recorded')::int),
+  (select count(*)::int from public.game_events where created_by = (select id::text from auth.users where email = 'captain@local.test')),
+  (select (public.admin_user_detail((select id from auth.users where email = 'captain@local.test'))::jsonb->'metrics'->>'events_recorded')::int),
   'metrics.events_recorded matches game_events.created_by count');
 
-select has_key(
-  (select public.admin_user_detail((select id from auth.users where email = 'ericxvoong+admin@gmail.com'))::jsonb->'metrics'),
-  'chat_messages',
+select ok(
+  (select public.admin_user_detail((select id from auth.users where email = 'captain@local.test'))::jsonb->'metrics' ? 'chat_messages'),
   'metrics carries chat_messages');
-select has_key(
-  (select public.admin_user_detail((select id from auth.users where email = 'ericxvoong+admin@gmail.com'))::jsonb->'metrics'),
-  'last_event_at',
+select ok(
+  (select public.admin_user_detail((select id from auth.users where email = 'captain@local.test'))::jsonb->'metrics' ? 'last_event_at'),
   'metrics carries last_event_at');
 
 -- every pre-existing key survived the replace
 select is(
-  (select count(*)::int from jsonb_object_keys(public.admin_user_detail((select id from auth.users where email = 'ericxvoong+admin@gmail.com'))::jsonb)
+  (select count(*)::int from jsonb_object_keys(public.admin_user_detail((select id from auth.users where email = 'captain@local.test'))::jsonb)
    where jsonb_object_keys in ('user', 'memberships', 'player_links', 'pending_invites', 'feedback_report_count')),
   5,
   'all pre-existing payload keys survived');
