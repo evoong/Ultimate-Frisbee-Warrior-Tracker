@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 
 export const FLAG_KEYS = ['show_turnovers'] as const
@@ -42,8 +42,7 @@ export function FlagsProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true; controller.abort() }
   }, [key, identity, currentTeamId, fetchFlags])
 
-  const value = useMemo(() => result, [result])
-  return <FlagsContext.Provider value={value}>{children}</FlagsContext.Provider>
+  return <FlagsContext.Provider value={result}>{children}</FlagsContext.Provider>
 }
 
 export function useFlags(): FlagsResult {

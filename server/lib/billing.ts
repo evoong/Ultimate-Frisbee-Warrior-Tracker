@@ -64,10 +64,15 @@ export async function createCheckoutSession(
   // No payment_method_types: dynamic payment methods come from Dashboard
   // settings. trial_period_days makes Checkout collect the card upfront
   // without charging; conversion at trial end is handled by Stripe.
+  // integration_identifier tags sessions for Dashboard flow tracking.
+  // automatic_tax deliberately NOT enabled: account Tax Settings are
+  // 'pending' (no head office, no registrations) — enabling it there would
+  // silently collect zero tax. Re-enable only after a registration exists.
   const session = await getStripe().checkout.sessions.create({
     mode: 'subscription',
     customer: customerId,
     line_items: [{ price: priceId, quantity: 1 }],
+    integration_identifier: `ufwt_checkout_${Math.random().toString(36).slice(2, 10)}`,
     ...(trial ? { subscription_data: { trial_period_days: 30 } } : {}),
     success_url: `${process.env.APP_URL}/settings?billing=success&session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${process.env.APP_URL}/settings?billing=cancelled`,
@@ -110,16 +115,19 @@ function tierForPrice(priceId: string | null): 'plus' | 'premium' | null {
 }
 
 export async function processWebhook(event: Stripe.Event): Promise<'ok' | 'duplicate' | 'unknown_customer'> {
-  if (!['checkout.session.completed', 'customer.subscription.updated', 'customer.subscription.deleted', 'invoice.paid', 'invoice.payment_failed'].includes(event.type)) return 'ok';
+  if (!['checkout.session.completed', 'checkout.session.async_payment_succeeded', 'checkout.session.async_payment_failed', 'customer.subscription.updated', 'customer.subscription.deleted', 'invoice.paid', 'invoice.payment_failed'].includes(event.type)) return 'ok';
 
   const object = event.data.object;
   let subscription: Stripe.Subscription | null = null;
   let subscriptionId: string | null = null;
   let customerId: string | null = null;
 
-  if (event.type === 'checkout.session.completed') {
+  if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded' || event.type === 'checkout.session.async_payment_failed') {
     const session = object as Stripe.Checkout.Session;
     if (session.mode !== 'subscription' || !idOf(session.subscription) || !idOf(session.customer)) throw new Error('Invalid subscription checkout session');
+    // Delayed-notification methods: completed can arrive while still unpaid.
+    // Gate on payment_status and wait for async_payment_succeeded instead.
+    if (event.type === 'checkout.session.completed' && session.payment_status === 'unpaid') return 'ok';
     subscriptionId = idOf(session.subscription);
     customerId = idOf(session.customer);
   } else if (event.type.startsWith('customer.subscription.')) {

@@ -127,6 +127,30 @@ export function useRemoveMember() {
   return useApiCall<boolean, { teamId: number; userId: string }>(fn)
 }
 
+// One transaction on purpose: promote + demote must land together so the
+// last-captain trigger can never see an empty captain set mid-transfer.
+// transfer_captainship.sql documents the promote-before-demote ordering.
+export function useTransferCaptainship() {
+  const fn = useCallback(async (params: { teamId: number; newCaptainUserId: string }) => {
+    const { error } = await supabase.rpc('transfer_captainship', {
+      p_team_id: params.teamId,
+      p_new_captain_id: params.newCaptainUserId,
+    })
+    if (error) throw new Error(error.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { teamId: number; newCaptainUserId: string }>(fn)
+}
+
+export function useDeleteTeam() {
+  const fn = useCallback(async (params: { teamId: number }) => {
+    const { error } = await supabase.from('organizations').delete().eq('id', params.teamId)
+    if (error) throw new Error(error.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { teamId: number }>(fn)
+}
+
 export function useUpdateTeam() {
   const fn = useCallback(
     async (params: { teamId: number; name?: string; isPublic?: boolean; photoUrl?: string }) => {
