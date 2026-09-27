@@ -112,6 +112,18 @@ function pageTabForSlug(slug: string | undefined, tabs: { key: PageTab; slug: st
   return tabs.find(t => t.slug === slug)?.key ?? 'overview'
 }
 
+// js-min-max-loop: single O(n) pass beats sorting to find one maximum.
+function maxBy<T>(arr: T[], value: (x: T) => number): T | null {
+  if (arr.length === 0) return null
+  let best = arr[0]
+  let bestValue = value(best)
+  for (let i = 1; i < arr.length; i++) {
+    const v = value(arr[i]!)
+    if (v > bestValue) { best = arr[i]!; bestValue = v }
+  }
+  return best
+}
+
 export default function Stats() {
   const navigate = useNavigate()
   const { isGuest, currentTeamId, user } = useAuth()
@@ -429,8 +441,8 @@ function PlayerStatsView({
     }))
   }, [statsArr, orgPlayers])
 
-  const topFinisher = [...playerLines].sort((a, b) => b.goals - a.goals)[0] ?? null
-  const topPlaymaker = [...playerLines].sort((a, b) => b.assists - a.assists)[0] ?? null
+  const topFinisher = maxBy(playerLines, p => p.goals)
+  const topPlaymaker = maxBy(playerLines, p => p.assists)
   const teamGoals = playerLines.reduce((sum, p) => sum + p.goals, 0)
   const teamAssists = playerLines.reduce((sum, p) => sum + p.assists, 0)
 

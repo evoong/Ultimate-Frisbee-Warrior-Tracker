@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from 'react'
-import { AlertCircle, Camera, Check, Loader2, Mail, Trash2, UserPlus } from 'lucide-react'
+import { AlertCircle, AlertTriangle, Camera, Check, Crown, Loader2, LogOut, Mail, Trash2, UserPlus } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -26,6 +26,8 @@ import {
   useSetMemberRole,
   useRemoveMember,
   useUpdateTeam,
+  useTransferCaptainship,
+  useDeleteTeam,
 } from '../hooks/backend/teams'
 import { useGetTeamPlayerLinks, useApprovePlayerClaim } from '../hooks/backend/playerLink'
 import { PricingCards } from './PricingCards'
@@ -272,6 +274,8 @@ export default function OrganizationSettingsDialog({ open, onOpenChange, tier, i
   const setRole = useSetMemberRole()
   const removeMember = useRemoveMember()
   const updateTeam = useUpdateTeam()
+  const transferCaptain = useTransferCaptainship()
+  const deleteTeam = useDeleteTeam()
   const playerLinks = useGetTeamPlayerLinks()
   const approveClaim = useApprovePlayerClaim()
 
@@ -283,6 +287,12 @@ export default function OrganizationSettingsDialog({ open, onOpenChange, tier, i
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  const [transferTarget, setTransferTarget] = useState<{ userId: string; email: string } | null>(null)
+  const [transferring, setTransferring] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  const [leaving, setLeaving] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -600,6 +610,23 @@ export default function OrganizationSettingsDialog({ open, onOpenChange, tier, i
                             // line whether or not that row has a remove button.
                             <span className="size-9 shrink-0 sm:size-8" aria-hidden />
                           )}
+                          {/* Captain-only single-step ownership transfer. The role
+                              Select could technically do this in two steps, but
+                              doing it in one click is the point: the RPC promotes
+                              and demotes in one transaction so the last-captain
+                              trigger never fires mid-transfer. */}
+                          {can.manageRoles && m.role !== 'captain' && m.user_id !== user?.id && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-9 shrink-0 px-2 text-xs text-muted-foreground sm:h-8"
+                              onClick={() => setTransferTarget({ userId: m.user_id, email: m.email })}
+                              aria-label={`Make owner ${m.email}`}
+                            >
+                              <Crown className="mr-1.5 size-3.5" />
+                              Make owner
+                            </Button>
+                          )}
                         </div>
                       </li>
                     ))}
@@ -753,6 +780,79 @@ export default function OrganizationSettingsDialog({ open, onOpenChange, tier, i
                   </ul>
                 )}
               </section>
+
+              {/* Danger zone. Leave and delete are the two org-scoped
+                  destructive self-service actions; both were console-only or
+                  impossible before. Leave reuses remove_member on self -- the
+                  RPC allows it and the last-captain trigger blocks a sole
+                  captain leaving, surfacing as removeMember.error below.
+                  Delete goes straight at the organizations row; the "captain
+                  delete" RLS policy is the boundary, so this is the same
+                  DELETE the admin console's delete_org makes, minus the
+                  service role. */}
+              <section>
+                <SectionHeading>Danger zone</SectionHeading>
+                {(removeMember.error || deleteTeam.error || transferCaptain.error) && (
+                  <div className="mb-3">
+                    <ErrorNote>{removeMember.error || deleteTeam.error || transferCaptain.error}</ErrorNote>
+                  </div>
+                )}
+                <div className="divide-y divide-border overflow-hidden rounded-lg border border-border">
+                  <div className="flex flex-col gap-2 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium leading-tight">Leave team</p>
+                      <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                        Removes you from this team. A sole captain must transfer or add another captain first.
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-9 shrink-0 sm:h-8"
+                      disabled={leaving}
+                      onClick={async () => {
+                        if (currentTeamId == null || user == null) return
+                        setLeaving(true)
+                        try {
+                          const ok = await removeMember.trigger({ teamId: currentTeamId, userId: user.id })
+                          if (ok) {
+                            track('team_member_left', { team_id: currentTeamId })
+                            await refreshSession()
+                            onOpenChange(false)
+                          }
+                        } finally {
+                          setLeaving(false)
+                        }
+                      }}
+                    >
+                      {leaving ? <Loader2 className="mr-2 size-4 animate-spin" /> : <LogOut className="mr-2 size-4" />}
+                      Leave team
+                    </Button>
+                  </div>
+                  {can.manageRoles && (
+                    <div className="flex flex-col gap-2 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium leading-tight">Delete team</p>
+                        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                          Permanently deletes this team and all its data. There is no undo.
+                        </p>
+                      </div>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="h-9 shrink-0 sm:h-8"
+                        onClick={() => {
+                          setDeleteConfirmInput('')
+                          setShowDeleteConfirm(true)
+                        }}
+                      >
+                        <Trash2 className="mr-2 size-4" />
+                        Delete team
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </section>
             </div>
           )}
             </>
@@ -773,6 +873,111 @@ export default function OrganizationSettingsDialog({ open, onOpenChange, tier, i
           </div>
         )}
       </DialogContent>
+
+      {/* Transfer captainship confirmation dialog */}
+      {transferTarget && (
+        <Dialog open={Boolean(transferTarget)} onOpenChange={open => !open && setTransferTarget(null)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Transfer team ownership</DialogTitle>
+              <DialogDescription>
+                Make <strong>{transferTarget.email}</strong> the primary captain/owner of this team?
+                You will step down to an editor. You cannot undo this action yourself.
+              </DialogDescription>
+            </DialogHeader>
+            {transferCaptain.error && <ErrorNote>{transferCaptain.error}</ErrorNote>}
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" onClick={() => setTransferTarget(null)} disabled={transferring}>
+                Cancel
+              </Button>
+              <Button
+                disabled={transferring}
+                onClick={async () => {
+                  if (currentTeamId == null) return
+                  setTransferring(true)
+                  try {
+                    const ok = await transferCaptain.trigger({
+                      teamId: currentTeamId,
+                      newCaptainUserId: transferTarget.userId,
+                    })
+                    if (ok) {
+                      track('team_captainship_transferred', { team_id: currentTeamId, to_user: transferTarget.userId })
+                      await refreshSession()
+                      await members.trigger({ teamId: currentTeamId })
+                      setTransferTarget(null)
+                    }
+                  } finally {
+                    setTransferring(false)
+                  }
+                }}
+              >
+                {transferring && <Loader2 className="mr-2 size-4 animate-spin" />}
+                Confirm transfer
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Delete team confirmation dialog with typed name */}
+      {showDeleteConfirm && (
+        <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-destructive">
+                <AlertTriangle className="size-5" />
+                Delete team permanently
+              </DialogTitle>
+              <DialogDescription className="space-y-2 pt-2">
+                <span className="block">
+                  This action <strong>cannot be undone</strong>. This will permanently delete the
+                  team <strong>{current?.name}</strong> and all associated games, players, stats,
+                  lineups, and strategies.
+                </span>
+                <span className="block text-xs">
+                  Please type <strong>{current?.name}</strong> to confirm.
+                </span>
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 pt-2">
+              <Input
+                placeholder={current?.name}
+                value={deleteConfirmInput}
+                onChange={e => setDeleteConfirmInput(e.target.value)}
+                className="text-base sm:text-sm"
+              />
+              {deleteTeam.error && <ErrorNote>{deleteTeam.error}</ErrorNote>}
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" onClick={() => setShowDeleteConfirm(false)} disabled={deleting}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  disabled={deleteConfirmInput !== current?.name || deleting}
+                  onClick={async () => {
+                    if (currentTeamId == null) return
+                    setDeleting(true)
+                    try {
+                      const ok = await deleteTeam.trigger({ teamId: currentTeamId })
+                      if (ok) {
+                        track('team_deleted', { team_id: currentTeamId })
+                        setShowDeleteConfirm(false)
+                        onOpenChange(false)
+                        await refreshSession()
+                      }
+                    } finally {
+                      setDeleting(false)
+                    }
+                  }}
+                >
+                  {deleting && <Loader2 className="mr-2 size-4 animate-spin" />}
+                  Permanently delete team
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </Dialog>
   )
 }
