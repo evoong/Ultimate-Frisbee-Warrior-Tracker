@@ -11,7 +11,8 @@
 // how chat.ts's getTeamContext already inlines its own turnover-type check
 // rather than pulling frontend code into the gateway bundle.
 
-import { type ActionsConfig, sbGet, sbWrite, sbUpsertIgnore } from './supabaseRest.js'
+import { type ActionsConfig, sbGet, sbWrite, sbUpsertIgnore, getOrgEffectiveTier, gameDateWithinFreeWindow } from './supabaseRest.js'
+import type { ChatScope } from './agent/context.js'
 
 export type { ActionsConfig }
 
@@ -109,8 +110,10 @@ export async function resolveSeason(config: ActionsConfig, orgId: number, nameQu
   return matches[0]!
 }
 
-export async function currentScore(config: ActionsConfig, gameId: number): Promise<{ our_score: number; their_score: number }> {
-  const events: { event_type: string }[] = await sbGet(config, `/game_events?game_id=eq.${gameId}&select=event_type`)
+export async function currentScore(config: ActionsConfig, orgId: number, game: { id: number; game_date: string }): Promise<{ our_score: number; their_score: number }> {
+  const free = await getOrgEffectiveTier(config, orgId) === 'free'
+  if (free && !gameDateWithinFreeWindow(game.game_date)) return { our_score: 0, their_score: 0 }
+  const events: { event_type: string }[] = await sbGet(config, `/game_events?game_id=eq.${game.id}&select=event_type`)
   return {
     our_score: events.filter(e => e.event_type === 'Goal').length,
     their_score: events.filter(e => e.event_type === 'Opponent Goal').length,
@@ -218,7 +221,7 @@ export async function createGameEvent(
     event_timestamp: new Date().toISOString(),
     notes: params.notes ?? null,
   })
-  const score = await currentScore(config, game.id)
+  const score = await currentScore(config, orgId, game)
   return { game: { date: game.game_date, opponent: game.opponent }, player: player?.display_name ?? null, assister: assister?.display_name ?? null, ...score }
 }
 
@@ -227,7 +230,7 @@ export async function undoLastEvent(config: ActionsConfig, orgId: number, params
   const events = await sbGet(config, `/game_events?game_id=eq.${game.id}&select=id,event_type,player_id,related_player_id&order=event_timestamp.desc&limit=1`)
   if (events.length === 0) throw new Error(`No events logged yet for the game vs ${game.opponent} on ${game.game_date}.`)
   const deleted = await sbWrite(config, 'DELETE', `/game_events?id=eq.${events[0].id}`)
-  const score = await currentScore(config, game.id)
+  const score = await currentScore(config, orgId, game)
   return { game: { date: game.game_date, opponent: game.opponent }, undone: deleted[0], ...score }
 }
 
@@ -279,7 +282,8 @@ export async function createLineupGroup(config: ActionsConfig, orgId: number, pa
 // hand-counting (and self-contradicting) despite the earlier all-time fix.
 export async function queryStatBreakdown(
   config: ActionsConfig, orgId: number,
-  params: { metric: StatMetric; seasonName?: string; gameDate?: string; opponent?: string; byAssistPairing?: boolean }
+  params: { metric: StatMetric; seasonName?: string; gameDate?: string; opponent?: string; byAssistPairing?: boolean },
+  scope?: ChatScope
 ): Promise<unknown> {
   // A silently-mistyped metric (e.g. "assist" instead of "assists") would
   // otherwise match no branch below and produce an empty tally that's
@@ -290,30 +294,66 @@ export async function queryStatBreakdown(
   }
 
   let gameIds: number[] | null = null
-  let scope = 'all-time'
+  let scopeLabel = 'all-time'
+  let archived = false
+
+  const free = await getOrgEffectiveTier(config, orgId) === 'free'
 
   if (params.gameDate || params.opponent) {
     const game = await resolveGame(config, orgId, params)
     gameIds = [game.id]
-    scope = `${game.game_date} vs ${game.opponent}`
+    scopeLabel = `${game.game_date} vs ${game.opponent}`
+    // Free-tier read gate: an old game's breakdown is archived, same as the
+    // frontend box score.
+    archived = free && !gameDateWithinFreeWindow(game.game_date)
   } else if (params.seasonName) {
     const season = await resolveSeason(config, orgId, params.seasonName)
-    const games: { id: number }[] = await sbGet(config, `/games?organization_id=eq.${orgId}&season_id=eq.${season.id}&select=id`)
-    gameIds = games.map(g => g.id)
-    scope = season.label
+    const games: { id: number; game_date: string }[] = await sbGet(config, `/games?organization_id=eq.${orgId}&season_id=eq.${season.id}&select=id,game_date`)
+    // Free-tier read gate: only games inside the 30-day window contribute.
+    gameIds = free
+      ? games.filter(g => gameDateWithinFreeWindow(g.game_date)).map(g => g.id)
+      : games.map(g => g.id)
+    scopeLabel = season.label
+  } else if (free) {
+    // "All-time" on Free means "within the 30-day window".
+    const games: { id: number; game_date: string }[] = await sbGet(config, `/games?organization_id=eq.${orgId}&select=id,game_date`)
+    gameIds = games.filter(g => gameDateWithinFreeWindow(g.game_date)).map(g => g.id)
   }
 
   const eventsPath = gameIds
     ? `/game_events?organization_id=eq.${orgId}&game_id=in.(${gameIds.join(',') || '0'})&select=event_type,player_id,related_player_id`
     : `/game_events?organization_id=eq.${orgId}&select=event_type,player_id,related_player_id`
-  const events: { event_type: string; player_id: number | null; related_player_id: number | null }[] = await sbGet(config, eventsPath)
+  const events: { event_type: string; player_id: number | null; related_player_id: number | null }[] = archived
+    ? []
+    : await sbGet(config, eventsPath)
+  // Player-scope gate (spec: a linked member's tool results are filtered to
+  // their own player, exactly like the prompt context). Applied after fetch
+  // so it composes with the free-tier game_id filter instead of fighting it.
+  // Assists split by direction: a by-player assist total counts only goals
+  // the linked player set up (related_player_id), while assist PAIRINGS keep
+  // events where either endpoint is the linked player — "who assisted my
+  // goals" is data about the linked player too (spec ruling), and the
+  // pairing branch's in-loop guard re-checks exactly that either-endpoint
+  // rule as a live safety, not dead code.
+  const scopedEvents = scope
+    ? params.metric === 'assists'
+      ? params.byAssistPairing
+        ? events.filter(e => e.player_id === scope.playerId || e.related_player_id === scope.playerId)
+        : events.filter(e => e.related_player_id === scope.playerId)
+      : events.filter(e => e.player_id === scope.playerId)
+    : events
   const players: PlayerRow[] = await sbGet(config, `/players?organization_id=eq.${orgId}&select=id,display_name`)
   const nameOf = (id: number | null) => players.find(p => p.id === id)?.display_name ?? 'Unknown'
 
+  // When the scope is outside the Free window, say so plainly instead of
+  // reporting a misleading "nothing recorded".
+  const emptyNote = archived ? `Stats for ${scopeLabel} are outside the Free plan's 30-day window.` : undefined
+
   if (params.metric === 'assists' && params.byAssistPairing) {
     const tally = new Map<string, { scorer: number; assister: number; count: number }>()
-    for (const e of events) {
+    for (const e of scopedEvents) {
       if (e.event_type !== 'Goal' || !e.player_id || !e.related_player_id) continue
+      if (scope && e.player_id !== scope.playerId && e.related_player_id !== scope.playerId) continue
       const key = `${e.player_id}:${e.related_player_id}`
       const row = tally.get(key) ?? { scorer: e.player_id, assister: e.related_player_id, count: 0 }
       row.count++
@@ -322,11 +362,14 @@ export async function queryStatBreakdown(
     const rows = [...tally.values()]
       .sort((a, b) => b.count - a.count)
       .map(r => ({ scorer: nameOf(r.scorer), assister: nameOf(r.assister), count: r.count }))
-    return { scope, breakdown: 'assist_pairings', rows, note: rows.length === 0 ? `No assisted goals recorded for ${scope}.` : undefined }
+    return { scope: scopeLabel, breakdown: 'assist_pairings', rows, note: rows.length === 0 ? (emptyNote ?? `No assisted goals recorded for ${scopeLabel}.`) : undefined }
   }
 
   const tally = new Map<number, number>()
-  for (const e of events) {
+  for (const e of scopedEvents) {
+    // (the id keys are player ids; for a scoped member every surviving event
+    // already IS the linked player under the metric's own semantics, so no
+    // extra filter is needed here)
     if (params.metric === 'goals' && e.event_type === 'Goal' && e.player_id) {
       tally.set(e.player_id, (tally.get(e.player_id) ?? 0) + 1)
     } else if (params.metric === 'assists' && e.event_type === 'Goal' && e.related_player_id) {
@@ -339,8 +382,8 @@ export async function queryStatBreakdown(
     .sort((a, b) => b[1] - a[1])
     .map(([id, count]) => ({ player: nameOf(id), count }))
   return {
-    scope, breakdown: 'by_player', metric: params.metric, rows,
-    note: rows.length === 0 ? `No ${params.metric} recorded for ${scope}.` : undefined,
+    scope: scopeLabel, breakdown: 'by_player', metric: params.metric, rows,
+    note: rows.length === 0 ? (emptyNote ?? `No ${params.metric} recorded for ${scopeLabel}.`) : undefined,
   }
 }
 
@@ -357,14 +400,14 @@ export const WRITE_FUNCTIONS: ReadonlySet<string> = new Set([
   'create_lineup_group',
 ])
 
-export async function callChatFunction(config: ActionsConfig, orgId: number, name: string, args: Record<string, unknown>): Promise<unknown> {
+export async function callChatFunction(config: ActionsConfig, orgId: number, name: string, args: Record<string, unknown>, scope?: ChatScope): Promise<unknown> {
   switch (name) {
     case 'create_game_event': return createGameEvent(config, orgId, args as any)
     case 'undo_last_event': return undoLastEvent(config, orgId, args as any)
     case 'add_to_lineup': return addToLineup(config, orgId, args as any)
     case 'remove_from_lineup': return removeFromLineup(config, orgId, args as any)
     case 'create_lineup_group': return createLineupGroup(config, orgId, args as any)
-    case 'query_stat_breakdown': return queryStatBreakdown(config, orgId, args as any)
+    case 'query_stat_breakdown': return queryStatBreakdown(config, orgId, args as any, scope)
     default: throw new Error(`Unknown function: ${name}`)
   }
 }

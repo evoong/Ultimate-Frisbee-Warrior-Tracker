@@ -143,7 +143,7 @@ export function KpiRowSkeleton() {
  * Reusing `KpiRowSkeleton` here would stand far taller than the row it
  * stands in for and reintroduce the same jolt this exists to remove.
  *
- * `count` tracks `SHOW_TURNOVERS` at the call site: the Me tab is three
+ * `count` tracks the turnovers flag at the call site: the Me tab is three
  * cards with turnovers gated off and four with it on, and a skeleton pinned
  * at four would reserve a slot that never arrives and then collapse.
  */

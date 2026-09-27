@@ -14,7 +14,7 @@ import { track } from '../lib/analytics'
 import { POSITIONS } from '../lib/positions'
 import { isTurnoverEvent } from '../lib/eventUtils'
 import { shouldShowEventsLoading } from '../lib/eventLoading'
-import { SHOW_TURNOVERS } from '../lib/features'
+import { useFlags } from '../lib/features'
 import { sortGamesUpcomingFirst, isPastGame, isWithinLivePollWindow, isActualGame } from '../lib/gameOrder'
 import { todayLocalStr } from '../lib/seasonUtils'
 import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
@@ -38,6 +38,8 @@ import IconButton, { SCHEDULE_ICON_PROPS } from '../components/schedule/IconButt
 import LiveBadge from '../components/schedule/LiveBadge'
 import type { MatchData, MatchDetail, MatchOutcome } from '../components/schedule/types'
 import { useAuth } from '../contexts/AuthContext'
+import { useEffectiveTier } from '../hooks/useEffectiveTier'
+import { ArchivedBoxScoreNotice, isArchivedGameDate } from '../components/TierNotices'
 import { ArrowClockwise, ArrowCounterClockwise, ArrowsLeftRight, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, CaretUp, CaretUpDown, Check, DotsSixVertical, FloppyDisk, ListBullets, Minus, NoteBlank, PencilSimple, Plus, PlusCircle, Table, Target, Trash, TrendUp, Trophy, Users, Warning, X } from '@phosphor-icons/react'
 
 // A game counts as "imminent" from 30 minutes before its start time to 30
@@ -96,6 +98,9 @@ const OUTCOME_OPTIONS = ['Win', 'Loss', 'Tie', 'Default Win', 'Default Loss', 'F
 
 export default function Schedule() {
   const { can, currentTeamId, isGuest, user } = useAuth()
+  const { flags } = useFlags()
+  const showTurnovers = flags?.show_turnovers ?? false
+  const entitlement = useEffectiveTier(currentTeamId)
   const navigate = useNavigate()
   // The selected game mirrors this URL segment (see the effect near
   // handleSelectGame below), so a reload, browser back/forward, or a
@@ -562,12 +567,12 @@ export default function Schedule() {
 
   const handleSelectGame = async (game: Game) => {
     setSelectedGame(game)
-    fetchEvents({ gameId: game.id })
+    fetchEvents({ gameId: game.id, tier: entitlement.tier })
     fetchAttendance({ gameId: game.id })
     if (game.season_id) {
       fetchPlayers({ seasonId: game.season_id })
       fetchOtherPlayers({ seasonId: game.season_id, organizationId: currentTeamId })
-      fetchLineupSeasonStats({ seasonIds: [game.season_id], organizationId: currentTeamId })
+      fetchLineupSeasonStats({ seasonIds: [game.season_id], organizationId: currentTeamId, tier: entitlement.tier })
       fetchLineupTemplates({ organizationId: currentTeamId, seasonId: game.season_id })
     } else {
       fetchOtherPlayers({ organizationId: currentTeamId })
@@ -796,7 +801,7 @@ export default function Schedule() {
     if (!selectedGame) return
     await deleteEvent({ eventId })
     track('game_event_deleted', { game_id: selectedGame.id, event_id: eventId })
-    fetchEvents({ gameId: selectedGame.id })
+    fetchEvents({ gameId: selectedGame.id, tier: entitlement.tier })
   }
 
   // Drag a Recent Activity row to reorder it. There's no ordinal column on
@@ -847,7 +852,7 @@ export default function Schedule() {
       if (changes.length > 0 && selectedGame) {
         await Promise.all(changes.map(c => updateEventTimestamp({ eventId: c.id, timestamp: c.timestamp })))
         track('game_event_reordered', { game_id: selectedGame.id })
-        fetchEvents({ gameId: selectedGame.id })
+        fetchEvents({ gameId: selectedGame.id, tier: entitlement.tier })
       }
     }
     const onCancel = (ev: PointerEvent) => {
@@ -883,7 +888,7 @@ export default function Schedule() {
     })
     track('game_event_updated', { game_id: selectedGame.id, event_id: editingEventId })
     setEditingEventId(null)
-    fetchEvents({ gameId: selectedGame.id })
+    fetchEvents({ gameId: selectedGame.id, tier: entitlement.tier })
   }
 
   const resolveNewPlayerId = (id: string) => (id && id !== '__none__' && id !== '__opponent__') ? parseInt(id) : null
@@ -904,14 +909,14 @@ export default function Schedule() {
       })
     }
     track('game_event_added', { game_id: selectedGame.id, event_type: isOpponentGoal ? 'opponent_goal' : newEventType, is_opponent: isOpponentGoal })
-    fetchEvents({ gameId: selectedGame.id })
+    fetchEvents({ gameId: selectedGame.id, tier: entitlement.tier })
   }
 
   const handleAddOpponentGoal = async () => {
     if (!selectedGame) return
     await createOpponentGoal({ gameId: selectedGame.id, organizationId: currentTeamId })
     track('game_event_added', { game_id: selectedGame.id, event_type: 'opponent_goal', is_opponent: true })
-    fetchEvents({ gameId: selectedGame.id })
+    fetchEvents({ gameId: selectedGame.id, tier: entitlement.tier })
   }
 
   const handleUndo = async () => {
@@ -919,7 +924,7 @@ export default function Schedule() {
     if (!selectedGame || !gameEvents || gameEvents.length === 0) return
     await deleteEvent({ eventId: gameEvents[0]!.id })
     track('game_event_deleted', { game_id: selectedGame.id, event_id: gameEvents[0]!.id, via: 'undo' })
-    fetchEvents({ gameId: selectedGame.id })
+    fetchEvents({ gameId: selectedGame.id, tier: entitlement.tier })
   }
 
   // A player added mid-game from the Scorer/Assister quick-pick has no
@@ -2162,7 +2167,9 @@ export default function Schedule() {
           <Card className="bg-card text-card-foreground border-border">
             <CardHeader><CardTitle className="text-base">Box Score</CardTitle></CardHeader>
             <CardContent>
-              {playerStats.length === 0 ? (
+              {entitlement.tier === 'free' && isArchivedGameDate(selectedGame.game_date) ? (
+                <ArchivedBoxScoreNotice tier={entitlement.tier} gameDate={selectedGame.game_date} />
+              ) : playerStats.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-4">No events recorded for this game.</p>
               ) : (
                 <table className="w-full text-sm">
@@ -2172,7 +2179,7 @@ export default function Schedule() {
                       <th className="text-left font-medium px-3 pb-2">Player</th>
                       <th className="w-10 text-center font-medium text-green-600 dark:text-green-400 pb-2">G</th>
                       <th className="w-10 text-center font-medium text-blue-600 dark:text-blue-400 pb-2">A</th>
-                      {SHOW_TURNOVERS && <th className="w-10 text-center font-medium text-orange-600 dark:text-orange-400 pb-2">TO</th>}
+                      {showTurnovers && <th className="w-10 text-center font-medium text-orange-600 dark:text-orange-400 pb-2">TO</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -2182,7 +2189,7 @@ export default function Schedule() {
                         <td className="px-3 py-2 font-medium text-foreground">{p.name}</td>
                         <td className="w-10 text-center font-bold text-green-600 dark:text-green-400">{p.goals}</td>
                         <td className="w-10 text-center font-bold text-blue-600 dark:text-blue-400">{p.assists}</td>
-                        {SHOW_TURNOVERS && <td className="w-10 text-center font-bold text-orange-600 dark:text-orange-400">{p.turnovers}</td>}
+                        {showTurnovers && <td className="w-10 text-center font-bold text-orange-600 dark:text-orange-400">{p.turnovers}</td>}
                       </tr>
                     ))}
                   </tbody>

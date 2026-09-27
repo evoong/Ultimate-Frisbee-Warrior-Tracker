@@ -5,6 +5,7 @@ import { createMembershipLookup } from './gateway/membership.js'
 import { createAdminLookup } from './gateway/admin/adminAuth.js'
 import { handleAdminRequest } from './gateway/admin/index.js'
 import { handleChatRequest, handleChatHistoryRequest, handleChatHistoryDeleteRequest, type ChatConfig } from './gateway/chat.js'
+import { handleFlagsRequest, type FlagsConfig } from './gateway/flags.js'
 import { runJamSync, JAM_SYNC_MONITOR_SLUG, JAM_SYNC_MONITOR_CONFIG } from './gateway/jamSync.js'
 import { UfwtMcp } from './gateway/mcpAgent.js'
 import { createUfwtOAuthProvider } from './gateway/mcpOAuth.js'
@@ -38,6 +39,10 @@ interface Env {
   // exact token in the browser bundle as VITE_PUBLIC_POSTHOG_KEY.
   POSTHOG_PROJECT_TOKEN?: string;
   POSTHOG_HOST?: string;
+  // LangSmith tracing: the API key is a wrangler secret (never a var);
+  // absent = tracing off. The project name is public config.
+  LANGSMITH_API_KEY?: string;
+  LANGSMITH_PROJECT?: string;
 }
 
 // Minimal local alias so this file doesn't need @cloudflare/workers-types.
@@ -86,6 +91,16 @@ async function handleAppRequest(request: Request, env: Env, ctx: ExecutionContex
       );
       if (adminResponse) return adminResponse;
 
+      const flagsResponse = await handleFlagsRequest(
+        {
+          supabaseUrl: env.SUPABASE_URL,
+          supabaseSecretKey: env.SUPABASE_SECRET_KEY,
+          jwksUrl: env.SUPABASE_JWKS_URL,
+        },
+        request
+      );
+      if (flagsResponse) return flagsResponse;
+
       // AI chat: needs the service-role key and Gemini, so it lives outside
       // the gateway (which only ever proxies as the caller's own token).
       if (url.pathname === "/api/chat" || url.pathname === "/api/chat/history") {
@@ -98,6 +113,8 @@ async function handleAppRequest(request: Request, env: Env, ctx: ExecutionContex
           geminiModel: env.GEMINI_MODEL,
           posthogProjectToken: env.POSTHOG_PROJECT_TOKEN,
           posthogHost: env.POSTHOG_HOST,
+          langsmithApiKey: env.LANGSMITH_API_KEY,
+          langsmithProject: env.LANGSMITH_PROJECT,
         };
         if (url.pathname === "/api/chat" && request.method === "POST") {
           return handleChatRequest(chatConfig, request);

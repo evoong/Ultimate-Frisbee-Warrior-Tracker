@@ -4,11 +4,13 @@
 1. `npm install` — root deps (Express server, gateway).
 2. `cd frontend && npm install` — frontend has its **own** package.json/node_modules, separate from root. Both are required; root install alone leaves Vite unable to start.
 3. Create `.env` in repo root (gitignored, not checked in) with:
-   `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `SUPABASE_JWKS_URL`, `GEMINI_API_KEY`, `SENTRY_DSN`.
-   No `.env.example` exists — get real Supabase values from the Supabase dashboard (project `ultimate-frisbee-warrior-tracker`, ref `pyqngqyqwevfpaxcmfnd`, org `caypalgdyzpvqqecqhfd`, region `ca-central-1`) → Project Settings → API for the URL/keys, → Database for `DATABASE_URL`. `server/index.ts` throws at import time (crashes the whole process) if `SUPABASE_URL`/`SUPABASE_SECRET_KEY` are blank — there's no graceful fallback. `SENTRY_DSN` is different: it's optional and safe to leave blank (`server/instrument.ts` only calls `Sentry.init` when it's set) — get the real value from the Sentry org `eric-4a`'s `ufwt-backend` project (Settings → Client Keys (DSN)) if you want backend error reporting locally.
+   `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `SUPABASE_JWKS_URL`, `GEMINI_API_KEY`, `SENTRY_DSN`, `LANGSMITH_API_KEY`.
+   No `.env.example` exists — get real Supabase values from the Supabase dashboard (project `ultimate-frisbee-warrior-tracker`, ref `pyqngqyqwevfpaxcmfnd`, org `caypalgdyzpvqqecqhfd`, region `ca-central-1`) → Project Settings → API for the URL/keys, → Database for `DATABASE_URL`. `server/index.ts` throws at import time (crashes the whole process) if `SUPABASE_URL`/`SUPABASE_SECRET_KEY` are blank — there's no graceful fallback. `SENTRY_DSN` is different: it's optional and safe to leave blank (`server/instrument.ts` only calls `Sentry.init` when it's set) — get the real value from the Sentry org `eric-4a`'s `ufwt-backend` project (Settings → Client Keys (DSN)) if you want backend error reporting locally. `LANGSMITH_API_KEY` follows the same optional/blank-is-fine rule (blank = LangSmith tracing off, for the chat agent's `runChatAgent`); on the Worker the key is a wrangler secret (`npx wrangler secret put LANGSMITH_API_KEY`) and `LANGSMITH_PROJECT` is a committed var in `wrangler.jsonc`.
    Also create `frontend/.env` (separate file, same gitignore treatment) with `VITE_SENTRY_DSN` — same optional/blank-is-fine rule, value comes from the `ufwt-frontend` Sentry project instead. The Cloudflare Worker's DSN (`SENTRY_DSN_WORKER`) needs no local setup — it's already committed as a plain `vars` entry in `wrangler.jsonc` since Sentry DSNs are public client keys, not secrets.
 4. Start both dev servers from `.claude/launch.json`: "Express API Server" (port 3001) and "Vite Frontend" (port 5199, cwd `frontend`). The frontend alone will run but backend-dependent features (chat, uploads) need the Express server too.
-5. Direct Supabase connection: Do NOT start local Supabase Docker containers (`npm run db:start` is obsolete). Connect directly to Supabase using the credentials in the root `.env` file (`SUPABASE_URL`, `DATABASE_URL`, `SUPABASE_SECRET_KEY`, etc.). Both the Express server and frontend connect to the cloud Supabase project directly.
+5. Production development: connect directly to cloud Supabase using root `.env`. `npm run server` and `npm run dev` must not start or alter local Supabase.
+6. Local QA: run `npm run qa:reset` to rebuild an isolated Docker Supabase stack on `127.0.0.1`. QA commands source `.env.local`, reject non-local URLs, and never use root `.env` credentials. Use local QA for migrations, RLS tests, gateway integration tests, and destructive test cases.
+7. **QA environment is disabled on this device** (the Ubuntu dev box) because the Docker stack takes ~1GB RAM across 10 containers. It is kept **stopped by default** — do not run `npx supabase start` unless the human explicitly asks for local QA. `npx supabase stop` frees the resources (keeps the DB volume); `npx supabase stop --no-backup` also wipes it. Feature work against cloud Supabase (mode 5) needs no local stack.
 
 ## MCP server (AI tool access)
 - `MCP_ORGANIZATION_ID` is required for the local stdio server
@@ -845,6 +847,57 @@ screenshot it in both themes, then delete the harness and revert the temporary
   positive control before trusting any CLS number out of headless Chrome, in
   CI or locally.
 
+## Admin console
+
+- The console lives at `/admin` (SPA route); its API is `/api/admin/*`. These
+  prefixes must stay different: `worker.ts` serves the SPA fallback only for
+  paths failing its `isGatewayPath` check, so an `/admin` API prefix makes a
+  browser navigation to `/admin/users` return 404.
+- Handlers are in `gateway/admin/` and live **outside** `createGateway`,
+  because they hold the service-role key and the gateway never does. They are
+  mounted twice: in `worker.ts` right after the gateway call, and in
+  `server/index.ts` via `createNodeAdapter` before `express.json()`.
+- **Granting admin is a manual step, on purpose.** Run
+  `node --env-file=.env.local scripts/grant-platform-admin.mjs <email> <role>`
+  (roles: `superadmin`, `support`, `readonly`). The console deliberately has no
+  operation for this, so a compromised admin session cannot mint more admins.
+  Without a `platform_admins` row you get a 403 from every `/api/admin/*`
+  route and no Admin link in the sidebar — that is correct behaviour, not a bug.
+- `platform_admins` and `admin_audit_log` are RLS-enabled with **zero
+  policies** and no grants to `anon`/`authenticated`. If you add a table like
+  this, also add it to the allowlist in `supabase/tests/00_meta.test.sql`,
+  which otherwise fails with "every table in public has at least one policy".
+- `admin_audit_log` is append-only via the `admin_audit_log_no_mutate` trigger.
+  `UPDATE` and `DELETE` raise even for the service role. Deleting a former
+  admin's `auth.users` row is blocked by `admin_id`'s `ON DELETE RESTRICT` —
+  that is deliberate, and it means a GDPR deletion for an ex-admin needs an
+  explicit decision about their audit history.
+- **Admin operations write tables directly with the service role; they do not
+  call the membership RPCs.** `set_member_role` and friends gate on
+  `auth.uid()` via `my_captain_team_ids()`, which is empty under the service
+  role, so they raise `only a captain can change roles`. This is safe because
+  `enforce_last_captain()` is a *trigger* (`team_members_require_captain`) and
+  fires on direct writes too. Each operation re-implements the RPC's input
+  validation; see `gateway/admin/ops.ts`.
+- Adding an operation means adding one entry to `ADMIN_OPERATIONS` in
+  `gateway/admin/ops.ts`. Do **not** write an audit row from inside an
+  operation — `dispatchOperation` does it, which is what guarantees no
+  operation can forget. `preview` must never write.
+- **Every admin mutation in the UI goes through `OperationDialog`**
+  (`frontend/pages/admin/OperationDialog.tsx`): preview first, then Apply.
+  Do not call `adminOp(..., 'apply')` directly from a page — the preview step
+  is what shows the operator what will change before anything is written.
+- Team member roles are `captain` / `editor` / `member` — there is no `viewer`
+  role. Invite roles are only `editor` / `member` (an invite can never grant
+  captain; use `transfer_captainship` for that).
+- There is **no team-transfer operation** and cannot be one without a schema
+  change: `players`, `game_events`, `strategy_*`, and `lineup_templates` are
+  scoped only by `organization_id`, so there is no way to tell which of them
+  belong to a moved team. See the spec for the full reasoning.
+- Tests: `npm run db:test` (pgTAP suites 18-20) and
+  `npm run test:gateway:offline` (`adminAuth`, `adminOps`). As everywhere else
+  in this repo, do not run `npm test` — it reads production.
+
 ## References
 - Bugs and feature requests are tracked as GitHub issues in this repo (`gh issue list`), not in a separate tracker.
 - Project notes/planning doc in Notion: https://app.notion.com/p/e2e903a5dd4347c7be8fe9a0ab39b4f1?v=3d08e4449db2814b9332000c33d32b8b
@@ -855,3 +908,5 @@ screenshot it in both themes, then delete the harness and revert the temporary
 - `npm test` runs `node server.test.mjs`, which does `import "dotenv/config"` and builds its Supabase client from the root `.env` file. The root `.env` points at the live Supabase project. Running `npm test` therefore reads and asserts against production data. Never run it casually, and never run it while testing migrations.
 - `server.test.mjs` asserts that `players` still has `phone`, `first_name_edit`, and `last_name_edit` columns. The team-permissions migrations move those columns to `player_private`. The assertion passes today only because `npm test` reads production, which these migrations have not been applied to yet. Once production is cut over, that assertion will fail. Whoever runs the production cutover must update `server.test.mjs` to match the new `players`/`player_private` split in the same change.
 - Deleting a sole captain's `auth.users` row (Supabase dashboard "delete user", the admin API, or any GDPR deletion path) fails with a bare `team % must have at least one captain` error. This is `enforce_last_captain()` on `team_members` doing its job — the same trigger that blocks demoting or removing a team's last captain also fires when that captain's account is deleted, since `team_members.user_id` cascades from `auth.users`. Before deleting a sole captain's account, promote another member to captain (`set_member_role`) and, if appropriate, `remove_member` the original captain first.
+- **Production migration history has diverged from the repo — never run a blind `supabase db push` against prod.** Prod's `supabase_migrations.schema_migrations` records the billing/stripe/downgrade migrations under reshuffled timestamps (e.g. `20260924150000_downgrade_history_limits` applied as version `20260925140312`), carries a repo-absent `20260926000000_admin_dashboard`, and does NOT record `20260925000000_chat_logs_owner_rls.sql`, whose SQL was applied surgically via psql on 2026-09-26 (chat_logs owner-scoped RLS is live). A `db push` would see most repo migrations as unapplied and replay them. Apply pending migrations' SQL directly (single transaction, verify policies after), or realign the history deliberately first. Read-only check: psql via `aws-1-ca-central-1.pooler.supabase.com:6543` with `DATABASE_URL`'s user/password (the `aws-0` host in `.env` does not resolve).
+- Workers Builds and Vercel both **auto-deploy `main` to production on merge** — there is no deploy gate between a merged PR and prod. Anything that must land in the DB before the code that depends on it (RLS tightening, new tables) has to be applied to prod **before the merge**, or the window where new code runs against old schema is live traffic.

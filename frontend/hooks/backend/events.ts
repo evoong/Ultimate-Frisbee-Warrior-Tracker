@@ -38,16 +38,20 @@ function useApiCall<T, P = void>(
 }
 
 export function useGetGameEvents() {
-  const fn = useCallback(async (params: { gameId: number }) => {
-    const { data, error } = await supabase
+  const fn = useCallback(async (params: { gameId: number; tier?: string | null }) => {
+    let query = supabase
       .from('game_events')
       .select('*')
       .eq('game_id', params.gameId)
       .order('event_timestamp', { ascending: false })
+    if (params.tier === 'free') {
+      query = query.gte('event_timestamp', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+    }
+    const { data, error } = await query
     if (error) throw new Error(error.message)
     return data as any[]
   }, [])
-  return useApiCall<any[], { gameId: number }>(fn)
+  return useApiCall<any[], { gameId: number; tier?: string | null }>(fn)
 }
 
 export function useGetEventTypes() {

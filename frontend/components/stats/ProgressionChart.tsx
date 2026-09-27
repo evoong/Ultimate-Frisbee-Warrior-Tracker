@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { ChartLine } from '@phosphor-icons/react'
-import { SHOW_TURNOVERS } from '../../lib/features'
+import { useFlags } from '../../lib/features'
 import { Skeleton } from '../../lib/shadcn/skeleton'
 import Swap from '../Swap'
 import Segmented from './Segmented'
@@ -31,8 +31,6 @@ const ALL_STATS: { key: ProgressionStat; label: string }[] = [
   { key: 'assists', label: 'Assists' },
   { key: 'turnovers', label: 'TO' },
 ]
-
-const STATS = ALL_STATS.filter(s => s.key !== 'turnovers' || SHOW_TURNOVERS)
 
 const AXIS_TICK = {
   fontFamily: 'var(--st-mono)',
@@ -94,6 +92,9 @@ export default function ProgressionChart({
   onStatChange: (stat: ProgressionStat) => void
   loading: boolean
 }) {
+  const { flags } = useFlags()
+  const stats = useMemo(() => ALL_STATS.filter(s => s.key !== 'turnovers' || flags?.show_turnovers), [flags])
+
   const [pinnedId, setPinnedId] = useState<number | null>(null)
   const [hoverId, setHoverId] = useState<number | null>(null)
 
@@ -141,7 +142,7 @@ export default function ProgressionChart({
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[hsl(var(--st-rule))] px-3 py-2.5 sm:px-4">
         <Segmented
-          options={STATS}
+          options={stats}
           value={stat}
           onChange={onStatChange}
           ariaLabel="Progression stat"

@@ -43,6 +43,9 @@
     // rationale as SENTRY_DSN_WORKER above) — this exact token already ships
     // in the browser bundle via VITE_PUBLIC_POSTHOG_KEY.
     "POSTHOG_PROJECT_TOKEN": "phc_tnxd78VeRuYp8CMnnfM89Lg5QrXeJFkdkoHBkg8bwMYf",
-    "POSTHOG_HOST": "https://us.i.posthog.com"
+    "POSTHOG_HOST": "https://us.i.posthog.com",
+    // LangSmith project name is public config (the API key stays a wrangler
+    // secret: `npx wrangler secret put LANGSMITH_API_KEY`).
+    "LANGSMITH_PROJECT": "ufwt-chat"
   }
 }

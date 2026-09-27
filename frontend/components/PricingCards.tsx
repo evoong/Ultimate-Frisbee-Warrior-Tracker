@@ -1,0 +1,155 @@
+import { Button } from '../lib/shadcn/button'
+import { Card, CardHeader, CardTitle, CardContent } from '../lib/shadcn/card'
+import { Check } from 'lucide-react'
+
+const PLANS: {
+  name: string
+  price: string
+  period?: string
+  annualPrice?: string
+  annualPeriod?: string
+  description: string
+  limits: string[]
+  tier: string
+  popular?: boolean
+}[] = [
+  {
+    name: 'Free',
+    price: '$0',
+    description: 'Essential tracking for casual teams and recreational play.',
+    limits: [
+      '15 members max',
+      '30-day stats history',
+      '3 playbook strategies',
+      '5 AI messages / month',
+      'Ad-supported',
+    ],
+    tier: 'free',
+  },
+  {
+    name: 'Plus',
+    price: '$12',
+    period: '/ month',
+    annualPrice: '$120',
+    annualPeriod: '/ year',
+    description: 'Full stats, unlimited strategies, and higher AI caps for growing teams.',
+    limits: [
+      '35 members max',
+      'Unlimited stats & history',
+      'Unlimited playbook strategies',
+      '100 AI messages / month',
+      'Ad-free',
+    ],
+    tier: 'plus',
+    popular: true,
+  },
+  {
+    name: 'Premium',
+    price: '$20',
+    period: '/ month',
+    annualPrice: '$200',
+    annualPeriod: '/ year',
+    description: 'Unlimited capacity and high AI allowance for competitive clubs and leagues.',
+    limits: [
+      'Unlimited members',
+      'Unlimited stats & history',
+      'Unlimited playbook strategies',
+      '500 AI messages / month',
+      'Ad-free',
+    ],
+    tier: 'premium',
+  },
+]
+
+export function PricingCards({
+  currentTier,
+  onSelectTier,
+  onStartTrial,
+  trialEligible = false,
+  billingInterval = 'month',
+  onBillingIntervalChange,
+  loadingTier,
+  compact = false,
+}: {
+  currentTier?: string
+  onSelectTier?: (tier: string) => void
+  onStartTrial?: () => void
+  trialEligible?: boolean
+  billingInterval?: 'month' | 'year'
+  onBillingIntervalChange?: (interval: 'month' | 'year') => void
+  loadingTier?: string | null
+  compact?: boolean
+}) {
+  return (
+    <div className="max-w-5xl mx-auto">
+      {onBillingIntervalChange && <div className="mb-4 flex justify-center gap-2" role="group" aria-label="Billing interval">
+        <Button variant={billingInterval === 'month' ? 'default' : 'outline'} aria-pressed={billingInterval === 'month'} onClick={() => onBillingIntervalChange('month')}>Monthly</Button>
+        <Button variant={billingInterval === 'year' ? 'default' : 'outline'} aria-pressed={billingInterval === 'year'} onClick={() => onBillingIntervalChange('year')}>Yearly</Button>
+      </div>}
+      <div className={`grid ${compact ? 'gap-3 sm:grid-cols-3' : 'gap-6 md:grid-cols-3'}`}>
+      {PLANS.map((plan) => {
+        const isCurrent = currentTier === plan.tier
+        return (
+          <Card
+            key={plan.name}
+            className={`relative flex flex-col justify-between border ${
+              plan.popular ? 'border-primary shadow-md' : 'border-border'
+            }`}
+          >
+            {plan.popular && (
+              <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground text-xs px-3 py-1 rounded-full font-medium">
+                Most Popular
+              </span>
+            )}
+            <CardHeader>
+              <CardTitle className="text-xl font-bold">{plan.name}</CardTitle>
+              <div className="mt-2 flex items-baseline gap-1">
+                <span className="text-3xl font-bold font-mono">{billingInterval === 'year' && plan.annualPrice ? plan.annualPrice : plan.price}</span>
+                <span className="text-sm text-muted-foreground">/{billingInterval}</span>
+              </div>
+              {billingInterval === 'month' && plan.annualPrice && (
+                <div className="flex items-baseline gap-1 text-xs text-muted-foreground">
+                  <span>or</span>
+                  <span className="font-mono font-medium">{plan.annualPrice}</span>
+                  <span>{plan.annualPeriod}</span>
+                </div>
+              )}
+              <p className="text-sm text-muted-foreground mt-2">{plan.description}</p>
+            </CardHeader>
+            <CardContent className="flex-1 flex flex-col justify-between">
+              <ul className="space-y-3 text-sm mb-6">
+                {plan.limits.map((limit, idx) => (
+                  <li key={idx} className="flex items-center gap-2">
+                    <Check className="w-4 h-4 text-primary shrink-0" />
+                    <span>{limit}</span>
+                  </li>
+                ))}
+              </ul>
+              {onSelectTier && (
+                <Button
+                  variant={isCurrent ? 'outline' : plan.popular ? 'default' : 'secondary'}
+                  className="w-full"
+                  disabled={isCurrent || loadingTier === plan.tier}
+                  onClick={() => onSelectTier(plan.tier)}
+                >
+                  {isCurrent ? 'Current Plan' : loadingTier === plan.tier ? 'Updating…' : `Select ${plan.name}`}
+                </Button>
+              )}
+              {onStartTrial && currentTier === 'free' && trialEligible && plan.tier === 'premium' && (
+                <Button
+                  variant="outline"
+                  className="mt-2 w-full"
+                  disabled={loadingTier === 'trial'}
+                  onClick={onStartTrial}
+                >
+                  {loadingTier === 'trial' ? 'Starting…' : 'Start 30-Day Free Trial'}
+                </Button>
+              )}
+            </CardContent>
+          </Card>
+        )
+      })}
+      </div>
+    </div>
+  )
+}

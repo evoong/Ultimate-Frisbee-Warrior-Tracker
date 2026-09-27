@@ -5,10 +5,12 @@ import { Skeleton } from '../../lib/shadcn/skeleton'
 import { SinglePicker } from './Picker'
 import Swap from '../Swap'
 import Segmented, { type SegmentOption } from './Segmented'
+import { useFlags } from '../../lib/features'
 import {
-  COLUMN_WIDTHS_KEY, CUSTOM_COLUMNS_KEY, DEFAULT_COLUMNS, HIDDEN_COLUMNS_KEY,
-  MIN_PLAYER_COLUMN_WIDTH, MIN_STAT_COLUMN_WIDTH, STAT_LABELS, VISIBLE_STAT_KEYS,
+  COLUMN_WIDTHS_KEY, CUSTOM_COLUMNS_KEY, HIDDEN_COLUMNS_KEY,
+  MIN_PLAYER_COLUMN_WIDTH, MIN_STAT_COLUMN_WIDTH, STAT_LABELS,
   compareByColumn, defaultWidthFor, formatColumnValue, getColumnValue, isColumnAvailable,
+  getDefaultColumns, getVisibleStatKeys,
   type ColumnConfig, type ColumnTerm, type StatKey,
 } from './columns'
 import type { PlayerLine } from './types'
@@ -32,21 +34,27 @@ const SORT_PLAYER = -101
 // stat" — has to be a real key to be a real segment, so it travels as this
 // sentinel and is mapped back at the call site.
 const NO_STAT = '__none__'
-const STAT_SEGMENTS: SegmentOption<StatKey>[] =
-  VISIBLE_STAT_KEYS.map(k => ({ key: k, label: STAT_LABELS[k] }))
 const OP_SEGMENTS: SegmentOption<'+' | '-'>[] = [
   { key: '+', label: '+' },
   { key: '-', label: '-' },
-]
-const STAT_B_SEGMENTS: SegmentOption<string>[] = [
-  { key: NO_STAT, label: 'None' },
-  ...VISIBLE_STAT_KEYS.map(k => ({ key: k as string, label: STAT_LABELS[k] })),
 ]
 
 export default function RankingsTable({ players, loading }: {
   players: PlayerLine[]
   loading: boolean
 }) {
+  const { flags } = useFlags()
+  const showTurnovers = flags?.show_turnovers ?? false
+  const visibleStatKeys = useMemo(() => getVisibleStatKeys(showTurnovers), [showTurnovers])
+  const statSegments: SegmentOption<StatKey>[] = useMemo(
+    () => visibleStatKeys.map(k => ({ key: k, label: STAT_LABELS[k] })),
+    [visibleStatKeys],
+  )
+  const statBSegments: SegmentOption<string>[] = useMemo(
+    () => [{ key: NO_STAT, label: 'None' }, ...visibleStatKeys.map(k => ({ key: k as string, label: STAT_LABELS[k] }))],
+    [visibleStatKeys],
+  )
+
   const [customColumns, setCustomColumns] = useState<ColumnConfig[]>(() => {
     try { return JSON.parse(localStorage.getItem(CUSTOM_COLUMNS_KEY) ?? '[]') } catch { return [] }
   })
@@ -78,8 +86,8 @@ export default function RankingsTable({ players, loading }: {
   // currently gated off drops out of the table and out of the manage list,
   // and comes back untouched the day the stat does.
   const allColumns = useMemo(
-    () => [...DEFAULT_COLUMNS, ...customColumns.filter(isColumnAvailable)],
-    [customColumns],
+    () => [...getDefaultColumns(showTurnovers), ...customColumns.filter(c => isColumnAvailable(c, showTurnovers))],
+    [customColumns, showTurnovers],
   )
   const visibleColumns = allColumns.filter(c => !hiddenColumnIds.has(c.id))
 
@@ -271,7 +279,7 @@ export default function RankingsTable({ players, loading }: {
                 <p className="st-overline px-1">Add a formula column</p>
                 <div className="flex items-center gap-1.5">
                   <Segmented
-                    options={STAT_SEGMENTS}
+                    options={statSegments}
                     value={newColStatA}
                     onChange={setNewColStatA}
                     ariaLabel="First stat"
@@ -287,7 +295,7 @@ export default function RankingsTable({ players, loading }: {
                     a handful of options apiece, a dropdown hides the whole
                     choice behind a click to save no space at all. */}
                 <Segmented
-                  options={STAT_B_SEGMENTS}
+                  options={statBSegments}
                   value={newColStatB ?? NO_STAT}
                   onChange={k => setNewColStatB(k === NO_STAT ? null : k as StatKey)}
                   ariaLabel="Second stat"

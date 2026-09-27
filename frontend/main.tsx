@@ -6,6 +6,7 @@ import './index.css'
 import './lib/posthog'
 import App from './App'
 import { AuthProvider } from './contexts/AuthContext'
+import { FlagsProvider } from './hooks/useFlags'
 import { inject } from '@vercel/analytics'
 import { injectSpeedInsights } from '@vercel/speed-insights'
 
@@ -30,7 +31,9 @@ root.render(
     <Sentry.ErrorBoundary fallback={<p>Something went wrong. Please reload the page.</p>}>
       <BrowserRouter>
         <AuthProvider>
-          <App />
+          <FlagsProvider>
+            <App />
+          </FlagsProvider>
         </AuthProvider>
       </BrowserRouter>
     </Sentry.ErrorBoundary>

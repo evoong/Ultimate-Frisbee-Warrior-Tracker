@@ -35,6 +35,17 @@ export interface TeamRoleRow {
 export interface MembershipLookup {
   roleFor(userId: string, teamId: number): Promise<TeamRole | null>
   teamsFor(userId: string): Promise<TeamRoleRow[]>
+  // A member's APPROVED player link for one team, or null when they
+  // genuinely have none (player_links.status = 'approved'; the table's
+  // unique (team_id, user_id) means at most one).
+  //
+  // THROWS on lookup failure instead of resolving null. This is the
+  // opposite direction from load()'s fail-closed deny: null here WIDENS
+  // the chat context to the whole team (the spec's "unlinked = full"
+  // rule), so an unavailable lookup must never be readable as
+  // "unlinked". Callers turn the throw into a 5xx, never into a wider
+  // context.
+  playerLinkFor(userId: string, teamId: number): Promise<number | null>
 }
 
 // Short TTL: a revoked role must stop working promptly, but a chat turn
@@ -60,6 +71,7 @@ const TTL_MS = 30_000
 // revoked role must take effect promptly").
 export function createMembershipLookup(config: MembershipConfig): MembershipLookup {
   const cache = new Map<string, { at: number; rows: TeamRoleRow[] }>()
+  const linkCache = new Map<string, { at: number; playerId: number | null }>()
 
   async function load(userId: string): Promise<TeamRoleRow[]> {
     const hit = cache.get(userId)
@@ -112,6 +124,43 @@ export function createMembershipLookup(config: MembershipConfig): MembershipLook
     async roleFor(userId, teamId) {
       const rows = await load(userId)
       return rows.find(r => r.team_id === teamId)?.role ?? null
+    },
+    async playerLinkFor(userId, teamId) {
+      const key = `${userId}:${teamId}`
+      const hit = linkCache.get(key)
+      if (hit && Date.now() - hit.at < TTL_MS) return hit.playerId
+
+      const url =
+        `${config.supabaseUrl}/rest/v1/player_links` +
+        `?select=player_id&user_id=eq.${encodeURIComponent(userId)}` +
+        `&team_id=eq.${encodeURIComponent(String(teamId))}&status=eq.approved&limit=1`
+      // Every failure mode lands in the same catch: a fetch that never
+      // reached Supabase (refused connection, DNS, timeout), a 2xx body
+      // that fails to parse, a non-2xx, or a non-array body. All are
+      // reported through onLookupError and rethrown; none are cached --
+      // a transient outage must not read as "unlinked" for the rest of
+      // the TTL, and must never resolve null.
+      try {
+        const res = await fetch(url, {
+          headers: {
+            apikey: config.supabaseSecretKey,
+            Authorization: `Bearer ${config.supabaseSecretKey}`,
+          },
+        })
+        if (!res.ok) {
+          throw new Error(`player link lookup failed: ${res.status} ${await res.text().catch(() => '')}`)
+        }
+        const rows = (await res.json()) as { player_id: number }[]
+        if (!Array.isArray(rows)) {
+          throw new Error('player link lookup returned a non-array body')
+        }
+        const playerId = rows.length > 0 ? rows[0].player_id : null
+        linkCache.set(key, { at: Date.now(), playerId })
+        return playerId
+      } catch (err) {
+        config.onLookupError?.(err)
+        throw err
+      }
     },
   }
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { useEffectiveTier } from '../hooks/useEffectiveTier'
 import { useGetGames } from '../hooks/backend/games'
 import { useGetPlayers } from '../hooks/backend/players'
 import { useGetPlayerStats, useGetSeasons, useGetCumulativeStats, useGetAllSeasons, useGetAssistPairings, type PairingRow } from '../hooks/backend/stats'
@@ -13,9 +14,10 @@ import { useMyPlayerLink, useMyPlayerSeasonIds, useClaimPlayer, useGetTeamPlayer
 import { getLatestJamSeasonWithPlayedGame, getDefaultJamSeasonId, getDefaultSeasonForPlayer } from '../lib/seasonUtils'
 import { isPastGame } from '../lib/gameOrder'
 import { track } from '../lib/analytics'
-import { SHOW_TURNOVERS } from '../lib/features'
+import { useFlags } from '../lib/features'
 import { settleRange } from '../lib/loadingState'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
+import { FreeTierBanner } from '../components/TierNotices'
 import PlayerCombobox from '../components/PlayerCombobox'
 import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
@@ -76,12 +78,12 @@ function perGame(total: string | number, gamesPlayed: string | number): string |
 // second cell falls back to G+A -- the strip is two columns at every width by
 // design, and one lonely cell is a different object from the team card
 // beside it.
-function secondaryFor(hero: SeriesKey, p: PlayerLine | null): { label: string; series?: SeriesKey; value: number }[] {
+function secondaryFor(hero: SeriesKey, p: PlayerLine | null, showTurnovers: boolean): { label: string; series?: SeriesKey; value: number }[] {
   const other: SeriesKey = hero === 'goals' ? 'assists' : 'goals'
   const cells: { label: string; series?: SeriesKey; value: number }[] = [
     { label: other === 'goals' ? 'Goals' : 'Assists', series: other, value: p?.[other] ?? 0 },
   ]
-  if (SHOW_TURNOVERS) cells.push({ label: 'Turnovers', series: 'turnovers', value: p?.turnovers ?? 0 })
+  if (showTurnovers) cells.push({ label: 'Turnovers', series: 'turnovers', value: p?.turnovers ?? 0 })
   else cells.push({ label: 'G+A', value: (p?.goals ?? 0) + (p?.assists ?? 0) })
   return cells
 }
@@ -113,6 +115,7 @@ function pageTabForSlug(slug: string | undefined, tabs: { key: PageTab; slug: st
 export default function Stats() {
   const navigate = useNavigate()
   const { isGuest, currentTeamId, user } = useAuth()
+  const entitlement = useEffectiveTier(currentTeamId)
   // The active sub-tab mirrors this URL segment, so a reload, browser
   // back/forward, or a bookmarked/shared link lands on the right sub-tab
   // instead of always resetting to Overview.
@@ -211,6 +214,7 @@ export default function Stats() {
 
   return (
     <div className="stats-scope space-y-5">
+      <FreeTierBanner tier={entitlement.tier} />
       <StatsHeader
         title="Stats"
         tabs={visibleTabs}
@@ -246,6 +250,7 @@ export default function Stats() {
           selectedSeasonIds={selectedSeasonIds}
           selectedGameIds={selectedGameIds}
           defaultSeasonId={defaultSeasonId}
+          tier={entitlement.tier}
         />
       )}
     </div>
@@ -257,7 +262,7 @@ export default function Stats() {
 // duplicated the same filter UI and query); only the content below the
 // filters differs by tab.
 function PlayerStatsView({
-  tab, games, allSeasons, filterType, selectedSeasonIds, selectedGameIds, defaultSeasonId,
+  tab, games, allSeasons, filterType, selectedSeasonIds, selectedGameIds, defaultSeasonId, tier,
 }: {
   tab: 'me' | 'overview' | 'table'
   /** Hoisted to Stats() along with the filter below -- see the comment there. */
@@ -268,8 +273,11 @@ function PlayerStatsView({
   selectedGameIds: number[]
   /** The season the page opened on; seeds the progression chart's own picker. */
   defaultSeasonId: number | null
+  tier: string | null
 }) {
   const { currentTeamId, user } = useAuth()
+  const { flags } = useFlags()
+  const showTurnovers = flags?.show_turnovers ?? false
   const link = useMyPlayerLink()
   const claim = useClaimPlayer()
   const teamLinks = useGetTeamPlayerLinks()
@@ -311,21 +319,21 @@ function PlayerStatsView({
     // read the same pairing data) each derive their own view from this one
     // fetch rather than hitting the network separately per view.
     if (filterType === 'all') {
-      fetchStats({ organizationId: currentTeamId })
-      fetchPairings({ organizationId: currentTeamId, limit: 200 })
+      fetchStats({ organizationId: currentTeamId, tier })
+      fetchPairings({ organizationId: currentTeamId, limit: 200, tier })
     } else if (filterType === 'season') {
       if (selectedSeasonIds.length > 0) {
-        fetchStats({ seasonIds: selectedSeasonIds, organizationId: currentTeamId })
-        fetchPairings({ seasonIds: selectedSeasonIds, organizationId: currentTeamId, limit: 200 })
+        fetchStats({ seasonIds: selectedSeasonIds, organizationId: currentTeamId, tier })
+        fetchPairings({ seasonIds: selectedSeasonIds, organizationId: currentTeamId, limit: 200, tier })
       } else {
-        fetchStats({ organizationId: currentTeamId })
-        fetchPairings({ organizationId: currentTeamId, limit: 200 })
+        fetchStats({ organizationId: currentTeamId, tier })
+        fetchPairings({ organizationId: currentTeamId, limit: 200, tier })
       }
     } else if (filterType === 'games' && selectedGameIds.length > 0) {
-      fetchStats({ gameIds: selectedGameIds, organizationId: currentTeamId })
-      fetchPairings({ gameIds: selectedGameIds, organizationId: currentTeamId, limit: 200 })
+      fetchStats({ gameIds: selectedGameIds, organizationId: currentTeamId, tier })
+      fetchPairings({ gameIds: selectedGameIds, organizationId: currentTeamId, limit: 200, tier })
     }
-  }, [filterType, selectedSeasonIds, selectedGameIds, currentTeamId])
+  }, [filterType, selectedSeasonIds, selectedGameIds, currentTeamId, tier])
 
   useEffect(() => {
     if (currentTeamId == null || cumulativeSeasonId == null) return
@@ -683,12 +691,12 @@ function PlayerStatsView({
               <Swap busy={rangePending && mine != null}>
                 <Resolve
                   loading={rangePending && mine == null}
-                  className={`grid gap-3 ${SHOW_TURNOVERS ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3'}`}
-                  skeleton={<MetricCardSkeleton count={SHOW_TURNOVERS ? 4 : 3} />}
+                  className={`grid gap-3 ${showTurnovers ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3'}`}
+                  skeleton={<MetricCardSkeleton count={showTurnovers ? 4 : 3} />}
                 >
                   <MetricCard label="Goals" value={mine?.goals ?? 0} series="goals" hint={mine ? perGame(mine.goals, mine.games_played) : undefined} />
                   <MetricCard label="Assists" value={mine?.assists ?? 0} series="assists" hint={mine ? perGame(mine.assists, mine.games_played) : undefined} />
-                  {SHOW_TURNOVERS && (
+                  {showTurnovers && (
                     <MetricCard label="Turnovers" value={mine?.turnovers ?? 0} series="turnovers" hint={mine ? perGame(mine.turnovers, mine.games_played) : undefined} />
                   )}
                   <MetricCard label="Games played" value={mine?.games_played ?? 0} />
@@ -726,7 +734,7 @@ function PlayerStatsView({
                   value={topFinisher?.goals ?? 0}
                   unit="Goals"
                   teamTotal={teamGoals}
-                  secondary={secondaryFor('goals', topFinisher)}
+                  secondary={secondaryFor('goals', topFinisher, showTurnovers)}
                 />
                 <LeaderCard
                   overline="Top playmaker"
@@ -736,7 +744,7 @@ function PlayerStatsView({
                   value={topPlaymaker?.assists ?? 0}
                   unit="Assists"
                   teamTotal={teamAssists}
-                  secondary={secondaryFor('assists', topPlaymaker)}
+                  secondary={secondaryFor('assists', topPlaymaker, showTurnovers)}
                 />
                 <TeamCard icon={<Scales className="h-3.5 w-3.5" weight="bold" />} team={teamLine} />
               </Resolve>

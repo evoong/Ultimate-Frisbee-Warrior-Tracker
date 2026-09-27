@@ -9,7 +9,14 @@
 // zeros is worse than no column: it reads as "this team never turns it over"
 // rather than as "nobody tracked it".
 //
-// So the data path stays whole and only the display is gated. Flip this to
-// `true` the day a turnover can be entered and every surface comes back with
-// its layout, colours and ordering intact -- nothing here deletes anything.
-export const SHOW_TURNOVERS = false
+// So the data path stays whole and only the display is gated. Turn
+// `show_turnovers` on (globally in `feature_flags`, or for one org in
+// `org_feature_flags`) the day a turnover can be entered and every surface
+// comes back with its layout, colours and ordering intact -- nothing here
+// deletes anything.
+//
+// Runtime resolution: flags are fetched from `/api/flags` per authenticated
+// org (via `useFlags` hook in hooks/useFlags.ts). Pre-fetch and on error, all
+// flags default to `false` (safe default matching the former hardcoded value).
+
+export { FLAG_KEYS, useFlags } from '../hooks/useFlags'

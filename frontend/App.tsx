@@ -19,6 +19,10 @@ const AdminSearch = lazy(() => import('./pages/admin/Search'))
 const AdminUserDetail = lazy(() => import('./pages/admin/UserDetail'))
 const AdminOrgDetail = lazy(() => import('./pages/admin/OrgDetail'))
 const AdminAuditLog = lazy(() => import('./pages/admin/AuditLog'))
+const AdminFlags = lazy(() => import('./pages/admin/Flags'))
+const AdminViewAs = lazy(() => import('./pages/admin/ViewAs'))
+const AdminOrganizations = lazy(() => import('./pages/admin/Organizations'))
+const AdminDashboard = lazy(() => import('./pages/admin/Dashboard'))
 import { useAuth } from './contexts/AuthContext'
 import { Loader2, LogOut } from 'lucide-react'
 import { visibleNavItems, tabForPath, pathForTab, isKnownPath, renamedPathFor, type Tab } from './lib/nav'
@@ -33,6 +37,9 @@ import PanelToggle from './components/nav/PanelToggle'
 import UserMenu from './components/nav/UserMenu'
 import WorkspaceSwitcher from './components/nav/WorkspaceSwitcher'
 import { passkeysAvailable } from './lib/passkeys'
+import { AdBanner } from './components/AdBanner'
+import { useEffectiveTier } from './hooks/useEffectiveTier'
+import { Toaster } from 'sonner'
 
 const THEME_KEY = 'ufwt_theme'
 
@@ -63,6 +70,7 @@ export default function App() {
   const [feedbackOpen, setFeedbackOpen] = useState(false)
   const isDesktop = useMediaQuery('(min-width: 1024px)')
   const { user, teams, currentTeamId, switchTeam, can, role, isGuest, loading, logout } = useAuth()
+  const entitlement = useEffectiveTier(currentTeamId)
 
   useEffect(() => {
     const root = document.documentElement
@@ -140,6 +148,7 @@ export default function App() {
       <Suspense fallback={<PageFallback />}>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/admin/login" element={<Login adminOnly />} />
           <Route path="*" element={<Home theme={theme} toggleTheme={toggleTheme} />} />
         </Routes>
       </Suspense>
@@ -150,7 +159,9 @@ export default function App() {
   // memberships has nothing to see yet: send them to create one first.
   // Guests hold zero memberships by design (they browse the public team
   // read-only), so this only fires for a real signed-in user.
-  if (!isGuest && teams.length === 0) {
+  // /admin is exempt: a platform admin is not tied to any team, and the
+  // admin console must stay reachable for a zero-team admin account.
+  if (!isGuest && teams.length === 0 && !location.pathname.startsWith('/admin')) {
     return (
       <Suspense fallback={<PageFallback />}>
         <CreateOrganization />
@@ -189,7 +200,7 @@ export default function App() {
     </div>
   )
 
-  const readOnlyNotice = !isGuest && !can.record && (
+  const readOnlyNotice = !isGuest && !can.record && !location.pathname.startsWith('/admin') && (
     <div className="border-b bg-muted/60 px-4 py-2 text-center text-sm">
       You don't have permission to change this team's data.
     </div>
@@ -264,11 +275,24 @@ export default function App() {
               </Suspense>
             }
           >
-            <Route index element={<AdminSearch />} />
+            <Route index element={<AdminDashboard />} />
+            <Route path="search" element={<AdminSearch />} />
+            <Route path="orgs" element={<AdminOrganizations />} />
             <Route path="user/:userId" element={<AdminUserDetail />} />
             <Route path="org/:orgId" element={<AdminOrgDetail />} />
+            <Route path="flags" element={<AdminFlags />} />
             <Route path="audit" element={<AdminAuditLog />} />
           </Route>
+        )}
+        {!isGuest && (
+          <Route
+            path="/admin/view-as/:userId"
+            element={
+              <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading view-as…</div>}>
+                <AdminViewAs />
+              </Suspense>
+            }
+          />
         )}
       </Routes>
     </Suspense>
@@ -277,8 +301,10 @@ export default function App() {
   // Desktop: collapsible sidebar shell.
   if (isDesktop) {
     return (
-      <SidebarProvider>
-        <AppSidebar
+      <>
+        <Toaster richColors position="bottom-right" />
+        <SidebarProvider>
+          <AppSidebar
           activeTab={activeTab}
           setActiveTab={setActiveTab}
           userEmail={user.email}
@@ -293,7 +319,7 @@ export default function App() {
           openFeedback={() => setFeedbackOpen(true)}
         />
         <PasskeysDialog open={passkeysOpen} onOpenChange={setPasskeysOpen} />
-        <OrganizationSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+        <OrganizationSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} tier={entitlement.tier} isEmployeeGranted={entitlement.isEmployeeGranted} trialEndsAt={entitlement.trialEndsAt} trialStartedAt={entitlement.trialStartedAt} planSource={entitlement.planSource} onPlanChange={entitlement.refresh} />
         <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
         <SidebarInset>
           {/* A utility strip, not a page header. The page's name used to sit
@@ -312,19 +338,23 @@ export default function App() {
             <PanelToggle />
             <ThemeToggle theme={theme} toggleTheme={toggleTheme} className="ml-auto" />
           </header>
+          <AdBanner tier={entitlement.tier} />
           {guestNotice}
           {readOnlyNotice}
           <main className="mx-auto w-full max-w-5xl px-6 py-6">
             {pageContent}
           </main>
         </SidebarInset>
-      </SidebarProvider>
+        </SidebarProvider>
+      </>
     )
   }
 
   // Mobile: sticky header plus fixed bottom navigation.
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <>
+      <Toaster richColors position="bottom-right" />
+      <div className="min-h-screen bg-background text-foreground">
       {/* Mobile carries the same two controls as the desktop shell, in the
           same places: the workspace on the left, one theme toggle and one
           account menu on the right. The five loose icons and the separate
@@ -360,9 +390,12 @@ export default function App() {
       {readOnlyNotice}
 
       <PasskeysDialog open={passkeysOpen} onOpenChange={setPasskeysOpen} />
-      <OrganizationSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <OrganizationSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} tier={entitlement.tier} isEmployeeGranted={entitlement.isEmployeeGranted} trialEndsAt={entitlement.trialEndsAt} trialStartedAt={entitlement.trialStartedAt} planSource={entitlement.planSource} onPlanChange={entitlement.refresh} />
       <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
 
+      <AdBanner tier={entitlement.tier} />
+
+      <Toaster richColors position="bottom-right" />
       <main className="max-w-2xl mx-auto px-4 py-6 pb-24">
         {pageContent}
       </main>
@@ -395,5 +428,6 @@ export default function App() {
         </div>
       </nav>
     </div>
+    </>
   )
 }

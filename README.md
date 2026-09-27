@@ -15,6 +15,10 @@ Ultimate Frisbee Warrior Tracker is a full-stack web application designed to hel
 - **Deployment:** Vercel (Frontend & Serverless API functions)
 - **Analytics:** PostHog (frontend product analytics and MCP server tool-call analytics)
 
+## Setup skill
+
+For guided first-time setup, use repo skill: `.claude/skills/repo-setup/SKILL.md`.
+
 ## Running Locally
 
 To run the project locally for development:
@@ -47,3 +51,30 @@ To run the project locally for development:
    ```
 
 The frontend will be available at `http://localhost:5001` and the backend API at `http://localhost:3001`.
+
+## QA Environment (local Supabase)
+
+Use local QA to test migrations, RLS, and destructive flows without touching production:
+
+```bash
+npx supabase start       # start local stack
+npm run qa:reset         # reset DB + seed users
+npm run qa:verify        # full test suite
+```
+
+Optional: import a scrubbed prod snapshot (approved tables only):
+
+```bash
+QA_PROD_SOURCE_URL=postgresql://... npm run qa:import-prod
+```
+
+Stop the stack when done — it holds ~1GB RAM in 10 containers:
+
+```bash
+npx supabase stop          # stop containers (keeps DB volume)
+npx supabase stop --no-backup  # stop and wipe the local DB volume
+```
+
+**On the Ubuntu dev box this stack is disabled by default** — keep it stopped unless actively running local QA.
+
+See `docs/QA_ENVIRONMENT.md` for details.

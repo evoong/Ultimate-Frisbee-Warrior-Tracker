@@ -56,6 +56,26 @@ if (!Number.isInteger(ORG_ID) || ORG_ID < 1) {
 // minutes (either direction) is the one you're about to score or already are.
 const IMMINENT_WINDOW_MS = 30 * 60 * 1000
 
+// Free-tier history window — this process holds the service-role key, which
+// bypasses the tier-aware game_events RLS policy
+// (20260924150000_downgrade_history_limits.sql), so the same gate is applied
+// here by hand: on a free org, events of games dated before the window are
+// withheld. Local mirror of server/lib/tierLimits.ts's helpers (importing
+// that module from here would construct its Supabase client before
+// dotenv.config() has run — see the accepted-duplication note in
+// gateway/supabaseRest.ts).
+const FREE_HISTORY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
+
+function gameDateWithinFreeWindow(gameDate: string, now = Date.now()): boolean {
+  return gameDate >= new Date(now - FREE_HISTORY_WINDOW_MS).toISOString().slice(0, 10)
+}
+
+async function orgIsFree(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('effective_tier', { p_org_id: ORG_ID })
+  if (error) throw new Error(error.message)
+  return data === 'free'
+}
+
 type GameRow = {
   id: number; season_id: number | null; opponent: string; game_date: string; game_time: string | null
   game_type: string | null; notes: string | null; outcome_override: string | null; organization_id: number
@@ -153,10 +173,15 @@ function computeScore(events: { event_type: string }[]): { ourScore: number; the
   }
 }
 
-async function gameSummary(g: GameRow, seasons: SeasonRow[]) {
-  const { data: events, error } = await supabase.from('game_events').select('event_type').eq('game_id', g.id)
-  if (error) throw new Error(error.message)
-  const { ourScore, theirScore } = computeScore(events ?? [])
+async function gameSummary(g: GameRow, seasons: SeasonRow[], free = false) {
+  const events = !free || gameDateWithinFreeWindow(g.game_date)
+    ? (await (async () => {
+        const { data, error } = await supabase.from('game_events').select('event_type').eq('game_id', g.id)
+        if (error) throw new Error(error.message)
+        return data ?? []
+      })())
+    : []
+  const { ourScore, theirScore } = computeScore(events)
   const season = g.season_id != null ? seasons.find(s => s.id === g.season_id) : undefined
   return {
     id: g.id,
@@ -197,6 +222,7 @@ server.registerTool('list_games', {
   },
 }, async ({ status, seasonId, seasonName, limit }) => {
   try {
+    const free = await orgIsFree()
     const season = await resolveSeason(seasonId, seasonName)
     const seasons = await getAllSeasons()
     let games = await getAllGames()
@@ -205,7 +231,7 @@ server.registerTool('list_games', {
     if (status === 'upcoming') games = games.filter(g => !isPastGame(g, today))
     if (status === 'past') games = games.filter(g => isPastGame(g, today))
     games = sortGamesUpcomingFirst(games, today).slice(0, limit ?? 15)
-    const summaries = await Promise.all(games.map(g => gameSummary(g, seasons)))
+    const summaries = await Promise.all(games.map(g => gameSummary(g, seasons, free)))
     return ok(summaries)
   } catch (err) {
     return fail(err)
@@ -218,9 +244,10 @@ server.registerTool('get_current_game', {
   inputSchema: {},
 }, async () => {
   try {
+    const free = await orgIsFree()
     const g = await resolveGame(undefined)
     const seasons = await getAllSeasons()
-    return ok(await gameSummary(g, seasons))
+    return ok(await gameSummary(g, seasons, free))
   } catch (err) {
     return fail(err)
   }
@@ -232,15 +259,21 @@ server.registerTool('get_game_details', {
   inputSchema: { gameId: z.number().int().optional() },
 }, async ({ gameId }) => {
   try {
+    const free = await orgIsFree()
     const g = await resolveGame(gameId)
     const seasons = await getAllSeasons()
-    const summary = await gameSummary(g, seasons)
-    const { data: events, error } = await supabase
-      .from('game_events')
-      .select('id, event_type, event_timestamp, player_id, related_player_id, notes')
-      .eq('game_id', g.id)
-      .order('event_timestamp', { ascending: false })
-    if (error) throw new Error(error.message)
+    const summary = await gameSummary(g, seasons, free)
+    const events = !free || gameDateWithinFreeWindow(g.game_date)
+      ? (await (async () => {
+          const { data, error } = await supabase
+            .from('game_events')
+            .select('id, event_type, event_timestamp, player_id, related_player_id, notes')
+            .eq('game_id', g.id)
+            .order('event_timestamp', { ascending: false })
+          if (error) throw new Error(error.message)
+          return data ?? []
+        })())
+      : []
     const { data: players } = await supabase.from('players').select('id, display_name').eq('organization_id', ORG_ID)
     const nameById = new Map((players ?? []).map((p: any) => [p.id, p.display_name]))
     const recentEvents = (events ?? []).map((e: any) => ({
@@ -340,13 +373,19 @@ server.registerTool('list_game_events', {
   inputSchema: { gameId: z.number().int().optional() },
 }, async ({ gameId }) => {
   try {
+    const free = await orgIsFree()
     const game = await resolveGame(gameId)
-    const { data: events, error } = await supabase
-      .from('game_events')
-      .select('id, event_type, event_timestamp, player_id, related_player_id, notes')
-      .eq('game_id', game.id)
-      .order('event_timestamp', { ascending: false })
-    if (error) throw new Error(error.message)
+    const events = !free || gameDateWithinFreeWindow(game.game_date)
+      ? (await (async () => {
+          const { data, error } = await supabase
+            .from('game_events')
+            .select('id, event_type, event_timestamp, player_id, related_player_id, notes')
+            .eq('game_id', game.id)
+            .order('event_timestamp', { ascending: false })
+          if (error) throw new Error(error.message)
+          return data ?? []
+        })())
+      : []
     const { data: players } = await supabase.from('players').select('id, display_name').eq('organization_id', ORG_ID)
     const nameById = new Map((players ?? []).map((p: any) => [p.id, p.display_name]))
     return ok((events ?? []).map((e: any) => ({
@@ -379,10 +418,16 @@ server.registerTool('get_player_stats', {
     const today = todayLocalStr()
     const playedGameIds = new Set(games.filter(g => isPastGame(g, today)).map(g => g.id))
 
+    const free = await orgIsFree()
+    // Free-tier read gate on the event totals only: attendance (lineups)
+    // and games_played keep counting the full fixture list, matching the
+    // design's "attendance remains visible" split.
+    const statGameIds = free ? games.filter(g => gameDateWithinFreeWindow(g.game_date)).map(g => g.id) : gameIds
+
     const { data: events, error: eventsError } = await supabase
       .from('game_events')
       .select('player_id, related_player_id, event_type, game_id')
-      .in('game_id', gameIds.length > 0 ? gameIds : [-1])
+      .in('game_id', statGameIds.length > 0 ? statGameIds : [-1])
     if (eventsError) throw new Error(eventsError.message)
 
     const { data: playersData, error: playersError } = await supabase.from('players').select('id, display_name').eq('organization_id', ORG_ID)

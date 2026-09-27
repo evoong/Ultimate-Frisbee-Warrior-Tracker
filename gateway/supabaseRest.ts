@@ -9,6 +9,35 @@ export interface ActionsConfig {
   supabaseSecretKey: string
 }
 
+// Free-tier history window. Service-role queries bypass RLS, so the tier
+// gate from 20260924150000_downgrade_history_limits.sql has to be applied
+// by the caller: for free orgs, events of games dated before the window are
+// withheld (date-only comparison, matching the policy's
+// `game_date >= current_date - interval '30 days'`). Mirror of the helpers
+// in server/lib/tierLimits.ts (duplicated rather than imported to keep this
+// module Workers-portable — same accepted-duplication stance the header
+// comment documents).
+export const FREE_HISTORY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
+
+export function gameDateWithinFreeWindow(gameDate: string, now = Date.now()): boolean {
+  return gameDate >= new Date(now - FREE_HISTORY_WINDOW_MS).toISOString().slice(0, 10)
+}
+
+export async function getOrgEffectiveTier(config: ActionsConfig, orgId: number): Promise<'free' | 'plus' | 'premium'> {
+  const res = await fetch(`${config.supabaseUrl}/rest/v1/rpc/effective_tier`, {
+    method: 'POST',
+    headers: {
+      apikey: config.supabaseSecretKey,
+      Authorization: `Bearer ${config.supabaseSecretKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ p_org_id: orgId }),
+  })
+  if (!res.ok) throw new Error(`effective_tier RPC failed (${res.status})`)
+  const tier = await res.json()
+  return (tier as 'free' | 'plus' | 'premium') || 'free'
+}
+
 export async function sbGet(config: ActionsConfig, path: string): Promise<any> {
   const res = await fetch(`${config.supabaseUrl}/rest/v1${path}`, {
     headers: { apikey: config.supabaseSecretKey, Authorization: `Bearer ${config.supabaseSecretKey}` },

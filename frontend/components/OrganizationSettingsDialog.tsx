@@ -28,10 +28,18 @@ import {
   useUpdateTeam,
 } from '../hooks/backend/teams'
 import { useGetTeamPlayerLinks, useApprovePlayerClaim } from '../hooks/backend/playerLink'
+import { PricingCards } from './PricingCards'
+import { toast } from 'sonner'
 
 type OrganizationSettingsDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
+  tier: string | null
+  isEmployeeGranted?: boolean
+  trialEndsAt?: string | null
+  trialStartedAt?: string | null
+  planSource?: 'stripe' | 'employee_grant' | 'trial'
+  onPlanChange?: () => void
 }
 
 const DETAILS_FORM_ID = 'team-settings-details'
@@ -104,6 +112,147 @@ function EmptyNote({ children }: { children: ReactNode }) {
   )
 }
 
+const TIER_LIMITS = {
+  free: { members: '15 members', history: '30-day history', strategies: '3 strategies', ai: '5 AI messages/month' },
+  plus: { members: '35 members', history: 'Unlimited history', strategies: 'Unlimited strategies', ai: '100 AI messages/month' },
+  premium: { members: 'Unlimited members', history: 'Unlimited history', strategies: 'Unlimited strategies', ai: '500 AI messages/month' },
+} as const
+
+interface TierDetailsProps {
+  tier: string | null
+  isEmployeeGranted?: boolean
+  trialEndsAt?: string | null
+  trialStartedAt?: string | null
+  planSource?: 'stripe' | 'employee_grant' | 'trial'
+  currentTeamId?: number | null
+  role?: TeamRole | null
+  onPlanChange?: () => void
+}
+
+export function TierDetails({ tier, isEmployeeGranted, trialEndsAt, trialStartedAt, planSource, currentTeamId, role, onPlanChange }: TierDetailsProps) {
+  const [showPlanSelector, setShowPlanSelector] = useState(false)
+  const [loadingTier, setLoadingTier] = useState<string | null>(null)
+  const [billingInterval, setBillingInterval] = useState<'month' | 'year'>('month')
+  const [trialEligible, setTrialEligible] = useState(false)
+  const [trialEligibilityLoaded, setTrialEligibilityLoaded] = useState(false)
+
+  useEffect(() => {
+    if (!showPlanSelector || !currentTeamId || tier !== 'free' || trialStartedAt != null || trialEndsAt != null) return
+    let cancelled = false
+    setTrialEligibilityLoaded(false)
+    supabase.rpc('can_start_trial', { p_org_id: currentTeamId }).then(({ data, error }) => {
+      if (!cancelled) {
+        setTrialEligible(!error && data === true)
+        setTrialEligibilityLoaded(true)
+      }
+    })
+    return () => { cancelled = true }
+  }, [showPlanSelector, currentTeamId, tier, trialStartedAt, trialEndsAt])
+
+  if (tier !== 'free' && tier !== 'plus' && tier !== 'premium') return null
+  const limits = TIER_LIMITS[tier]
+  const trialActive = planSource === 'trial' && trialStartedAt != null && trialEndsAt != null && new Date(trialEndsAt) > new Date()
+  const isCaptain = role === 'captain'
+
+  async function redirectToBilling(endpoint: string, body: object, loading: string) {
+    if (!currentTeamId || loadingTier) return
+    setLoadingTier(loading)
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ organization_id: currentTeamId, ...body }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.error || 'Billing request failed')
+      if (typeof data.url !== 'string' || !data.url.startsWith('https://')) throw new Error('Invalid billing URL')
+      window.location.assign(data.url)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Billing request failed')
+      setLoadingTier(null)
+    }
+  }
+
+  async function handleSelectTier(nextTier: string) {
+    if (nextTier === 'free') return void redirectToBilling('/api/billing/create-portal-session', {}, 'free')
+    await redirectToBilling('/api/billing/create-checkout-session', { tier: nextTier, interval: billingInterval, is_trial: false }, nextTier)
+  }
+
+  async function handleStartTrial() {
+    await redirectToBilling('/api/billing/create-checkout-session', { tier: 'premium', interval: billingInterval, is_trial: true }, 'trial')
+  }
+
+  return (
+    <section>
+      <SectionHeading>Plan</SectionHeading>
+      <div className="overflow-hidden rounded-lg border border-border">
+        <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2.5">
+          <span className="text-xs text-muted-foreground">Tier</span>
+          <div className="flex items-center gap-2">
+            <span className="rounded-full border border-border bg-secondary px-2.5 py-0.5 text-[11px] font-semibold capitalize text-foreground">{tier}</span>
+            {isCaptain && !isEmployeeGranted && currentTeamId && onPlanChange && (
+              tier === 'free' ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => setShowPlanSelector(true)}
+                >
+                  Change plan
+                </Button>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  disabled={loadingTier === 'portal'}
+                  onClick={() => redirectToBilling('/api/billing/create-portal-session', {}, 'portal')}
+                >
+                  {loadingTier === 'portal' ? 'Loading…' : 'Manage billing'}
+                </Button>
+              )
+            )}
+          </div>
+        </div>
+        {(isEmployeeGranted || trialActive) && (
+          <div className="border-b border-border px-3 py-2.5 text-xs text-muted-foreground">
+            {isEmployeeGranted ? 'Employee grant active' : `Free trial ends ${new Date(trialEndsAt!).toLocaleDateString()}`}
+          </div>
+        )}
+        <ul className="grid grid-cols-2 gap-px bg-border text-xs text-muted-foreground">
+          {[limits.members, limits.history, limits.strategies, limits.ai].map(limit => (
+            <li key={limit} className="bg-card px-3 py-2.5">{limit}</li>
+          ))}
+        </ul>
+      </div>
+
+      {showPlanSelector && (
+        <Dialog open={showPlanSelector} onOpenChange={setShowPlanSelector}>
+          <DialogContent className="max-w-lg sm:max-w-xl">
+            <DialogHeader className="pb-3">
+              <DialogTitle className="text-lg">Change plan</DialogTitle>
+              <DialogDescription>
+                Select a new plan for your team. Changes take effect immediately.
+              </DialogDescription>
+            </DialogHeader>
+            <PricingCards
+              currentTier={tier}
+              loadingTier={loadingTier}
+              onSelectTier={handleSelectTier}
+              onStartTrial={handleStartTrial}
+              trialEligible={trialEligible && trialEligibilityLoaded}
+              billingInterval={billingInterval}
+              onBillingIntervalChange={setBillingInterval}
+              compact
+            />
+          </DialogContent>
+        </Dialog>
+      )}
+    </section>
+  )
+}
+
 function teamInitials(name: string): string {
   const words = name.split(/[^\p{L}\p{N}]+/u).filter(Boolean)
   return (words.slice(0, 2).map(w => w[0]).join('') || name.slice(0, 2)).toUpperCase()
@@ -112,8 +261,8 @@ function teamInitials(name: string): string {
 // Gated on can.manageTeam (captain/editor), not a role literal: the database
 // re-checks every one of these actions via RPC or a storage policy, so the
 // gating here is only about not showing controls that would 403 anyway.
-export default function OrganizationSettingsDialog({ open, onOpenChange }: OrganizationSettingsDialogProps) {
-  const { can, user, currentTeamId, teams, refreshSession } = useAuth()
+export default function OrganizationSettingsDialog({ open, onOpenChange, tier, isEmployeeGranted, trialEndsAt, trialStartedAt, planSource, onPlanChange }: OrganizationSettingsDialogProps) {
+  const { can, role, user, currentTeamId, teams, refreshSession } = useAuth()
   const current = teams.find(t => t.organization_id === currentTeamId)
 
   const members = useGetTeamMembers()
@@ -258,7 +407,19 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5">
           {!current ? (
             <EmptyNote>Pick a team from the switcher to manage it.</EmptyNote>
-          ) : !canEdit ? (
+          ) : (
+            <>
+              <TierDetails
+                tier={tier}
+                isEmployeeGranted={isEmployeeGranted}
+                trialEndsAt={trialEndsAt}
+                trialStartedAt={trialStartedAt}
+                planSource={planSource}
+                currentTeamId={currentTeamId}
+                role={role}
+                onPlanChange={onPlanChange}
+              />
+              {!canEdit ? (
             <section>
               <SectionHeading>Team</SectionHeading>
               <dl className="divide-y divide-border overflow-hidden rounded-lg border border-border">
@@ -593,6 +754,8 @@ export default function OrganizationSettingsDialog({ open, onOpenChange }: Organ
                 )}
               </section>
             </div>
+          )}
+            </>
           )}
         </div>
 

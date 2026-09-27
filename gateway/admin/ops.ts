@@ -370,6 +370,126 @@ const deleteOrg = defineOperation({
   },
 })
 
+const transferCaptainship = defineOperation({
+  name: 'transfer_captainship',
+  minRole: 'superadmin',
+  input: z.object({
+    org_id: z.number().int().positive(),
+    new_captain_user_id: z.string().uuid(),
+    reason: z.string().min(5),
+  }),
+  target: i => ({ org_id: i.org_id, new_captain: i.new_captain_user_id }),
+  preview: async (ctx, i) => ({
+    current_captain: await sbGet(ctx.config, `/team_members?select=user_id&team_id=eq.${i.org_id}&role=eq.captain`),
+    next_captain: i.new_captain_user_id,
+  }),
+  apply: async (ctx, i) => {
+    try {
+      const result = await sbWrite(ctx.config, 'POST', '/rpc/admin_transfer_captainship', {
+        p_org_id: i.org_id,
+        p_new_captain_id: i.new_captain_user_id,
+        p_reason: i.reason,
+      });
+      return { before: null, after: result };
+    } catch (err) {
+      translate(err);
+    }
+  },
+});
+
+const createInviteToken = defineOperation({
+  name: 'create_invite_link',
+  minRole: 'support',
+  input: z.object({
+    org_id: z.number().int().positive(),
+    email: z.string().email().transform(v => v.trim().toLowerCase()),
+    role: z.enum(INVITE_ROLES),
+  }),
+  target: i => ({ org_id: i.org_id, email: i.email, role: i.role }),
+  preview: async (ctx, i) => ({ exists: await sbGet(ctx.config, `/team_invites?team_id=eq.${i.org_id}&email=eq.${encodeURIComponent(i.email)}`) }),
+  apply: async (ctx, i) => {
+    const token = crypto.randomUUID();
+    const data = new TextEncoder().encode(token);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    const result = await sbWrite(ctx.config, 'POST', '/rpc/admin_create_invite_token', {
+      p_org_id: i.org_id,
+      p_email: i.email,
+      p_role: i.role,
+      p_token_hash: hash,
+    });
+    return { before: null, after: { ...result, link: `/join/${token}` } };
+  },
+});
+
+const setFlag = defineOperation({
+  name: 'set_flag',
+  minRole: 'superadmin',
+  input: z.object({
+    key: z.string().min(1),
+    org_id: z.number().int().positive().nullable(),
+    enabled: z.boolean(),
+  }),
+  target: i => ({ flag_key: i.key, org_id: i.org_id, enabled: i.enabled }),
+  preview: async (ctx, i) => {
+    const flags = await sbGet(ctx.config, `/feature_flags?select=key,description,default_on&key=eq.${encodeURIComponent(i.key)}`)
+    const flag = flags[0]
+    if (!flag) throw new AdminOpError(`feature flag ${i.key} does not exist`, 404)
+    if (i.org_id === null) {
+      return { current: flag, next: { enabled: i.enabled } }
+    }
+    const orgs = await sbGet(ctx.config, `/organizations?select=id&id=eq.${i.org_id}`)
+    const overrides = await sbGet(ctx.config, `/org_feature_flags?select=org_id,flag_key,enabled,updated_at,updated_by&org_id=eq.${i.org_id}&flag_key=eq.${encodeURIComponent(i.key)}`)
+    return {
+      registry: flag,
+      org_exists: !!orgs[0],
+      current_override: overrides[0] ?? null,
+      next: { enabled: i.enabled },
+    }
+  },
+  apply: async (ctx, i) => {
+    const flags = await sbGet(ctx.config, `/feature_flags?select=key,default_on&key=eq.${encodeURIComponent(i.key)}`)
+    if (!flags[0]) {
+      throw new AdminOpError(`feature flag ${i.key} does not exist`, 404, 'That feature flag does not exist.')
+    }
+    const now = new Date().toISOString()
+    if (i.org_id === null) {
+      const before = flags[0]
+      const rows = await sbWrite(
+        ctx.config,
+        'PATCH',
+        `/feature_flags?key=eq.${encodeURIComponent(i.key)}`,
+        { default_on: i.enabled, updated_at: now }
+      )
+      return { before, after: rows[0] ?? null }
+    }
+    const orgs = await sbGet(ctx.config, `/organizations?select=id&id=eq.${i.org_id}`)
+    if (!orgs[0]) {
+      throw new AdminOpError(`organization ${i.org_id} does not exist`, 404, 'That organization does not exist.')
+    }
+    const overrides = await sbGet(ctx.config, `/org_feature_flags?select=*&org_id=eq.${i.org_id}&flag_key=eq.${encodeURIComponent(i.key)}`)
+    const before = overrides[0] ?? null
+    if (i.enabled === flags[0].default_on) {
+      if (before) {
+        await sbWrite(ctx.config, 'DELETE', `/org_feature_flags?org_id=eq.${i.org_id}&flag_key=eq.${encodeURIComponent(i.key)}`)
+      }
+      return { before, after: null }
+    }
+    if (before) {
+      await sbWrite(ctx.config, 'DELETE', `/org_feature_flags?org_id=eq.${i.org_id}&flag_key=eq.${encodeURIComponent(i.key)}`)
+    }
+    const rows = await sbWrite(ctx.config, 'POST', '/org_feature_flags', {
+      org_id: i.org_id,
+      flag_key: i.key,
+      enabled: i.enabled,
+      updated_by: ctx.adminId,
+      updated_at: now,
+    })
+    return { before, after: rows[0] ?? null }
+  },
+})
+
 export const ADMIN_OPERATIONS: AdminOperation<any>[] = [
   setMemberRole,
   removeMember,
@@ -379,4 +499,7 @@ export const ADMIN_OPERATIONS: AdminOperation<any>[] = [
   approvePlayerLink,
   mergePlayers,
   deleteOrg,
+  transferCaptainship,
+  createInviteToken,
+  setFlag,
 ]
