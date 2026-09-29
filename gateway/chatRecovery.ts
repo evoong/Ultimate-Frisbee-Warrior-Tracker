@@ -5,20 +5,24 @@
 // frontend can offer a reliable Undo and the agent a rollback_last_action
 // tool. Supabase's REST API has no multi-statement transactions, so undo
 // approximates atomicity with a compare-and-swap on the receipt's status:
-// the PATCH that flips status applied -> 'undoing' is filtered
-// `status=eq.applied`, so a concurrent undo (or one arriving after the
-// first finished) matches zero rows and fails instead of replaying the
-// inverse twice. The CAS winner then verifies the affected rows still match
-// the after_rows snapshot, executes the inverse ops, and PATCHes status ->
-// 'undone' with undone_at. Any failure after the CAS wins reverts status
-// back to 'applied' (best effort) before rethrowing, so a crashed undo never
-// strands a receipt in 'undoing' while a retry should stay possible.
+// the PATCH that flips status applied -> 'undoing' is filtered on
+// organization_id and `status=eq.applied`, so a concurrent undo (or one
+// arriving after the first finished) matches zero rows and fails instead of
+// replaying the inverse twice. The CAS winner then verifies the affected
+// rows still match the after_rows snapshot, executes the inverse ops, and
+// PATCHes status -> 'undone' with undone_at — all three inside one guarded
+// block, so a failure at ANY step after the CAS wins (including the final
+// status PATCH) reverts status back to 'applied' (best effort) before
+// rethrowing. A reverted receipt can be retried: per-type verification
+// rejects a replay whose writes already landed, so a crash can never strand
+// a receipt in 'undoing' permanently.
 // computeInverseAction is deliberately pure (no fetch, no config) so it is
 // testable without mocks and reusable by the agent layer. The before_rows /
 // after_rows shapes per action type are pinned by chatRecovery.test.mjs;
 // the snapshot code in gameActions.ts must produce exactly those shapes.
 
 import { type ActionsConfig, sbGet, sbWrite } from './supabaseRest.js'
+import assert from 'node:assert/strict'
 
 export type { ActionsConfig }
 
@@ -84,12 +88,12 @@ export function computeInverseAction(action: ChatActionSnapshot): InverseOp[] {
       return [{ method: 'DELETE', path: `/game_lineup_groups?id=eq.${group.id}` }]
     }
     case 'add_to_lineup': {
-      const current = after.lineup_row as { game_id: number; player_id: number } | undefined
-      if (current?.game_id == null || current?.player_id == null) {
-        throw new Error('cannot invert add_to_lineup: after_rows.lineup_row is missing')
+      const current = after.lineup_row as { id: number | string; game_id: number; player_id: number } | undefined
+      if (current?.id == null) {
+        throw new Error('cannot invert add_to_lineup: after_rows.lineup_row.id is missing')
       }
       const ops: InverseOp[] = [
-        { method: 'DELETE', path: `/game_lineups?game_id=eq.${current.game_id}&player_id=eq.${current.player_id}` },
+        { method: 'DELETE', path: `/game_lineups?id=eq.${current.id}` },
       ]
       const prior = (before.lineup_rows ?? []) as Record<string, unknown>[]
       if (prior.length > 0) ops.push({ method: 'POST', path: '/game_lineups', body: prior })
@@ -171,7 +175,11 @@ async function verifyRowsMatchSnapshot(config: ActionsConfig, path: string, snap
     const row = byId.get(String(snap.id))
     if (!row) throw new Error(MISMATCH)
     for (const [k, v] of Object.entries(snap)) {
-      if (JSON.stringify(row[k]) !== JSON.stringify(v)) throw new Error(MISMATCH)
+      try {
+        assert.deepStrictEqual(row[k], v)
+      } catch {
+        throw new Error(MISMATCH)
+      }
     }
   }
 }
@@ -185,7 +193,13 @@ async function verifyAffectedRowsUnchanged(config: ActionsConfig, action: ChatAc
   }
   const gameId = after.game_id
   if (Array.isArray(after.lineup_rows) && gameId != null) {
-    await verifyRowsMatchSnapshot(config, `/game_lineups?game_id=eq.${gameId}&select=*`, after.lineup_rows)
+    // The pinned set is the whole game's lineup for replacement actions
+    // (create_lineup/apply_lineup_template) and one player's rows for
+    // remove_from_lineup (whose after_rows.lineup_rows is empty — the action
+    // removed them all, so any row now present is an intervening edit).
+    // Either way an empty snapshot asserts the current set is empty.
+    const playerFilter = after.player_id != null ? `&player_id=eq.${after.player_id}` : ''
+    await verifyRowsMatchSnapshot(config, `/game_lineups?game_id=eq.${gameId}${playerFilter}&select=*`, after.lineup_rows)
   }
   if (Array.isArray(after.group_rows) && gameId != null) {
     await verifyRowsMatchSnapshot(config, `/game_lineup_groups?game_id=eq.${gameId}&select=*`, after.group_rows)
@@ -239,20 +253,35 @@ export async function executeRollback(
   const action = rows[0]
   if (action.status !== 'applied') throw new Error('action is not in applied state')
 
-  const claimed = await sbWrite(config, 'PATCH', `/chat_actions?id=eq.${enc(actionId)}&status=eq.applied`, { status: 'undoing' })
+  const claimed = await sbWrite(
+    config,
+    'PATCH',
+    `/chat_actions?id=eq.${enc(actionId)}&organization_id=eq.${orgId}&status=eq.applied`,
+    { status: 'undoing' },
+  )
   if (!Array.isArray(claimed) || claimed.length === 0) throw new Error('action is not in applied state')
 
   try {
     await verifyAffectedRowsUnchanged(config, action)
     const ops = computeInverseAction(action)
     for (const op of ops) await sbWrite(config, op.method, op.path, op.body)
+    await sbWrite(
+      config,
+      'PATCH',
+      `/chat_actions?id=eq.${enc(actionId)}&organization_id=eq.${orgId}`,
+      { status: 'undone', undone_at: new Date().toISOString() },
+    )
   } catch (err) {
     try {
-      await sbWrite(config, 'PATCH', `/chat_actions?id=eq.${enc(actionId)}`, { status: 'applied' })
+      await sbWrite(
+        config,
+        'PATCH',
+        `/chat_actions?id=eq.${enc(actionId)}&organization_id=eq.${orgId}`,
+        { status: 'applied' },
+      )
     } catch {}
     throw err
   }
 
-  await sbWrite(config, 'PATCH', `/chat_actions?id=eq.${enc(actionId)}`, { status: 'undone', undone_at: new Date().toISOString() })
   return { id: actionId, status: 'undone' }
 }

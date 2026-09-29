@@ -82,7 +82,7 @@ deepEqual('create_lineup_group inversion deletes the created group by exact id',
   }),
   [{ method: 'DELETE', path: '/game_lineup_groups?id=eq.9' }])
 
-deepEqual('add_to_lineup inversion removes the current row and restores prior rows',
+deepEqual('add_to_lineup inversion removes the current row by exact id and restores prior rows',
   computeInverseAction({
     action_type: 'add_to_lineup',
     before_rows: { lineup_rows: [{ id: 7, game_id: 10, player_id: 1, lineup_name: 'Line 1', role: null, sort_order: 0 }] },
@@ -93,11 +93,19 @@ deepEqual('add_to_lineup inversion removes the current row and restores prior ro
     },
   }),
   [
-    { method: 'DELETE', path: '/game_lineups?game_id=eq.10&player_id=eq.1' },
+    { method: 'DELETE', path: '/game_lineups?id=eq.8' },
     { method: 'POST', path: '/game_lineups', body: [{ id: 7, game_id: 10, player_id: 1, lineup_name: 'Line 1', role: null, sort_order: 0 }] },
     { method: 'DELETE', path: '/game_lineup_groups?id=eq.9' },
     { method: 'DELETE', path: '/season_players?id=eq.55' },
   ])
+
+await rejects('add_to_lineup inverse without a created-row id is refused',
+  () => Promise.resolve().then(() => computeInverseAction({
+    action_type: 'add_to_lineup',
+    before_rows: {},
+    after_rows: { lineup_row: { game_id: 10, player_id: 1, lineup_name: 'Line 2', role: null, sort_order: 0 } },
+  })),
+  'cannot invert add_to_lineup: after_rows.lineup_row.id is missing')
 
 deepEqual('save_lineup_template inversion of a newly created template removes children then the template',
   computeInverseAction({
@@ -232,14 +240,16 @@ const ACTION = {
   check('happy path makes exactly 5 REST calls', calls.length === 5)
   check('happy path fetches the receipt scoped by id+org+user',
     calls[0].method === 'GET' && calls[0].url.includes(`/chat_actions?id=eq.${ACTION.id}&organization_id=eq.1&user_id=eq.u1`))
-  check('happy path CAS-patches applied -> undoing',
-    calls[1].method === 'PATCH' && calls[1].url.includes('status=eq.applied') && calls[1].body?.status === 'undoing')
+  check('happy path CAS-patches applied -> undoing with the org filter',
+    calls[1].method === 'PATCH' && calls[1].url.includes('status=eq.applied') &&
+    calls[1].url.includes('organization_id=eq.1') && calls[1].body?.status === 'undoing')
   check('happy path verifies the current event before deleting',
     calls[2].method === 'GET' && calls[2].url.includes('/game_events?id=eq.42'))
   check('happy path deletes by exact id',
     calls[3].method === 'DELETE' && calls[3].url.includes('/game_events?id=eq.42'))
-  check('happy path finalizes with status=undone and undone_at',
-    calls[4].method === 'PATCH' && calls[4].body?.status === 'undone' && typeof calls[4].body?.undone_at === 'string')
+  check('happy path finalizes with status=undone, undone_at, and the org filter',
+    calls[4].method === 'PATCH' && calls[4].body?.status === 'undone' &&
+    typeof calls[4].body?.undone_at === 'string' && calls[4].url.includes('organization_id=eq.1'))
 }
 
 // --- the CAS race: another undo won between fetch and PATCH ---
@@ -364,6 +374,72 @@ await withStubbedFetch({ chat_actions: [{ ...ACTION, status: 'undone' }] }, asyn
   check('create_lineup_group undo leaves the group and dependent row in place',
     tables.game_lineup_groups.length === 1 && tables.game_lineups.length === 1)
   check('create_lineup_group undo reverts the receipt to applied', tables.chat_actions[0].status === 'applied')
+}
+
+// --- final-status-PATCH failure must not strand the receipt in 'undoing' ---
+
+{
+  const tables = { chat_actions: [{ ...ACTION }], game_events: [{ ...EVENT }] }
+  const stub = restStub(tables)
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    if (init?.method === 'PATCH' && JSON.parse(init.body).status === 'undone') {
+      return { ok: false, status: 502, text: async () => 'boom' }
+    }
+    return stub.handler(url, init)
+  }
+  let err = null
+  try {
+    await executeRollback(CONFIG, 1, ACTION.id, 'u1')
+  } catch (e) {
+    err = e
+  } finally {
+    globalThis.fetch = realFetch
+  }
+  check('final-PATCH failure rethrows', err?.message?.includes('Supabase PATCH failed') === true)
+  check('final-PATCH failure reverts the receipt to applied (not stranded in undoing)',
+    tables.chat_actions[0].status === 'applied' && tables.chat_actions[0].undone_at == null)
+  check('final-PATCH failure still leaves the inverse applied (event deleted)', tables.game_events.length === 0)
+}
+
+// --- remove_from_lineup: intervening re-add blocks the undo ---
+
+{
+  const removeAction = {
+    ...ACTION,
+    id: '55555555-5555-5555-5555-555555555555',
+    action_type: 'remove_from_lineup',
+    before_rows: { removed_rows: [{ id: 7, organization_id: 1, game_id: 10, player_id: 1, lineup_name: 'Line 1', role: null, sort_order: 0 }] },
+    after_rows: { game_id: 10, player_id: 1, lineup_rows: [] },
+  }
+  const tables = {
+    chat_actions: [{ ...removeAction }],
+    game_lineups: [{ id: 90, organization_id: 1, game_id: 10, player_id: 1, lineup_name: 'Line 2', role: null, sort_order: 0 }],
+  }
+  await withStubbedFetch(tables, async () => {
+    await rejects('remove_from_lineup undo with an intervening re-add is rejected',
+      () => executeRollback(CONFIG, 1, removeAction.id, 'u1'),
+      'action cannot be undone: the affected data has changed')
+  })
+  check('remove_from_lineup undo leaves the intervening row in place', tables.game_lineups.length === 1)
+  check('remove_from_lineup undo reverts the receipt to applied', tables.chat_actions[0].status === 'applied')
+}
+
+{
+  const removeAction = {
+    ...ACTION,
+    id: '66666666-6666-6666-6666-666666666666',
+    action_type: 'remove_from_lineup',
+    before_rows: { removed_rows: [{ id: 7, organization_id: 1, game_id: 10, player_id: 1, lineup_name: 'Line 1', role: null, sort_order: 0 }] },
+    after_rows: { game_id: 10, player_id: 1, lineup_rows: [] },
+  }
+  const tables = { chat_actions: [{ ...removeAction }], game_lineups: [] }
+  const result = await withStubbedFetch(tables, () => executeRollback(CONFIG, 1, removeAction.id, 'u1'))
+  check('remove_from_lineup undo with no intervening row succeeds',
+    result?.status === 'undone' && tables.chat_actions[0].status === 'undone')
+  deepEqual('remove_from_lineup undo restores the exact removed rows',
+    tables.game_lineups,
+    [{ id: 7, organization_id: 1, game_id: 10, player_id: 1, lineup_name: 'Line 1', role: null, sort_order: 0 }])
 }
 
 // --- recordChatAction + findLatestActionToRollback ---
