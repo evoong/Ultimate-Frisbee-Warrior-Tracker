@@ -327,11 +327,18 @@ export async function removeFromLineup(config: ActionsConfig, orgId: number, par
   const game = await resolveGame(config, orgId, params)
   const player = await resolvePlayer(config, orgId, params.playerName)
   const removed = await sbWrite(config, 'DELETE', `/game_lineups?game_id=eq.${game.id}&player_id=eq.${player.id}`)
-  const __receipt: ActionReceiptData = {
-    before: { removed_rows: removed },
-    after: { game_id: game.id, player_id: player.id, lineup_rows: [] },
-    description: `Removed ${player.display_name} from lineup`,
-  }
+  // No-op (player was not in any lineup): nothing was deleted, and an empty
+  // removed_rows receipt is not invertible — computeInverseAction refuses
+  // it, and a stranded applied receipt would block rollback of the prior
+  // real action forever (findLatestActionToRollback picks the newest
+  // applied). So no receipt is attached.
+  const __receipt: ActionReceiptData | undefined = removed.length > 0
+    ? {
+        before: { removed_rows: removed },
+        after: { game_id: game.id, player_id: player.id, lineup_rows: [] },
+        description: `Removed ${player.display_name} from lineup`,
+      }
+    : undefined
   return { game: { date: game.game_date, opponent: game.opponent }, player: player.display_name, removed_rows: removed.length, __receipt }
 }
 

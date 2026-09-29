@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { AIMessage } from '@langchain/core/messages'
 import { runToolAgent } from './graph.ts'
 import { makeChatTools } from './tools.ts'
+import { callChatFunction } from '../gameActions.ts'
 
 // Stub model: a bindTools-capable object is all the graph requires. `seen`
 // records the message list each invoke receives, so tests can inspect the
@@ -296,5 +297,45 @@ const RECOVERY_CONFIG = { supabaseUrl: 'http://stub.invalid', supabaseSecretKey:
   } finally {
     globalThis.fetch = realFetch
   }
+}
+{
+  // remove_from_lineup on a player not in any lineup is a no-op: NO receipt
+  // is recorded (an empty removed_rows receipt is un-invertible and would
+  // strand itself as the newest applied action, blocking rollback of the
+  // prior real write forever). The prior action stays the rollback target.
+  const receipts = []
+  const EVENT = { id: 42, organization_id: 1, game_id: 10, player_id: 5, related_player_id: null, event_type: 'Goal' }
+  const tables = {
+    chat_actions: [{ id: 'act-9', organization_id: 1, session_id: 's-1', user_id: 'u-1', status: 'applied', action_type: 'create_game_event', description: 'Logged Goal: Alex', before_rows: {}, after_rows: { event: { ...EVENT } }, created_at: '2026-09-29T10:00:00Z' }],
+    game_events: [{ ...EVENT }],
+    games: [{ id: 10, season_id: null, opponent: 'Huck Huck Goose', game_date: '2026-09-29', game_time: null, organization_id: 1 }],
+    players: [{ id: 5, display_name: 'Alex', organization_id: 1 }],
+    game_lineups: [],
+  }
+  await withStubbedFetch(tables, async () => {
+    const model = new StubModel([
+      toolCallMsg('remove_from_lineup', { playerName: 'Alex' }),
+      toolCallMsg('rollback_last_action', {}),
+      new AIMessage('done'),
+    ])
+    const tools = makeChatTools({
+      dispatch: (name, args) => callChatFunction(RECOVERY_CONFIG, 1, name, args),
+      role: 'editor',
+      recovery: RECOVERY,
+      actionsConfig: RECOVERY_CONFIG,
+      orgId: 1,
+      onActionReceipt: (r) => receipts.push(r),
+    })
+    await runToolAgent({ ...base, model, tools })
+    assert.equal(receipts.length, 0, 'no-op removal records no receipt')
+    assert.equal(tables.chat_actions.length, 1, 'no receipt row added for the no-op')
+    const firstTool = JSON.parse(model.seen[1].find((m) => m?.tool_call_id !== undefined).content)
+    assert.equal(firstTool.removed_rows, 0)
+    assert.equal('__receipt' in firstTool, false, 'no receipt payload on the no-op result')
+    const secondTool = JSON.parse([...model.seen[2]].reverse().find((m) => m?.tool_call_id !== undefined).content)
+    assert.deepEqual(secondTool, { undone: { id: 'act-9', description: 'Logged Goal: Alex' } }, 'rollback still targets the prior real action')
+    assert.equal(tables.chat_actions[0].status, 'undone', 'prior receipt flipped to undone')
+    assert.equal(tables.game_events.length, 0, 'prior action was inverted')
+  })
 }
 console.log('✓ gateway/agent/agent.test.mjs all passed')
