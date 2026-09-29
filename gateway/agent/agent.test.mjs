@@ -76,4 +76,40 @@ const base = { systemPrompt: 'sys', history: [], message: 'hi' }
     /recursion/i
   )
 }
+{
+  // Member + lineup read tools -> dispatched
+  const dispatch = []
+  const tools = makeChatTools({ dispatch: async (n, a) => { dispatch.push([n, a]); return { groups: [] } }, role: 'member' })
+  await runToolAgent({
+    ...base,
+    model: new StubModel([toolCallMsg('view_lineup', {}), new AIMessage('done')]),
+    tools,
+  })
+  assert.equal(dispatch.length, 1)
+  assert.equal(dispatch[0][0], 'view_lineup')
+}
+{
+  // Member + create_lineup write tool -> permission error, dispatch untouched
+  const dispatch = []
+  const tools = makeChatTools({ dispatch: async (n, a) => { dispatch.push([n, a]); return { ok: true } }, role: 'member' })
+  const reply = await runToolAgent({
+    ...base,
+    model: new StubModel([toolCallMsg('create_lineup', { groups: [{ name: 'Line 1' }] }), new AIMessage('done')]),
+    tools,
+  })
+  assert.equal(reply, 'done')
+  assert.equal(dispatch.length, 0, 'member cannot write lineup')
+}
+{
+  // Editor + create_lineup write tool -> dispatched
+  const dispatch = []
+  const tools = makeChatTools({ dispatch: async (n, a) => { dispatch.push([n, a]); return { groups: [] } }, role: 'editor' })
+  await runToolAgent({
+    ...base,
+    model: new StubModel([toolCallMsg('create_lineup', { groups: [{ name: 'Line 1' }] }), new AIMessage('done')]),
+    tools,
+  })
+  assert.equal(dispatch.length, 1)
+  assert.equal(dispatch[0][0], 'create_lineup')
+}
 console.log('✓ gateway/agent/agent.test.mjs all passed')

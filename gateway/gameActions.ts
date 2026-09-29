@@ -188,6 +188,90 @@ export const CHAT_FUNCTION_DECLARATIONS = [
     },
   },
   {
+    name: 'view_lineup',
+    description: "Returns the lineup groups and players placed in each for a game (defaults to current game). Use this to see who is on what line, who is attending, or to inspect current lines before making changes.",
+    parametersJsonSchema: {
+      type: 'object',
+      properties: {
+        gameDate: { type: 'string', description: 'YYYY-MM-DD, only to target a specific non-current game.' },
+        opponent: { type: 'string', description: 'Opponent name/substring, only to target a specific non-current game.' },
+      },
+    },
+  },
+  {
+    name: 'create_lineup',
+    description: "Sets or replaces the entire lineup for a game with specified groups and players. Replaces any existing lineup for that game.",
+    parametersJsonSchema: {
+      type: 'object',
+      properties: {
+        groups: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: 'Lineup group name, e.g. "O-Line" or "Line 1".' },
+              players: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    playerName: { type: 'string' },
+                    role: { type: 'string', description: 'e.g. "Handler", "Cutter", "Deep Cutter".' },
+                  },
+                  required: ['playerName'],
+                },
+              },
+            },
+            required: ['name'],
+          },
+        },
+        gameDate: { type: 'string', description: 'YYYY-MM-DD, only to target a specific non-current game.' },
+        opponent: { type: 'string', description: 'Opponent name/substring, only to target a specific non-current game.' },
+      },
+      required: ['groups'],
+    },
+  },
+  {
+    name: 'list_lineup_templates',
+    description: "Lists saved lineup templates for a season or the current game's season.",
+    parametersJsonSchema: {
+      type: 'object',
+      properties: {
+        seasonName: { type: 'string', description: 'Season name/substring, e.g. "Jam Summer 2026". Defaults to current game season.' },
+        gameDate: { type: 'string', description: 'YYYY-MM-DD.' },
+        opponent: { type: 'string', description: 'Opponent name/substring.' },
+      },
+    },
+  },
+  {
+    name: 'save_lineup_template',
+    description: "Saves the specified game's current lineup as a reusable named template for its season. Overwrites if a template with that name already exists.",
+    parametersJsonSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Name for the template, e.g. "Starting 7" or "Zone D".' },
+        seasonName: { type: 'string', description: 'Season name/substring. Defaults to the game\'s season.' },
+        gameDate: { type: 'string', description: 'YYYY-MM-DD.' },
+        opponent: { type: 'string', description: 'Opponent name/substring.' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'apply_lineup_template',
+    description: "Replaces a game's entire lineup by loading a saved lineup template by name.",
+    parametersJsonSchema: {
+      type: 'object',
+      properties: {
+        templateName: { type: 'string', description: 'Name of the template to load.' },
+        seasonName: { type: 'string', description: 'Season name/substring.' },
+        gameDate: { type: 'string', description: 'YYYY-MM-DD.' },
+        opponent: { type: 'string', description: 'Opponent name/substring.' },
+      },
+      required: ['templateName'],
+    },
+  },
+  {
     name: 'query_stat_breakdown',
     description: `Computes an exact, code-verified stat breakdown. The system prompt's PLAYER STATS and ASSIST PAIRINGS tables are pre-tallied but ALL-TIME ONLY — call this tool instead of counting from EVENT TIMELINE yourself whenever a question is scoped to one specific season or one specific game. Examples: "who assisted Eric the most this season" -> {metric: "assists", byAssistPairing: true, seasonName: "Jam Summer 2026"}. "top scorers in the game vs Huck Huck Goose" -> {metric: "goals", opponent: "Huck Huck Goose"}. "who had the most turnovers in Jam Summer 2026" -> {metric: "turnovers", seasonName: "Jam Summer 2026"}. "best pairing so far this season" -> {metric: "assists", byAssistPairing: true, seasonName: "<current season>"}. Omit seasonName/gameDate/opponent only for an all-time breakdown (rarely needed since PLAYER STATS/ASSIST PAIRINGS already cover all-time).
 STRICT OUTPUT RULE: the "rows" you get back are the complete, final, already-correct answer for exactly the scope you asked for — quote a row's "count" verbatim, character for character, in your reply. Never recalculate, round, average, or "estimate" a count; never blend a scoped row with the separate ALL-TIME PLAYER STATS/ASSIST PAIRINGS numbers in the same sentence (e.g. do not say "4 this season (6 all-time)" — pick the one scope the user asked about and report only that). An empty "rows" array is a real, valid answer meaning zero matching events for that exact scope (check the "note" field, which spells this out) — say so plainly, do not treat it as a failure or fall back to guessing a number. If seasonName/gameDate/opponent fails to resolve, or metric is invalid, the call errors out instead of returning empty rows — tell the user you couldn't find that season/game/metric by name instead of guessing a number.`,
@@ -272,6 +356,286 @@ export async function createLineupGroup(config: ActionsConfig, orgId: number, pa
   const nextSortOrder = groups.length > 0 ? groups[0]!.sort_order + 1 : 0
   const created = await sbUpsertIgnore(config, '/game_lineup_groups', { organization_id: orgId, game_id: game.id, lineup_name: params.name, sort_order: nextSortOrder }, 'game_id,lineup_name')
   return { game: { date: game.game_date, opponent: game.opponent }, created: created[0] ?? { note: `A group named "${params.name}" already exists.` } }
+}
+
+export async function viewLineup(
+  config: ActionsConfig, orgId: number,
+  params: { gameDate?: string; opponent?: string }
+) {
+  const game = await resolveGame(config, orgId, params)
+  const groups: { lineup_name: string; sort_order: number }[] = await sbGet(config, `/game_lineup_groups?game_id=eq.${game.id}&select=lineup_name,sort_order&order=sort_order`)
+  const rows = await sbGet(config, `/game_lineups?game_id=eq.${game.id}&select=lineup_name,sort_order,role,players(display_name,position,gender_match)&order=sort_order`)
+  const byGroup = new Map<string, any[]>()
+  ;(rows ?? []).forEach((r: any) => {
+    if (!byGroup.has(r.lineup_name)) byGroup.set(r.lineup_name, [])
+    byGroup.get(r.lineup_name)!.push({
+      name: r.players?.display_name,
+      role: r.role,
+      position: r.players?.position,
+      gender_match: r.players?.gender_match,
+    })
+  })
+  return {
+    game: { date: game.game_date, opponent: game.opponent },
+    groups: (groups ?? []).map(g => ({
+      name: g.lineup_name,
+      players: byGroup.get(g.lineup_name) ?? [],
+    })),
+  }
+}
+
+export async function createLineup(
+  config: ActionsConfig, orgId: number,
+  params: {
+    groups: { name: string; players?: { playerName: string; role?: string }[] }[]
+    gameDate?: string
+    opponent?: string
+  }
+) {
+  const game = await resolveGame(config, orgId, params)
+  if (!params.groups || params.groups.length === 0) {
+    throw new Error('create_lineup requires at least one lineup group.')
+  }
+  const resolvedGroups = await Promise.all(
+    params.groups.map(async (g, gIdx) => {
+      const resolvedPlayers = await Promise.all(
+        (g.players ?? []).map(async (p, pIdx) => {
+          const player = await resolvePlayer(config, orgId, p.playerName)
+          return { player, role: p.role ?? null, sort_order: pIdx }
+        })
+      )
+      return { name: g.name, sort_order: gIdx, players: resolvedPlayers }
+    })
+  )
+
+  await sbWrite(config, 'DELETE', `/game_lineups?game_id=eq.${game.id}`)
+  await sbWrite(config, 'DELETE', `/game_lineup_groups?game_id=eq.${game.id}`)
+
+  await sbWrite(
+    config,
+    'POST',
+    '/game_lineup_groups',
+    resolvedGroups.map(g => ({
+      organization_id: orgId,
+      game_id: game.id,
+      lineup_name: g.name,
+      sort_order: g.sort_order,
+    }))
+  )
+
+  const playerRows = resolvedGroups.flatMap(g =>
+    g.players.map(p => ({
+      organization_id: orgId,
+      game_id: game.id,
+      player_id: p.player.id,
+      lineup_name: g.name,
+      role: p.role,
+      sort_order: p.sort_order,
+    }))
+  )
+  if (playerRows.length > 0) {
+    await sbWrite(config, 'POST', '/game_lineups', playerRows)
+  }
+
+  if (game.season_id) {
+    for (const p of playerRows) {
+      await sbUpsertIgnore(
+        config,
+        '/season_players',
+        { organization_id: orgId, season_id: game.season_id, player_id: p.player_id, is_sub: true },
+        'season_id,player_id'
+      )
+    }
+  }
+
+  return {
+    game: { date: game.game_date, opponent: game.opponent },
+    groups: resolvedGroups.map(g => ({
+      name: g.name,
+      players: g.players.map(p => ({ name: p.player.display_name, role: p.role })),
+    })),
+  }
+}
+
+export async function listLineupTemplates(
+  config: ActionsConfig, orgId: number,
+  params: { seasonName?: string; gameDate?: string; opponent?: string }
+) {
+  let seasonId: number | null = null
+  let seasonLabelStr: string | null = null
+  if (params.seasonName) {
+    const season = await resolveSeason(config, orgId, params.seasonName)
+    seasonId = season.id
+    seasonLabelStr = season.label
+  } else {
+    try {
+      const game = await resolveGame(config, orgId, params)
+      if (game.season_id) {
+        seasonId = game.season_id
+      }
+    } catch {
+      // Listing without game context
+    }
+  }
+
+  const queryPath = seasonId
+    ? `/lineup_templates?organization_id=eq.${orgId}&season_id=eq.${seasonId}&select=id,name,season_id&order=name.asc`
+    : `/lineup_templates?organization_id=eq.${orgId}&select=id,name,season_id&order=name.asc`
+  const rows: { id: number; name: string; season_id: number }[] = await sbGet(config, queryPath)
+
+  return {
+    season: seasonLabelStr,
+    templates: (rows ?? []).map(r => ({ id: r.id, name: r.name })),
+  }
+}
+
+export async function saveLineupTemplate(
+  config: ActionsConfig, orgId: number,
+  params: { name: string; seasonName?: string; gameDate?: string; opponent?: string }
+) {
+  const game = await resolveGame(config, orgId, params)
+  let seasonId = game.season_id
+  if (params.seasonName) {
+    const season = await resolveSeason(config, orgId, params.seasonName)
+    seasonId = season.id
+  }
+  if (!seasonId) {
+    throw new Error('A lineup template must be associated with a season. This game has no season.')
+  }
+
+  const groups: { lineup_name: string; sort_order: number }[] = await sbGet(config, `/game_lineup_groups?game_id=eq.${game.id}&select=lineup_name,sort_order&order=sort_order`)
+  const players: { lineup_name: string; player_id: number; sort_order: number; role: string | null }[] = await sbGet(config, `/game_lineups?game_id=eq.${game.id}&select=lineup_name,player_id,sort_order,role&order=sort_order`)
+
+  const existing: { id: number }[] = await sbGet(config, `/lineup_templates?organization_id=eq.${orgId}&season_id=eq.${seasonId}&name=eq.${encodeURIComponent(params.name)}&select=id`)
+  let templateId: number
+  if (existing.length > 0) {
+    templateId = existing[0]!.id
+  } else {
+    const inserted = await sbWrite(config, 'POST', '/lineup_templates', {
+      organization_id: orgId,
+      season_id: seasonId,
+      name: params.name,
+    })
+    templateId = inserted[0]!.id
+  }
+
+  await sbWrite(config, 'DELETE', `/lineup_template_groups?template_id=eq.${templateId}`)
+  await sbWrite(config, 'DELETE', `/lineup_template_players?template_id=eq.${templateId}`)
+
+  if (groups.length > 0) {
+    await sbWrite(
+      config,
+      'POST',
+      '/lineup_template_groups',
+      groups.map((g, i) => ({
+        template_id: templateId,
+        organization_id: orgId,
+        lineup_name: g.lineup_name,
+        sort_order: g.sort_order ?? i,
+      }))
+    )
+  }
+
+  if (players.length > 0) {
+    await sbWrite(
+      config,
+      'POST',
+      '/lineup_template_players',
+      players.map((p, i) => ({
+        template_id: templateId,
+        organization_id: orgId,
+        lineup_name: p.lineup_name,
+        player_id: p.player_id,
+        sort_order: p.sort_order ?? i,
+        role: p.role,
+      }))
+    )
+  }
+
+  return {
+    templateId,
+    name: params.name,
+    groups: groups.map(g => g.lineup_name),
+    playersCount: players.length,
+  }
+}
+
+export async function applyLineupTemplate(
+  config: ActionsConfig, orgId: number,
+  params: { templateName: string; seasonName?: string; gameDate?: string; opponent?: string }
+) {
+  const game = await resolveGame(config, orgId, params)
+  let seasonId = game.season_id
+  if (params.seasonName) {
+    const season = await resolveSeason(config, orgId, params.seasonName)
+    seasonId = season.id
+  }
+
+  let templatePath = `/lineup_templates?organization_id=eq.${orgId}&select=id,name,season_id`
+  if (seasonId) {
+    templatePath += `&season_id=eq.${seasonId}`
+  }
+  const templates: { id: number; name: string; season_id: number }[] = await sbGet(config, templatePath)
+  const q = params.templateName.trim().toLowerCase()
+  let matches = templates.filter(t => t.name.toLowerCase() === q)
+  if (matches.length === 0) matches = templates.filter(t => t.name.toLowerCase().includes(q))
+  if (matches.length === 0) throw new Error(`No lineup template found matching "${params.templateName}".`)
+  if (matches.length > 1) throw new Error(`Multiple lineup templates match "${params.templateName}": ${matches.map(m => m.name).join(', ')}. Be more specific.`)
+  const template = matches[0]!
+
+  const groups: { lineup_name: string; sort_order: number }[] = await sbGet(config, `/lineup_template_groups?template_id=eq.${template.id}&select=lineup_name,sort_order&order=sort_order`)
+  const players: { lineup_name: string; player_id: number; sort_order: number; role: string | null }[] = await sbGet(config, `/lineup_template_players?template_id=eq.${template.id}&select=lineup_name,player_id,sort_order,role&order=sort_order`)
+
+  await sbWrite(config, 'DELETE', `/game_lineups?game_id=eq.${game.id}`)
+  await sbWrite(config, 'DELETE', `/game_lineup_groups?game_id=eq.${game.id}`)
+
+  if (groups.length > 0) {
+    await sbWrite(
+      config,
+      'POST',
+      '/game_lineup_groups',
+      groups.map((g, i) => ({
+        organization_id: orgId,
+        game_id: game.id,
+        lineup_name: g.lineup_name,
+        sort_order: g.sort_order ?? i,
+      }))
+    )
+  }
+
+  if (players.length > 0) {
+    await sbWrite(
+      config,
+      'POST',
+      '/game_lineups',
+      players.map((p, i) => ({
+        organization_id: orgId,
+        game_id: game.id,
+        player_id: p.player_id,
+        lineup_name: p.lineup_name,
+        role: p.role,
+        sort_order: p.sort_order ?? i,
+      }))
+    )
+  }
+
+  if (game.season_id && players.length > 0) {
+    for (const p of players) {
+      await sbUpsertIgnore(
+        config,
+        '/season_players',
+        { organization_id: orgId, season_id: game.season_id, player_id: p.player_id, is_sub: true },
+        'season_id,player_id'
+      )
+    }
+  }
+
+  return {
+    game: { date: game.game_date, opponent: game.opponent },
+    appliedTemplate: template.name,
+    groups: groups.map(g => g.lineup_name),
+    playersCount: players.length,
+  }
 }
 
 // Read-only, code-computed stat breakdown for the chat assistant to call
@@ -398,6 +762,9 @@ export const WRITE_FUNCTIONS: ReadonlySet<string> = new Set([
   'add_to_lineup',
   'remove_from_lineup',
   'create_lineup_group',
+  'create_lineup',
+  'save_lineup_template',
+  'apply_lineup_template',
 ])
 
 export async function callChatFunction(config: ActionsConfig, orgId: number, name: string, args: Record<string, unknown>, scope?: ChatScope): Promise<unknown> {
@@ -407,6 +774,11 @@ export async function callChatFunction(config: ActionsConfig, orgId: number, nam
     case 'add_to_lineup': return addToLineup(config, orgId, args as any)
     case 'remove_from_lineup': return removeFromLineup(config, orgId, args as any)
     case 'create_lineup_group': return createLineupGroup(config, orgId, args as any)
+    case 'view_lineup': return viewLineup(config, orgId, args as any)
+    case 'create_lineup': return createLineup(config, orgId, args as any)
+    case 'list_lineup_templates': return listLineupTemplates(config, orgId, args as any)
+    case 'save_lineup_template': return saveLineupTemplate(config, orgId, args as any)
+    case 'apply_lineup_template': return applyLineupTemplate(config, orgId, args as any)
     case 'query_stat_breakdown': return queryStatBreakdown(config, orgId, args as any, scope)
     default: throw new Error(`Unknown function: ${name}`)
   }

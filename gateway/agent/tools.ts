@@ -78,6 +78,52 @@ export function makeChatTools(deps: ChatToolDeps): DynamicStructuredTool[] {
       func: run('create_lineup_group'),
     }),
     new DynamicStructuredTool({
+      name: 'view_lineup',
+      description: 'Returns the lineup groups and players placed in each for a game (defaults to current game). Use this to see who is on what line, who is attending, or to inspect current lines before making changes.',
+      schema: gameHint,
+      func: run('view_lineup'),
+    }),
+    new DynamicStructuredTool({
+      name: 'create_lineup',
+      description: 'Sets or replaces the entire lineup for a game with specified groups and players. Replaces any existing lineup for that game.',
+      schema: gameHint.extend({
+        groups: z.array(z.object({
+          name: z.string().describe('Lineup group name, e.g. "O-Line" or "Line 1".'),
+          players: z.array(z.object({
+            playerName: z.string(),
+            role: z.string().optional().describe('e.g. "Handler", "Cutter", "Deep Cutter".'),
+          })).optional(),
+        })).describe('Array of lineup groups with their players.'),
+      }),
+      func: run('create_lineup'),
+    }),
+    new DynamicStructuredTool({
+      name: 'list_lineup_templates',
+      description: "Lists saved lineup templates for a season or the current game's season.",
+      schema: gameHint.extend({
+        seasonName: z.string().optional().describe('Season name/substring, e.g. "Jam Summer 2026". Defaults to current game season.'),
+      }),
+      func: run('list_lineup_templates'),
+    }),
+    new DynamicStructuredTool({
+      name: 'save_lineup_template',
+      description: "Saves the specified game's current lineup as a reusable named template for its season. Overwrites if a template with that name already exists.",
+      schema: gameHint.extend({
+        name: z.string().describe('Name for the template, e.g. "Starting 7" or "Zone D".'),
+        seasonName: z.string().optional().describe("Season name/substring. Defaults to the game's season."),
+      }),
+      func: run('save_lineup_template'),
+    }),
+    new DynamicStructuredTool({
+      name: 'apply_lineup_template',
+      description: "Replaces a game's entire lineup by loading a saved lineup template by name.",
+      schema: gameHint.extend({
+        templateName: z.string().describe('Name of the template to load.'),
+        seasonName: z.string().optional().describe('Season name/substring.'),
+      }),
+      func: run('apply_lineup_template'),
+    }),
+    new DynamicStructuredTool({
       name: 'query_stat_breakdown',
       description: `Computes an exact, code-verified stat breakdown. The system prompt's PLAYER STATS and ASSIST PAIRINGS tables are pre-tallied but ALL-TIME ONLY — call this tool instead of counting from EVENT TIMELINE yourself whenever a question is scoped to one specific season or one specific game. Examples: "who assisted Eric the most this season" -> {metric: "assists", byAssistPairing: true, seasonName: "Jam Summer 2026"}. "top scorers in the game vs Huck Huck Goose" -> {metric: "goals", opponent: "Huck Huck Goose"}. "who had the most turnovers in Jam Summer 2026" -> {metric: "turnovers", seasonName: "Jam Summer 2026"}. "best pairing so far this season" -> {metric: "assists", byAssistPairing: true, seasonName: "<current season>"}. Omit seasonName/gameDate/opponent only for an all-time breakdown (rarely needed since PLAYER STATS/ASSIST PAIRINGS already cover all-time).
 STRICT OUTPUT RULE: the "rows" you get back are the complete, final, already-correct answer for exactly the scope you asked for — quote a row's "count" verbatim, character for character, in your reply. Never recalculate, round, average, or "estimate" a count; never blend a scoped row with the separate ALL-TIME PLAYER STATS/ASSIST PAIRINGS numbers in the same sentence (e.g. do not say "4 this season (6 all-time)" — pick the one scope the user asked about and report only that). An empty "rows" array is a real, valid answer meaning zero matching events for that exact scope (check the "note" field, which spells this out) — say so plainly, do not treat it as a failure or fall back to guessing a number. If seasonName/gameDate/opponent fails to resolve, or metric is invalid, the call errors out instead of returning empty rows — tell the user you couldn't find that season/game/metric by name instead of guessing a number.`,
