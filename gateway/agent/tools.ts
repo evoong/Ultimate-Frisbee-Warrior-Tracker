@@ -1,30 +1,83 @@
 // LangChain tool wrappers over gameActions' dispatch — the same callChatFunction
 // the old Gemini loop and the MCP server use. The tool layer is where the
-// editor-tier write gate lives now (spec: member = queries only), and where
-// the PostHog $ai_span per tool call is emitted via onSpan.
+// editor-tier write gate lives now (spec: member = queries only), where the
+// PostHog $ai_span per tool call is emitted via onSpan, and — for chat
+// action recovery — where write-tool snapshots become chat_actions receipts:
+// gameActions' write handlers attach `__receipt` to their return value, this
+// layer strips it (receipts NEVER reach the model), records it via
+// chatRecovery.recordChatAction when the runtime supplied identity
+// (deps.recovery) + Supabase config, and surfaces the recorded receipt to
+// the runtime through onActionReceipt. If the record fails, the tool call
+// returns { error } — the write already happened, so the failure must be
+// reported, not swallowed (true write+record atomicity needs one DB
+// transaction, impossible over the REST layer). rollback_last_action also
+// resolves here, via findLatestActionToRollback + executeRollback: the
+// session identity it needs is a runtime concern callChatFunction never
+// sees, so it never goes through deps.dispatch.
 import { DynamicStructuredTool } from '@langchain/core/tools'
 import { z } from 'zod'
 import { hasAtLeast, type TeamRole } from '../membership.js'
-import { WRITE_FUNCTIONS, EVENT_TYPES, STAT_METRICS } from '../gameActions.js'
+import { WRITE_FUNCTIONS, EVENT_TYPES, STAT_METRICS, type ActionReceiptData } from '../gameActions.js'
+import { recordChatAction, findLatestActionToRollback, executeRollback, type ActionsConfig, type ChatActionReceipt } from '../chatRecovery.js'
 
 export interface ChatToolDeps {
   dispatch: (name: string, args: Record<string, unknown>) => Promise<unknown>
   role: TeamRole
   onSpan?: (name: string, args: unknown, result: { output?: unknown; error?: string }, latencyMs: number) => void
+  // Chat action recovery: present only when the runtime provided a session
+  // identity and a Supabase config for recording receipts. Absent (existing
+  // tests, unwired runtimes) -> write tools behave exactly as before.
+  onActionReceipt?: (receipt: ChatActionReceipt) => void
+  recovery?: { sessionId: string; userId: string; requestId: string }
+  actionsConfig?: ActionsConfig
+  orgId?: number
 }
 
 function writeBlocked() {
   return { error: "you do not have permission to change this team's data" }
 }
 
+function stripReceipt(output: unknown): { result: unknown; receipt?: ActionReceiptData } {
+  if (output == null || typeof output !== 'object' || Array.isArray(output) || !('__receipt' in output)) {
+    return { result: output }
+  }
+  const { __receipt, ...rest } = output as { __receipt?: ActionReceiptData } & Record<string, unknown>
+  return { result: rest, receipt: __receipt }
+}
+
 export function makeChatTools(deps: ChatToolDeps): DynamicStructuredTool[] {
+  const rollbackLastAction = async (): Promise<unknown> => {
+    if (!deps.recovery || !deps.actionsConfig || deps.orgId == null) {
+      return { error: 'undo is not available in this session' }
+    }
+    const latest = await findLatestActionToRollback(deps.actionsConfig, deps.orgId, deps.recovery.sessionId, deps.recovery.userId)
+    if (!latest) return { error: 'no recent action to undo' }
+    await executeRollback(deps.actionsConfig, deps.orgId, latest.id, deps.recovery.userId)
+    return { undone: { id: latest.id, description: latest.description } }
+  }
+
   const run = (name: string) => async (args: Record<string, unknown>) => {
     if (WRITE_FUNCTIONS.has(name) && !hasAtLeast(deps.role, 'editor')) return writeBlocked()
     const start = Date.now()
     try {
-      const output = await deps.dispatch(name, args)
-      deps.onSpan?.(name, args, { output }, Date.now() - start)
-      return output
+      const output = name === 'rollback_last_action' ? await rollbackLastAction() : await deps.dispatch(name, args)
+      const { result, receipt } = stripReceipt(output)
+      if (receipt && deps.recovery && deps.actionsConfig && deps.orgId != null) {
+        // A throw here (record failed after the write landed) is caught
+        // below and reported as the tool call's { error } result.
+        const recorded = await recordChatAction(deps.actionsConfig, deps.orgId, {
+          sessionId: deps.recovery.sessionId,
+          userId: deps.recovery.userId,
+          requestId: deps.recovery.requestId,
+          actionType: name,
+          description: receipt.description,
+          beforeRows: receipt.before,
+          afterRows: receipt.after,
+        })
+        deps.onActionReceipt?.(recorded)
+      }
+      deps.onSpan?.(name, args, { output: result }, Date.now() - start)
+      return result
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err)
       deps.onSpan?.(name, args, { error }, Date.now() - start)
@@ -76,6 +129,12 @@ export function makeChatTools(deps: ChatToolDeps): DynamicStructuredTool[] {
       description: 'Adds a new, initially empty lineup group (e.g. "Line 2") to a game.',
       schema: gameHint.extend({ name: z.string() }),
       func: run('create_lineup_group'),
+    }),
+    new DynamicStructuredTool({
+      name: 'rollback_last_action',
+      description: 'Reverses the most recent write action performed by the chat assistant in this conversation. Use when the user says "undo what you just did", "undo that", "revert your last change", or "cancel that action". If the user instead wants to remove the newest logged game event regardless of who logged it, use undo_last_event.',
+      schema: z.object({}),
+      func: run('rollback_last_action'),
     }),
     new DynamicStructuredTool({
       name: 'query_stat_breakdown',

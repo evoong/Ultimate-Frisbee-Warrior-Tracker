@@ -10,6 +10,24 @@
 // intentionally duplicated from frontend/lib rather than imported, matching
 // how chat.ts's getTeamContext already inlines its own turnover-type check
 // rather than pulling frontend code into the gateway bundle.
+//
+// SNAPSHOT MECHANISM (chat action recovery): every write handler attaches
+// an optional `__receipt: { before, after, description }` to its otherwise
+// unchanged return value. The agent tool layer (agent/tools.ts) strips
+// `__receipt` before anything reaches the model and records it as a
+// chat_actions receipt row (chatRecovery.recordChatAction); other direct
+// callers (MCP tools, tests) simply see one extra key. A write that cannot
+// produce an invertible snapshot — an ignored-duplicate upsert, a missing
+// POST representation — attaches NO receipt, so undo is never promised for
+// an action that cannot be reversed. The before/after shapes per action
+// type are pinned by gateway/chatRecovery.test.mjs (the executable
+// contract): create_game_event after_rows.event = full created row;
+// undo_last_event before_rows.event = full deleted row, after_rows = {};
+// add_to_lineup before_rows.lineup_rows = the player's prior rows,
+// after_rows = { lineup_row, group?, season_player? }; remove_from_lineup
+// before_rows.removed_rows = full removed rows, after_rows = { game_id,
+// player_id, lineup_rows: [] }; create_lineup_group after_rows.group =
+// full created row.
 
 import { type ActionsConfig, sbGet, sbWrite, sbUpsertIgnore, getOrgEffectiveTier, gameDateWithinFreeWindow } from './supabaseRest.js'
 import type { ChatScope } from './agent/context.js'
@@ -34,6 +52,15 @@ export function gameStartsAt(g: { game_date: string; game_time: string | null })
 }
 
 export type GameRow = { id: number; season_id: number | null; opponent: string; game_date: string; game_time: string | null }
+
+// What a write handler attaches to its return value so the agent tool
+// layer can record a chat_actions receipt. `before`/`after` follow the
+// per-type shapes pinned by chatRecovery.test.mjs (see module header).
+export interface ActionReceiptData {
+  before: Record<string, unknown>
+  after: Record<string, unknown>
+  description: string
+}
 
 export async function getAllGames(config: ActionsConfig, orgId: number): Promise<GameRow[]> {
   return sbGet(config, `/games?organization_id=eq.${orgId}&select=id,season_id,opponent,game_date,game_time`)
@@ -188,6 +215,11 @@ export const CHAT_FUNCTION_DECLARATIONS = [
     },
   },
   {
+    name: 'rollback_last_action',
+    description: 'Reverses the most recent write action performed by the chat assistant in this conversation. Use when the user says "undo what you just did", "undo that", "revert your last change", or "cancel that action". If the user instead wants to remove the newest logged game event regardless of who logged it, use undo_last_event.',
+    parametersJsonSchema: { type: 'object', properties: {} },
+  },
+  {
     name: 'query_stat_breakdown',
     description: `Computes an exact, code-verified stat breakdown. The system prompt's PLAYER STATS and ASSIST PAIRINGS tables are pre-tallied but ALL-TIME ONLY — call this tool instead of counting from EVENT TIMELINE yourself whenever a question is scoped to one specific season or one specific game. Examples: "who assisted Eric the most this season" -> {metric: "assists", byAssistPairing: true, seasonName: "Jam Summer 2026"}. "top scorers in the game vs Huck Huck Goose" -> {metric: "goals", opponent: "Huck Huck Goose"}. "who had the most turnovers in Jam Summer 2026" -> {metric: "turnovers", seasonName: "Jam Summer 2026"}. "best pairing so far this season" -> {metric: "assists", byAssistPairing: true, seasonName: "<current season>"}. Omit seasonName/gameDate/opponent only for an all-time breakdown (rarely needed since PLAYER STATS/ASSIST PAIRINGS already cover all-time).
 STRICT OUTPUT RULE: the "rows" you get back are the complete, final, already-correct answer for exactly the scope you asked for — quote a row's "count" verbatim, character for character, in your reply. Never recalculate, round, average, or "estimate" a count; never blend a scoped row with the separate ALL-TIME PLAYER STATS/ASSIST PAIRINGS numbers in the same sentence (e.g. do not say "4 this season (6 all-time)" — pick the one scope the user asked about and report only that). An empty "rows" array is a real, valid answer meaning zero matching events for that exact scope (check the "note" field, which spells this out) — say so plainly, do not treat it as a failure or fall back to guessing a number. If seasonName/gameDate/opponent fails to resolve, or metric is invalid, the call errors out instead of returning empty rows — tell the user you couldn't find that season/game/metric by name instead of guessing a number.`,
@@ -212,7 +244,7 @@ export async function createGameEvent(
   const game = await resolveGame(config, orgId, params)
   const player = params.playerName ? await resolvePlayer(config, orgId, params.playerName) : undefined
   const assister = params.assisterName ? await resolvePlayer(config, orgId, params.assisterName) : undefined
-  await sbWrite(config, 'POST', '/game_events', {
+  const created = await sbWrite(config, 'POST', '/game_events', {
     organization_id: orgId,
     game_id: game.id,
     player_id: player?.id ?? null,
@@ -222,16 +254,28 @@ export async function createGameEvent(
     notes: params.notes ?? null,
   })
   const score = await currentScore(config, orgId, game)
-  return { game: { date: game.game_date, opponent: game.opponent }, player: player?.display_name ?? null, assister: assister?.display_name ?? null, ...score }
+  const description = player
+    ? `Logged ${params.eventType}: ${player.display_name}${assister ? ` (assist ${assister.display_name})` : ''}`
+    : `Logged ${params.eventType} vs ${game.opponent}`
+  const __receipt: ActionReceiptData | undefined = created?.[0] != null
+    ? { before: {}, after: { event: created[0] }, description }
+    : undefined
+  return { game: { date: game.game_date, opponent: game.opponent }, player: player?.display_name ?? null, assister: assister?.display_name ?? null, ...score, __receipt }
 }
 
 export async function undoLastEvent(config: ActionsConfig, orgId: number, params: { gameDate?: string; opponent?: string }) {
   const game = await resolveGame(config, orgId, params)
-  const events = await sbGet(config, `/game_events?game_id=eq.${game.id}&select=id,event_type,player_id,related_player_id&order=event_timestamp.desc&limit=1`)
+  const events = await sbGet(config, `/game_events?game_id=eq.${game.id}&select=*&order=event_timestamp.desc&limit=1`)
   if (events.length === 0) throw new Error(`No events logged yet for the game vs ${game.opponent} on ${game.game_date}.`)
   const deleted = await sbWrite(config, 'DELETE', `/game_events?id=eq.${events[0].id}`)
   const score = await currentScore(config, orgId, game)
-  return { game: { date: game.game_date, opponent: game.opponent }, undone: deleted[0], ...score }
+  const removed: Record<string, unknown> = events[0]
+  const __receipt: ActionReceiptData = {
+    before: { event: removed },
+    after: {},
+    description: `Undid event: ${removed.event_type} vs ${game.opponent} on ${game.game_date}`,
+  }
+  return { game: { date: game.game_date, opponent: game.opponent }, undone: deleted[0], ...score, __receipt }
 }
 
 export async function addToLineup(
@@ -244,26 +288,51 @@ export async function addToLineup(
   const groups: { lineup_name: string; sort_order: number }[] = await sbGet(config, `/game_lineup_groups?game_id=eq.${game.id}&select=lineup_name,sort_order&order=sort_order`)
   const targetName = params.lineupGroupName ?? groups[0]?.lineup_name ?? 'Lineup 1'
   const groupExists = groups.some(g => g.lineup_name.toLowerCase() === targetName.toLowerCase())
+  let createdGroup: Record<string, unknown>[] = []
   if (!groupExists) {
     const nextSortOrder = groups.length > 0 ? Math.max(...groups.map(g => g.sort_order)) + 1 : 0
-    await sbUpsertIgnore(config, '/game_lineup_groups', { organization_id: orgId, game_id: game.id, lineup_name: targetName, sort_order: nextSortOrder }, 'game_id,lineup_name')
+    createdGroup = await sbUpsertIgnore(config, '/game_lineup_groups', { organization_id: orgId, game_id: game.id, lineup_name: targetName, sort_order: nextSortOrder }, 'game_id,lineup_name')
   }
 
+  // Snapshot the player's prior rows before the DELETE replaces them — the
+  // receipt's before_rows (undo re-inserts exactly these).
+  const priorRows: Record<string, unknown>[] = await sbGet(config, `/game_lineups?game_id=eq.${game.id}&player_id=eq.${player.id}&select=*`)
   await sbWrite(config, 'DELETE', `/game_lineups?game_id=eq.${game.id}&player_id=eq.${player.id}`)
-  await sbWrite(config, 'POST', '/game_lineups', { organization_id: orgId, game_id: game.id, player_id: player.id, lineup_name: targetName, role: params.role ?? null })
+  const created = await sbWrite(config, 'POST', '/game_lineups', { organization_id: orgId, game_id: game.id, player_id: player.id, lineup_name: targetName, role: params.role ?? null })
 
+  let createdSeasonPlayer: Record<string, unknown>[] = []
   if (game.season_id) {
-    await sbUpsertIgnore(config, '/season_players', { organization_id: orgId, season_id: game.season_id, player_id: player.id, is_sub: true }, 'season_id,player_id')
+    // resolution=ignore-duplicates: an empty return means the season_players
+    // row already existed and must NOT be recorded as created by this action.
+    createdSeasonPlayer = await sbUpsertIgnore(config, '/season_players', { organization_id: orgId, season_id: game.season_id, player_id: player.id, is_sub: true }, 'season_id,player_id')
   }
 
-  return { game: { date: game.game_date, opponent: game.opponent }, player: player.display_name, lineup_group: targetName }
+  // lineup_row.id is REQUIRED for inversion; without a POST representation
+  // there is no invertible snapshot, so no receipt is attached.
+  const __receipt: ActionReceiptData | undefined = created?.[0] != null
+    ? {
+        before: { lineup_rows: priorRows },
+        after: {
+          lineup_row: created[0],
+          ...(createdGroup[0] != null ? { group: createdGroup[0] } : {}),
+          ...(createdSeasonPlayer[0] != null ? { season_player: createdSeasonPlayer[0] } : {}),
+        },
+        description: `Added ${player.display_name} to ${targetName} lineup`,
+      }
+    : undefined
+  return { game: { date: game.game_date, opponent: game.opponent }, player: player.display_name, lineup_group: targetName, __receipt }
 }
 
 export async function removeFromLineup(config: ActionsConfig, orgId: number, params: { playerName: string; gameDate?: string; opponent?: string }) {
   const game = await resolveGame(config, orgId, params)
   const player = await resolvePlayer(config, orgId, params.playerName)
   const removed = await sbWrite(config, 'DELETE', `/game_lineups?game_id=eq.${game.id}&player_id=eq.${player.id}`)
-  return { game: { date: game.game_date, opponent: game.opponent }, player: player.display_name, removed_rows: removed.length }
+  const __receipt: ActionReceiptData = {
+    before: { removed_rows: removed },
+    after: { game_id: game.id, player_id: player.id, lineup_rows: [] },
+    description: `Removed ${player.display_name} from lineup`,
+  }
+  return { game: { date: game.game_date, opponent: game.opponent }, player: player.display_name, removed_rows: removed.length, __receipt }
 }
 
 export async function createLineupGroup(config: ActionsConfig, orgId: number, params: { name: string; gameDate?: string; opponent?: string }) {
@@ -271,7 +340,12 @@ export async function createLineupGroup(config: ActionsConfig, orgId: number, pa
   const groups: { sort_order: number }[] = await sbGet(config, `/game_lineup_groups?game_id=eq.${game.id}&select=sort_order&order=sort_order.desc&limit=1`)
   const nextSortOrder = groups.length > 0 ? groups[0]!.sort_order + 1 : 0
   const created = await sbUpsertIgnore(config, '/game_lineup_groups', { organization_id: orgId, game_id: game.id, lineup_name: params.name, sort_order: nextSortOrder }, 'game_id,lineup_name')
-  return { game: { date: game.game_date, opponent: game.opponent }, created: created[0] ?? { note: `A group named "${params.name}" already exists.` } }
+  // Ignored duplicate: nothing was written, so no receipt is attached —
+  // undo must not be offered for a no-op.
+  const __receipt: ActionReceiptData | undefined = created[0] != null
+    ? { before: {}, after: { group: created[0] }, description: `Created lineup group ${params.name}` }
+    : undefined
+  return { game: { date: game.game_date, opponent: game.opponent }, created: created[0] ?? { note: `A group named "${params.name}" already exists.` }, __receipt }
 }
 
 // Read-only, code-computed stat breakdown for the chat assistant to call
@@ -398,6 +472,12 @@ export const WRITE_FUNCTIONS: ReadonlySet<string> = new Set([
   'add_to_lineup',
   'remove_from_lineup',
   'create_lineup_group',
+  // Not a callChatFunction case: the agent tool layer resolves it via
+  // chatRecovery (findLatestActionToRollback + executeRollback), which needs
+  // the session identity callChatFunction never sees. Listed here so the
+  // editor-tier gate in agent/tools.ts and the classification invariant in
+  // gameActions.test.mjs both cover it.
+  'rollback_last_action',
 ])
 
 export async function callChatFunction(config: ActionsConfig, orgId: number, name: string, args: Record<string, unknown>, scope?: ChatScope): Promise<unknown> {
