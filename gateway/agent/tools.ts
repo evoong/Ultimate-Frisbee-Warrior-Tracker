@@ -1,32 +1,42 @@
 // LangChain tool wrappers over gameActions' dispatch — the same callChatFunction
 // the old Gemini loop and the MCP server use. The tool layer is where the
-// editor-tier write gate lives now (spec: member = queries only), where the
-// PostHog $ai_span per tool call is emitted via onSpan, and — for chat
-// action recovery — where write-tool snapshots become chat_actions receipts:
-// gameActions' write handlers attach `__receipt` to their return value, this
-// layer strips it (receipts NEVER reach the model), records it via
-// chatRecovery.recordChatAction when the runtime supplied identity
-// (deps.recovery) + Supabase config, and surfaces the recorded receipt to
-// the runtime through onActionReceipt. If the record fails, the tool call
-// returns { error } — the write already happened, so the failure must be
-// reported, not swallowed (true write+record atomicity needs one DB
-// transaction, impossible over the REST layer). rollback_last_action also
-// resolves here, via findLatestActionToRollback + executeRollback: the
-// session identity it needs is a runtime concern callChatFunction never
-// sees, so it never goes through deps.dispatch.
+// editor-tier write gate lives (spec: member = queries only), where the
+// PostHog $ai_span per tool call is emitted via onSpan, where write calls
+// become PROPOSALS instead of writes (spec: 2026-09-29-chat-interactive-
+// features): deps.propose validates + stores a chat_action_proposals row and
+// the frontend confirms via POST /api/chat/confirm, which re-dispatches and
+// records the chat_actions receipt — and where, for chat action recovery,
+// receipts from any still-dispatching path are stripped here (receipts NEVER
+// reach the model), recorded via chatRecovery.recordChatAction when the
+// runtime supplied identity (deps.recovery) + Supabase config, and surfaced
+// through onActionReceipt. rollback_last_action also resolves here, via
+// findLatestActionToRollback + executeRollback: the session identity it
+// needs is a runtime concern callChatFunction never sees, so it never goes
+// through deps.dispatch.
 import { DynamicStructuredTool } from '@langchain/core/tools'
 import { z } from 'zod'
 import { hasAtLeast, type TeamRole } from '../membership.js'
 import { WRITE_FUNCTIONS, EVENT_TYPES, STAT_METRICS, type ActionReceiptData } from '../gameActions.js'
 import { recordChatAction, findLatestActionToRollback, executeRollback, type ActionsConfig, type ChatActionReceipt } from '../chatRecovery.js'
 
+export interface ChatProposal {
+  id: string
+  tool_name: string
+  args: Record<string, unknown>
+  summary: string
+}
+
 export interface ChatToolDeps {
   dispatch: (name: string, args: Record<string, unknown>) => Promise<unknown>
   role: TeamRole
   onSpan?: (name: string, args: unknown, result: { output?: unknown; error?: string }, latencyMs: number) => void
+  /** Writes never dispatch: the host validates + stores a proposal instead. */
+  propose?: (name: string, args: Record<string, unknown>) => Promise<{ proposal_id: string; summary: string }>
+  /** Fired once per stored proposal; hosts keep the latest (last wins). */
+  onProposal?: (p: ChatProposal) => void
   // Chat action recovery: present only when the runtime provided a session
   // identity and a Supabase config for recording receipts. Absent (existing
-  // tests, unwired runtimes) -> write tools behave exactly as before.
+  // tests, unwired runtimes) -> no receipts are recorded.
   onActionReceipt?: (receipt: ChatActionReceipt) => void
   recovery?: { sessionId: string; userId: string; requestId: string }
   actionsConfig?: ActionsConfig
@@ -57,14 +67,36 @@ export function makeChatTools(deps: ChatToolDeps): DynamicStructuredTool[] {
   }
 
   const run = (name: string) => async (args: Record<string, unknown>) => {
-    if (WRITE_FUNCTIONS.has(name) && !hasAtLeast(deps.role, 'editor')) return writeBlocked()
     const start = Date.now()
     try {
-      const output = name === 'rollback_last_action' ? await rollbackLastAction() : await deps.dispatch(name, args)
+      if (name === 'rollback_last_action') {
+        // Editor-tier gate + direct resolution: a rollback IS a write, but it
+        // never carries a __receipt (the rollback itself is not re-recorded;
+        // executeRollback marks the original action rolled_back).
+        if (!hasAtLeast(deps.role, 'editor')) return writeBlocked()
+        const undone = await rollbackLastAction()
+        deps.onSpan?.(name, args, { output: undone }, Date.now() - start)
+        return undone
+      }
+      if (WRITE_FUNCTIONS.has(name)) {
+        // Real writes never dispatch: propose, let the card confirm. The
+        // chat_actions receipt is recorded by the confirm endpoint when the
+        // user presses Confirm, not here.
+        if (!hasAtLeast(deps.role, 'editor')) return writeBlocked()
+        if (!deps.propose) return { error: 'action confirmation is unavailable' }
+        const p = await deps.propose(name, args)
+        deps.onProposal?.({ id: p.proposal_id, tool_name: name, args, summary: p.summary })
+        const proposed = { proposed: true, proposal_id: p.proposal_id, summary: p.summary }
+        deps.onSpan?.(name, args, { output: proposed }, Date.now() - start)
+        return proposed
+      }
+      let output = await deps.dispatch(name, args)
       const { result, receipt } = stripReceipt(output)
       if (receipt && deps.recovery && deps.actionsConfig && deps.orgId != null) {
         // A throw here (record failed after the write landed) is caught
-        // below and reported as the tool call's { error } result.
+        // below and reported as the tool call's { error } result. Only
+        // reachable for write handlers still dispatching on unwired
+        // runtimes; the propose path above records at confirm time.
         const recorded = await recordChatAction(deps.actionsConfig, deps.orgId, {
           sessionId: deps.recovery.sessionId,
           userId: deps.recovery.userId,
@@ -129,6 +161,52 @@ export function makeChatTools(deps: ChatToolDeps): DynamicStructuredTool[] {
       description: 'Adds a new, initially empty lineup group (e.g. "Line 2") to a game.',
       schema: gameHint.extend({ name: z.string() }),
       func: run('create_lineup_group'),
+    }),
+    new DynamicStructuredTool({
+      name: 'view_lineup',
+      description: 'Returns the lineup groups and players placed in each for a game (defaults to current game). Use this to see who is on what line, who is attending, or to inspect current lines before making changes.',
+      schema: gameHint,
+      func: run('view_lineup'),
+    }),
+    new DynamicStructuredTool({
+      name: 'create_lineup',
+      description: 'Sets or replaces the entire lineup for a game with specified groups and players. Replaces any existing lineup for that game.',
+      schema: gameHint.extend({
+        groups: z.array(z.object({
+          name: z.string().describe('Lineup group name, e.g. "O-Line" or "Line 1".'),
+          players: z.array(z.object({
+            playerName: z.string(),
+            role: z.string().optional().describe('e.g. "Handler", "Cutter", "Deep Cutter".'),
+          })).optional(),
+        })).describe('Array of lineup groups with their players.'),
+      }),
+      func: run('create_lineup'),
+    }),
+    new DynamicStructuredTool({
+      name: 'list_lineup_templates',
+      description: "Lists saved lineup templates for a season or the current game's season.",
+      schema: gameHint.extend({
+        seasonName: z.string().optional().describe('Season name/substring, e.g. "Jam Summer 2026". Defaults to current game season.'),
+      }),
+      func: run('list_lineup_templates'),
+    }),
+    new DynamicStructuredTool({
+      name: 'save_lineup_template',
+      description: "Saves the specified game's current lineup as a reusable named template for its season. Overwrites if a template with that name already exists.",
+      schema: gameHint.extend({
+        name: z.string().describe('Name for the template, e.g. "Starting 7" or "Zone D".'),
+        seasonName: z.string().optional().describe("Season name/substring. Defaults to the game's season."),
+      }),
+      func: run('save_lineup_template'),
+    }),
+    new DynamicStructuredTool({
+      name: 'apply_lineup_template',
+      description: "Replaces a game's entire lineup by loading a saved lineup template by name.",
+      schema: gameHint.extend({
+        templateName: z.string().describe('Name of the template to load.'),
+        seasonName: z.string().optional().describe('Season name/substring.'),
+      }),
+      func: run('apply_lineup_template'),
     }),
     new DynamicStructuredTool({
       name: 'rollback_last_action',

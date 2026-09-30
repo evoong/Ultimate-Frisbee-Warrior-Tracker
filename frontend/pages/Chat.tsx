@@ -7,6 +7,8 @@ import { Send, Bot, User, Loader2, Trash2 } from 'lucide-react'
 import FadeIn from '../components/FadeIn'
 import ActionReceiptCard, { type ActionReceipt } from '../components/chat/ActionReceiptCard'
 import { useAuth } from '../contexts/AuthContext'
+import { ChatChips } from '../components/chat/ChatChips'
+import { ActionCard, type ChatProposal, type ProposalStatus } from '../components/chat/ActionCard'
 
 type Message = { role: 'user' | 'assistant'; content: string; actions?: ActionReceipt[] }
 
@@ -64,7 +66,10 @@ export default function Chat() {
   const [undoErrors, setUndoErrors] = useState<Record<string, string>>({})
   const bottomRef = useRef<HTMLDivElement>(null)
   const sessionId = useRef(getSessionId())
-  const { can, currentTeamId } = useAuth()
+  const { can, currentTeamId, role } = useAuth()
+  const [proposal, setProposal] = useState<ChatProposal | null>(null)
+  const [proposalStatus, setProposalStatus] = useState<ProposalStatus>('pending')
+  const [proposalOutcome, setProposalOutcome] = useState<string | null>(null)
 
   useEffect(() => {
     if (currentTeamId == null) return
@@ -89,8 +94,8 @@ export default function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const sendMessage = async () => {
-    const text = input.trim()
+  const sendMessage = async (preset?: string) => {
+    const text = (preset ?? input).trim()
     if (!text || loading || currentTeamId == null) return
     setInput('')
     const newMessages: Message[] = [...messages, { role: 'user', content: text }]
@@ -113,6 +118,13 @@ export default function Chat() {
         content: data.reply ?? data.error ?? 'No response',
         actions: Array.isArray(data.actions) ? data.actions : [],
       }])
+      // A write tool firing in the agent's reply attaches a proposal; a new
+      // one replaces any pending card, a proposal-free reply leaves it be.
+      if (data.proposal) {
+        setProposal(data.proposal as ChatProposal)
+        setProposalStatus('pending')
+        setProposalOutcome(null)
+      }
     } catch {
       setMessages(prev => [...prev, { role: 'assistant', content: 'Failed to reach the server. Please try again.' }])
     } finally {
@@ -166,11 +178,54 @@ export default function Chat() {
       const attached = messages.flatMap(m => m.actions ?? [])
       if (attached.length > 0) setStandaloneActions(prev => [...attached, ...prev])
       setMessages([])
+      setProposal(null)
+      setProposalOutcome(null)
     } finally {
       setClearing(false)
       setConfirmClear(false)
     }
   }
+
+  const confirmProposal = async () => {
+    if (!proposal || currentTeamId == null || proposalStatus === 'confirming') return
+    setProposalStatus('confirming')
+    try {
+      const res = await fetch('/api/chat/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ proposal_id: proposal.id, session_id: sessionId.current, organization_id: currentTeamId }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setProposalStatus('done')
+        setProposalOutcome('Confirmed — the change has been applied.')
+        // The confirm response carries the recorded chat_actions receipt —
+        // surface it with the same Undo affordance reply-executed actions
+        // get, so a card-confirmed change is reversible identically.
+        if (data.receipt) setStandaloneActions(prev => [data.receipt as ActionReceipt, ...prev])
+      } else if (res.status === 403 || res.status === 404 || res.status === 410) {
+        // Terminal: retrying cannot succeed (role loss, consumed, expired).
+        setProposalStatus('done')
+        setProposalOutcome(data.error ?? 'This proposal can no longer be confirmed.')
+      } else {
+        // Transient: Confirm stays enabled for a retry.
+        setProposalStatus('error')
+        setProposalOutcome(data.error ?? 'Failed to confirm. Try again.')
+      }
+    } catch {
+      setProposalStatus('error')
+      setProposalOutcome('Failed to reach the server. Try again.')
+    }
+  }
+
+  // A pending card belongs to the team it was proposed for; switching teams
+  // discards it (the server would reject the confirm on the org mismatch
+  // anyway — this just keeps the UI from offering a dead button).
+  useEffect(() => {
+    setProposal(null)
+    setProposalStatus('pending')
+    setProposalOutcome(null)
+  }, [currentTeamId])
 
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)]">
@@ -293,22 +348,35 @@ export default function Chat() {
       {/* Input — the assistant is a team-only feature (writes chat history via
           the service-role endpoint), so read-only users get a notice instead. */}
       {can.record ? (
-        <div className="flex gap-2 mt-3">
-          <Input
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendMessage()}
-            placeholder="Ask about stats, players, games…"
-            disabled={loading}
-            className="bg-card border-border text-foreground"
-          />
-          <Button
-            onClick={sendMessage}
-            disabled={!input.trim() || loading}
-            className="bg-primary text-primary-foreground hover:bg-primary/90 shrink-0"
-          >
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-          </Button>
+        <div className="mt-3 space-y-2">
+          {proposal && (
+            <ActionCard
+              proposal={proposal}
+              status={proposalStatus}
+              outcome={proposalOutcome}
+              onConfirm={confirmProposal}
+              onCancel={() => { setProposal(null); setProposalOutcome(null) }}
+              onDismiss={() => { setProposal(null); setProposalOutcome(null) }}
+            />
+          )}
+          <ChatChips role={role} onSend={m => sendMessage(m)} hidden={loading || proposal != null} />
+          <div className="flex gap-2">
+            <Input
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendMessage()}
+              placeholder="Ask about stats, players, games…"
+              disabled={loading}
+              className="bg-card border-border text-foreground"
+            />
+            <Button
+              onClick={() => sendMessage()}
+              disabled={!input.trim() || loading}
+              className="bg-primary text-primary-foreground hover:bg-primary/90 shrink-0"
+            >
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+            </Button>
+          </div>
         </div>
       ) : (
         <p className="mt-3 text-center text-xs text-muted-foreground">

@@ -23,7 +23,7 @@ const declaredNames = CHAT_FUNCTION_DECLARATIONS.map(d => d.name)
 // proves every declared name is accounted for by *someone's* classification,
 // not just vacuously true because WRITE_FUNCTIONS is treated as complete by
 // definition.
-const READ_ONLY_FUNCTIONS = new Set(['query_stat_breakdown'])
+const READ_ONLY_FUNCTIONS = new Set(['query_stat_breakdown', 'view_lineup', 'list_lineup_templates'])
 
 // 1. Every name in WRITE_FUNCTIONS is a real declared function. This is
 // exactly the failure the brief's fabricated list (recordEvent, updateScore,

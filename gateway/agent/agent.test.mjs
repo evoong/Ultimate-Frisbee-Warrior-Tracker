@@ -87,9 +87,14 @@ const RECOVERY = { sessionId: 's-1', userId: 'u-1', requestId: 'r-1' }
 const RECOVERY_CONFIG = { supabaseUrl: 'http://stub.invalid', supabaseSecretKey: 'stub-key' }
 
 {
-  // Member + write tool -> permission error, dispatch untouched.
+  // Member + write tool -> permission error, dispatch and propose untouched.
   const dispatch = []
-  const tools = makeChatTools({ dispatch: async (n, a) => { dispatch.push([n, a]); return { ok: true } }, role: 'member' })
+  const proposals = []
+  const tools = makeChatTools({
+    dispatch: async (n, a) => { dispatch.push([n, a]); return { ok: true } },
+    role: 'member',
+    propose: async (n) => { proposals.push(n); return { proposal_id: 'p1', summary: 's' } },
+  })
   const reply = await runToolAgent({
     ...base,
     model: new StubModel([toolCallMsg('create_game_event', { eventType: 'Goal' }), new AIMessage('done')]),
@@ -97,17 +102,44 @@ const RECOVERY_CONFIG = { supabaseUrl: 'http://stub.invalid', supabaseSecretKey:
   })
   assert.equal(reply, 'done')
   assert.equal(dispatch.length, 0, 'member write never reaches dispatch')
+  assert.equal(proposals.length, 0, 'member write never proposes')
 }
 {
-  // Editor + write tool -> dispatched.
+  // Editor + write tool -> proposal created, dispatch never called.
   const dispatch = []
-  const tools = makeChatTools({ dispatch: async (n, a) => { dispatch.push([n, a]); return { our_score: 1 } }, role: 'editor' })
-  await runToolAgent({
+  const proposals = []
+  const tools = makeChatTools({
+    dispatch: async (n, a) => { dispatch.push([n, a]); return { our_score: 1 } },
+    role: 'editor',
+    propose: async (n) => { proposals.push(n); return { proposal_id: 'p1', summary: 'Log Goal in the 2026-09-29 game vs Rival A' } },
+    onProposal: p => proposals.push(p),
+  })
+  const reply = await runToolAgent({
     ...base,
     model: new StubModel([toolCallMsg('create_game_event', { eventType: 'Goal' }), new AIMessage('done')]),
     tools,
   })
-  assert.deepEqual(dispatch, [['create_game_event', { eventType: 'Goal' }]])
+  assert.equal(reply, 'done')
+  assert.equal(dispatch.length, 0, 'write tool never reaches dispatch')
+  assert.equal(proposals[0], 'create_game_event', 'propose was called with the tool name')
+  assert.equal(proposals[1].id, 'p1', 'onProposal carries the id')
+  assert.equal(proposals[1].tool_name, 'create_game_event')
+}
+{
+  // Editor + write tool + propose throws -> error marker result, no dispatch.
+  const dispatch = []
+  const tools = makeChatTools({
+    dispatch: async (n, a) => { dispatch.push([n, a]); return {} },
+    role: 'editor',
+    propose: async () => { throw new Error('No game found matching {}.') },
+  })
+  const reply = await runToolAgent({
+    ...base,
+    model: new StubModel([toolCallMsg('create_game_event', { eventType: 'Goal' }), new AIMessage('handled gracefully')]),
+    tools,
+  })
+  assert.equal(reply, 'handled gracefully')
+  assert.equal(dispatch.length, 0, 'failed proposal never dispatches')
 }
 {
   // Member + read-only tool -> dispatched; span emitted.
@@ -148,76 +180,85 @@ const RECOVERY_CONFIG = { supabaseUrl: 'http://stub.invalid', supabaseSecretKey:
   )
 }
 {
-  // Editor + write tool + recovery deps -> recordChatAction fires and the
-  // receipt reaches onActionReceipt; the model-visible ToolMessage carries
-  // ONLY the dispatch result (no __receipt, no receipt payload).
-  const receipts = []
-  const posted = []
-  const tables = { chat_actions: [] }
-  await withStubbedFetch(tables, async () => {
-    const realFetch = globalThis.fetch
-    globalThis.fetch = async (url, init) => {
-      const u = new URL(String(url))
-      if (u.pathname.endsWith('/chat_actions') && init?.method === 'POST') posted.push(JSON.parse(init.body))
-      return realFetch(url, init)
-    }
-    try {
-      const model = new StubModel([
-        toolCallMsg('create_game_event', { eventType: 'Goal', playerName: 'Alex' }),
-        new AIMessage('done'),
-      ])
-      const tools = makeChatTools({
-        dispatch: async () => ({
-          our_score: 1,
-          __receipt: { before: {}, after: { event: { id: 42 } }, description: 'Logged Goal: Alex' },
-        }),
-        role: 'editor',
-        recovery: RECOVERY,
-        actionsConfig: RECOVERY_CONFIG,
-        orgId: 7,
-        onActionReceipt: (r) => receipts.push(r),
-      })
-      const reply = await runToolAgent({ ...base, model, tools })
-      assert.equal(reply, 'done')
-      assert.equal(posted.length, 1, 'exactly one receipt row posted')
-      assert.deepEqual(posted[0], {
-        organization_id: 7,
-        session_id: 's-1',
-        user_id: 'u-1',
-        request_id: 'r-1',
-        action_type: 'create_game_event',
-        description: 'Logged Goal: Alex',
-        before_rows: {},
-        after_rows: { event: { id: 42 } },
-      })
-      assert.deepEqual(receipts, [{ id: 'gen-r-1', request_id: 'r-1', description: 'Logged Goal: Alex', status: 'applied' }])
-      assert.deepEqual(toolResultOf(model), { our_score: 1 }, 'ToolMessage content is only the result, receipt stripped')
-    } finally {
-      globalThis.fetch = realFetch
-    }
+  // Member + lineup read tools -> dispatched
+  const dispatch = []
+  const tools = makeChatTools({ dispatch: async (n, a) => { dispatch.push([n, a]); return { groups: [] } }, role: 'member' })
+  await runToolAgent({
+    ...base,
+    model: new StubModel([toolCallMsg('view_lineup', {}), new AIMessage('done')]),
+    tools,
   })
+  assert.equal(dispatch.length, 1)
+  assert.equal(dispatch[0][0], 'view_lineup')
 }
 {
-  // Write with NO receipt on the dispatch result (e.g. ignored-duplicate
-  // create_lineup_group) records nothing and emits nothing.
-  const receipts = []
-  await withStubbedFetch({ chat_actions: [] }, async () => {
-    const model = new StubModel([toolCallMsg('create_lineup_group', { name: 'Line 2' }), new AIMessage('done')])
-    const tools = makeChatTools({
-      dispatch: async () => ({ created: { note: 'already exists' } }),
-      role: 'editor',
-      recovery: RECOVERY,
-      actionsConfig: RECOVERY_CONFIG,
-      orgId: 7,
-      onActionReceipt: (r) => receipts.push(r),
-    })
-    await runToolAgent({ ...base, model, tools })
-    assert.equal(receipts.length, 0, 'no receipt for a no-op write')
+  // Member + create_lineup write tool -> permission error, dispatch untouched
+  const dispatch = []
+  const proposals = []
+  const tools = makeChatTools({
+    dispatch: async (n, a) => { dispatch.push([n, a]); return { ok: true } },
+    role: 'member',
+    propose: async (n) => { proposals.push(n); return { proposal_id: 'p2', summary: 's' } },
   })
+  const reply = await runToolAgent({
+    ...base,
+    model: new StubModel([toolCallMsg('create_lineup', { groups: [{ name: 'Line 1' }] }), new AIMessage('done')]),
+    tools,
+  })
+  assert.equal(reply, 'done')
+  assert.equal(dispatch.length, 0, 'member cannot write lineup')
+  assert.equal(proposals.length, 0, 'member write never proposes')
 }
+{
+  // Editor + create_lineup write tool -> proposal, dispatch never called
+  const dispatch = []
+  const proposals = []
+  const tools = makeChatTools({
+    dispatch: async (n, a) => { dispatch.push([n, a]); return { groups: [] } },
+    role: 'editor',
+    propose: async (n) => { proposals.push(n); return { proposal_id: 'p3', summary: 'Set the lineup' } },
+    onProposal: p => proposals.push(p),
+  })
+  await runToolAgent({
+    ...base,
+    model: new StubModel([toolCallMsg('create_lineup', { groups: [{ name: 'Line 1' }] }), new AIMessage('done')]),
+    tools,
+  })
+  assert.equal(dispatch.length, 0, 'lineup write never reaches dispatch')
+  assert.equal(proposals[0], 'create_lineup', 'propose called for the lineup tool')
+  assert.equal(proposals[1].tool_name, 'create_lineup')
+}
+{
+  // The proposal marker reaches the model as the tool result.
+  const seen = []
+  class SpyModel extends StubModel {
+    async invoke(msgs) {
+      const lastMsg = msgs[msgs.length - 1]
+      if (lastMsg?.getType?.() === 'tool') seen.push(lastMsg.content)
+      return super.invoke(msgs)
+    }
+  }
+  const tools = makeChatTools({
+    dispatch: async () => ({}),
+    role: 'captain',
+    propose: async () => ({ proposal_id: 'p9', summary: 'Place Alice in Line 1' }),
+  })
+  await runToolAgent({
+    ...base,
+    model: new SpyModel([toolCallMsg('add_to_lineup', { playerName: 'Alice' }), new AIMessage('done')]),
+    tools,
+  })
+  assert.equal(seen.length, 1, 'exactly one tool result observed')
+  const parsed = JSON.parse(seen[0])
+  assert.equal(parsed.proposed, true)
+  assert.equal(parsed.proposal_id, 'p9')
+  assert.ok(parsed.summary.includes('Alice'))
 {
   // Editor + rollback_last_action -> resolves via findLatestActionToRollback
   // + executeRollback, never via dispatch, and confirms what was undone.
+  // In the merged world rollback stays a DIRECT tool (not proposed): it is
+  // the recovery path for already-applied actions, card-confirming it would
+  // deadlock the undo UX.
   const dispatch = []
   const EVENT = { id: 42, organization_id: 1, game_id: 10, player_id: 5, related_player_id: null, event_type: 'Goal' }
   const tables = {
@@ -266,76 +307,28 @@ const RECOVERY_CONFIG = { supabaseUrl: 'http://stub.invalid', supabaseSecretKey:
   assert.deepEqual(toolResultOf(model), { error: "you do not have permission to change this team's data" })
 }
 {
-  // recordChatAction failure (write happened, log failed) -> the tool call
-  // reports the error; onActionReceipt does NOT fire.
-  const receipts = []
-  const realFetch = globalThis.fetch
-  globalThis.fetch = async (url, init) => {
-    const u = new URL(String(url))
-    if (u.pathname.endsWith('/chat_actions')) {
-      return { ok: false, status: 502, text: async () => 'log write failed', json: async () => [] }
-    }
-    throw new Error(`unexpected fetch ${url}`)
-  }
-  try {
-    const model = new StubModel([
-      toolCallMsg('create_game_event', { eventType: 'Goal', playerName: 'Alex' }),
-      new AIMessage('done'),
-    ])
-    const tools = makeChatTools({
-      dispatch: async () => ({ our_score: 1, __receipt: { before: {}, after: { event: { id: 42 } }, description: 'Logged Goal: Alex' } }),
-      role: 'editor',
-      recovery: RECOVERY,
-      actionsConfig: RECOVERY_CONFIG,
-      orgId: 7,
-      onActionReceipt: (r) => receipts.push(r),
-    })
-    await runToolAgent({ ...base, model, tools })
-    assert.equal(receipts.length, 0, 'no receipt event on a failed record')
-    const result = toolResultOf(model)
-    assert.ok(result.error?.includes('Supabase POST failed'), `error surfaces to the model: ${JSON.stringify(result)}`)
-  } finally {
-    globalThis.fetch = realFetch
-  }
+  // Editor + write tool with NO propose dep (unwired runtime) -> the
+  // unavailable marker, never a silent dispatch. Receipt-at-dispatch tests
+  // moved to the confirm layer (chatProposals.test.mjs): in the merged
+  // runtime write tools never dispatch, so receipts are recorded by the
+  // confirm endpoint instead.
+  const dispatch = []
+  const tools = makeChatTools({
+    dispatch: async (n, a) => { dispatch.push([n, a]); return { our_score: 1 } },
+    role: 'editor',
+    recovery: RECOVERY,
+    actionsConfig: RECOVERY_CONFIG,
+    orgId: 7,
+  })
+  const model = new StubModel([toolCallMsg('create_game_event', { eventType: 'Goal' }), new AIMessage('done')])
+  await runToolAgent({ ...base, model, tools })
+  assert.equal(dispatch.length, 0, 'unwired runtime never dispatches a write')
+  assert.deepEqual(toolResultOf(model), { error: 'action confirmation is unavailable' })
+}
 }
 {
-  // remove_from_lineup on a player not in any lineup is a no-op: NO receipt
-  // is recorded (an empty removed_rows receipt is un-invertible and would
-  // strand itself as the newest applied action, blocking rollback of the
-  // prior real write forever). The prior action stays the rollback target.
-  const receipts = []
-  const EVENT = { id: 42, organization_id: 1, game_id: 10, player_id: 5, related_player_id: null, event_type: 'Goal' }
-  const tables = {
-    chat_actions: [{ id: 'act-9', organization_id: 1, session_id: 's-1', user_id: 'u-1', status: 'applied', action_type: 'create_game_event', description: 'Logged Goal: Alex', before_rows: {}, after_rows: { event: { ...EVENT } }, created_at: '2026-09-29T10:00:00Z' }],
-    game_events: [{ ...EVENT }],
-    games: [{ id: 10, season_id: null, opponent: 'Huck Huck Goose', game_date: '2026-09-29', game_time: null, organization_id: 1 }],
-    players: [{ id: 5, display_name: 'Alex', organization_id: 1 }],
-    game_lineups: [],
-  }
-  await withStubbedFetch(tables, async () => {
-    const model = new StubModel([
-      toolCallMsg('remove_from_lineup', { playerName: 'Alex' }),
-      toolCallMsg('rollback_last_action', {}),
-      new AIMessage('done'),
-    ])
-    const tools = makeChatTools({
-      dispatch: (name, args) => callChatFunction(RECOVERY_CONFIG, 1, name, args),
-      role: 'editor',
-      recovery: RECOVERY,
-      actionsConfig: RECOVERY_CONFIG,
-      orgId: 1,
-      onActionReceipt: (r) => receipts.push(r),
-    })
-    await runToolAgent({ ...base, model, tools })
-    assert.equal(receipts.length, 0, 'no-op removal records no receipt')
-    assert.equal(tables.chat_actions.length, 1, 'no receipt row added for the no-op')
-    const firstTool = JSON.parse(model.seen[1].find((m) => m?.tool_call_id !== undefined).content)
-    assert.equal(firstTool.removed_rows, 0)
-    assert.equal('__receipt' in firstTool, false, 'no receipt payload on the no-op result')
-    const secondTool = JSON.parse([...model.seen[2]].reverse().find((m) => m?.tool_call_id !== undefined).content)
-    assert.deepEqual(secondTool, { undone: { id: 'act-9', description: 'Logged Goal: Alex' } }, 'rollback still targets the prior real action')
-    assert.equal(tables.chat_actions[0].status, 'undone', 'prior receipt flipped to undone')
-    assert.equal(tables.game_events.length, 0, 'prior action was inverted')
-  })
+  const names = makeChatTools({ dispatch: async () => ({}), role: 'editor' }).map(t => t.name)
+  assert.ok(names.includes('apply_lineup_template'), 'template apply remains available')
+  assert.ok(names.includes('rollback_last_action'), 'rollback remains available')
 }
 console.log('✓ gateway/agent/agent.test.mjs all passed')

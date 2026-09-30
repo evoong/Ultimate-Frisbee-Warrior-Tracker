@@ -311,4 +311,16 @@ console.log('\n--- 7. Player-scoped getTeamContext ---')
 }
 console.log('✓ player-scoped getTeamContext filters the linked member view')
 
+// Chat action cards render ONE proposal per reply (last wins) — the prompt
+// must cap the model at one write proposal per reply so a multi-write turn
+// can never silently apply half of what the reply described.
+{
+  const capContext = await gatewayContext(chatConfig, 7)
+  assert.ok(
+    capContext.includes('at most ONE write-tool proposal per reply'),
+    'prompt caps the model to one write proposal per reply'
+  )
+}
+console.log('✓ prompt caps write proposals to one per reply')
+
 console.log('\nAll Task 2 free-tier history tests passed!')

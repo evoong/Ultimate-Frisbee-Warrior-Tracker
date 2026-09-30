@@ -19,6 +19,7 @@ import { runJamSync, JAM_SYNC_MONITOR_SLUG, JAM_SYNC_MONITOR_CONFIG } from "../g
 import { runChatAgent } from "../gateway/agent/agent.js";
 import { makeChatTools } from "../gateway/agent/tools.js";
 import { callChatFunction, type ActionsConfig } from "../gateway/gameActions.js";
+import { buildProposal, confirmProposal, ConfirmError } from "../gateway/chatProposals.js";
 import { mapRollbackError } from "../gateway/chat.js";
 import { executeRollback } from "../gateway/chatRecovery.js";
 import { getTeamContext as buildTeamContext, type ChatScope } from "../gateway/agent/context.js";
@@ -373,6 +374,9 @@ app.post("/api/chat", async (req, res) => {
     quotaConsumed = true;
 
     const aiTraceId = crypto.randomUUID();
+    // The proposal (if any write tool fired) rides back on the reply; last
+    // wins — the UI shows one card at a time, earlier proposals just expire.
+    let liveProposal: { id: string; tool_name: string; args: Record<string, unknown>; summary: string } | undefined;
     // One request id per chat turn: links the chat_logs rows this request
     // writes to any chat_actions receipts its tool calls produce.
     const requestId = crypto.randomUUID();
@@ -380,6 +384,13 @@ app.post("/api/chat", async (req, res) => {
     const tools = makeChatTools({
       dispatch: (name, args) => callChatFunction(actionsConfig, teamId, name, args, scope),
       role: caller.role,
+      // ChatToolDeps.propose returns { proposal_id, summary } — map
+      // buildProposal's { id, ... } shape.
+      propose: async (name, args) => {
+        const p = await buildProposal(actionsConfig, { organization_id: teamId, session_id, user_id: caller.sub }, name, args);
+        return { proposal_id: p.id, summary: p.summary };
+      },
+      onProposal: p => { liveProposal = p },
       recovery: { sessionId: session_id, userId: caller.sub, requestId },
       actionsConfig,
       orgId: teamId,
@@ -442,7 +453,7 @@ app.post("/api/chat", async (req, res) => {
       used_tool_call: usedToolCall,
     });
     quotaConsumed = false;
-    res.json({ reply, actions: actionReceipts });
+    res.json({ reply, proposal: liveProposal, actions: actionReceipts });
   } catch (err: unknown) {
     if (quotaConsumed && quotaOrgId != null) {
       quotaConsumed = false;
@@ -454,6 +465,34 @@ app.post("/api/chat", async (req, res) => {
     }
     await posthogAi.flush();
     await trackError(distinctId, err);
+    Sentry.captureException(err);
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.post("/api/chat/confirm", async (req, res) => {
+  try {
+    const { proposal_id, session_id, organization_id } = req.body as {
+      proposal_id?: string; session_id?: string; organization_id?: number
+    };
+    if (!proposal_id || !session_id || !organization_id) return res.status(400).json({ error: "proposal_id, session_id and organization_id required" });
+    if (!isValidSessionId(session_id)) return res.status(400).json({ error: "session_id must be a UUID" });
+
+    const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
+      headers: { cookie: req.headers.cookie ?? "" },
+    });
+    const caller = await classifyChatCaller(webRequest, Number(organization_id));
+    if (!caller.ok) return res.status(caller.status).json({ error: caller.error });
+
+    const actionsConfig: ActionsConfig = { supabaseUrl: process.env.SUPABASE_URL || "", supabaseSecretKey: process.env.SUPABASE_SECRET_KEY || "" };
+    const requestId = crypto.randomUUID();
+    const confirmed = await confirmProposal(actionsConfig, {
+      id: proposal_id, session_id, organization_id: Number(organization_id), user_id: caller.sub, role: caller.role,
+      recovery: { sessionId: session_id, userId: caller.sub, requestId },
+    });
+    res.json({ result: confirmed.result, receipt: confirmed.receipt });
+  } catch (err: unknown) {
+    if (err instanceof ConfirmError) return res.status(err.status).json({ error: err.message });
     Sentry.captureException(err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }

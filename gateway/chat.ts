@@ -9,6 +9,7 @@ export { getTeamContext } from './agent/context.js'
 import { runChatAgent } from './agent/agent.js'
 import { makeChatTools } from './agent/tools.js'
 import { callChatFunction, type ActionsConfig } from './gameActions.js'
+import { buildProposal, confirmProposal, ConfirmError } from './chatProposals.js'
 import { createMembershipLookup, hasAtLeast, type TeamRole } from './membership.js'
 import { isValidSessionId } from './sessionId.js'
 import { executeRollback, type ChatActionReceipt } from './chatRecovery.js'
@@ -175,11 +176,21 @@ export async function handleChatRequest(config: ChatConfig, request: Request): P
 
     const posthog = new PostHog(config.posthogProjectToken!, { host: config.posthogHost, flushAt: 1, flushInterval: 0 })
     let reply: string
+    // The proposal (if any write tool fired) rides back on the reply; last
+    // wins — the UI shows one card at a time, earlier proposals just expire.
+    let liveProposal: { id: string; tool_name: string; args: Record<string, unknown>; summary: string } | undefined
     try {
       const traceId = crypto.randomUUID()
       const tools = makeChatTools({
         dispatch: (name, args) => callChatFunction(actionsConfig, teamId, name, args, scope),
         role: user.role,
+        // ChatToolDeps.propose returns { proposal_id, summary } — map
+        // buildProposal's { id, ... } shape.
+        propose: async (name, args) => {
+          const p = await buildProposal(actionsConfig, { organization_id: teamId, session_id, user_id: user.sub }, name, args)
+          return { proposal_id: p.id, summary: p.summary }
+        },
+        onProposal: p => { liveProposal = p },
         recovery: { sessionId: session_id, userId: user.sub, requestId },
         actionsConfig,
         orgId: teamId,
@@ -231,7 +242,41 @@ export async function handleChatRequest(config: ChatConfig, request: Request): P
       { session_id, role: 'assistant', content: reply, request_id: requestId },
     ])
 
-    return json({ reply, actions: actionReceipts })
+    return json({ reply, proposal: liveProposal, actions: actionReceipts })
+  } catch (err: unknown) {
+    return json({ error: err instanceof Error ? err.message : String(err) }, 500)
+  }
+}
+
+export async function handleChatConfirmRequest(config: ChatConfig, request: Request): Promise<Response> {
+  try {
+    const body: any = await request.json().catch(() => ({}))
+    const { proposal_id, session_id, organization_id } = body as {
+      proposal_id?: string; session_id?: string; organization_id?: number
+    }
+    if (!proposal_id || !session_id || !organization_id) return json({ error: 'proposal_id, session_id and organization_id required' }, 400)
+    if (!isValidSessionId(session_id)) return json({ error: 'session_id must be a UUID' }, 400)
+
+    const lookup = createMembershipLookup({
+      supabaseUrl: config.supabaseUrl,
+      supabaseSecretKey: config.supabaseSecretKey,
+      onLookupError: (err) => Sentry.captureException(err),
+    })
+    const user = await requireTeamMember(config, request, Number(organization_id), 'member', lookup)
+    if (!user.ok) return json({ error: user.error }, user.status)
+
+    const actionsConfig: ActionsConfig = { supabaseUrl: config.supabaseUrl, supabaseSecretKey: config.supabaseSecretKey }
+    const requestId = crypto.randomUUID()
+    try {
+      const result = await confirmProposal(actionsConfig, {
+        id: proposal_id, session_id, organization_id: Number(organization_id), user_id: user.sub, role: user.role,
+        recovery: { sessionId: session_id, userId: user.sub, requestId },
+      })
+      return json({ result, receipt: (result as { receipt?: unknown }).receipt ?? null })
+    } catch (err) {
+      if (err instanceof ConfirmError) return json({ error: err.message }, err.status)
+      throw err
+    }
   } catch (err: unknown) {
     return json({ error: err instanceof Error ? err.message : String(err) }, 500)
   }
