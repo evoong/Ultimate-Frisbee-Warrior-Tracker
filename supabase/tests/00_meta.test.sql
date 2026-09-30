@@ -49,8 +49,11 @@ select is_empty(
 -- feature_flags and org_feature_flags
 -- (20260924000000_admin_org_profile_flags.sql) are zero-policy for the same
 -- reason: the admin console reads and writes them only through /api/admin/*
--- handlers holding the service-role key, so no client role is meant to reach
--- these rows.
+-- handlers holding the service-role key.
+--
+-- chat_action_proposals (20260929120000_chat_action_proposals.sql) is
+-- zero-policy for the same reason: the confirm endpoint reaches it only
+-- under the service-role key; no client role is ever meant to see a row.
 select is_empty(
   $$ select c.relname::text
        from pg_class c
@@ -60,7 +63,7 @@ select is_empty(
         and c.relname not in ('standings', 'feedback_clusters', 'feedback_reports',
                               'platform_admins', 'admin_audit_log', 'deleted_rows_archive',
                               'processed_stripe_events', 'feature_flags', 'org_feature_flags',
-                              'deleted_accounts')
+                              'deleted_accounts', 'chat_action_proposals')
         and not exists (select 1 from pg_policy p where p.polrelid = c.oid) $$,
   'every table in public has at least one policy'
 );
