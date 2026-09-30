@@ -4,7 +4,7 @@ import { verifyAccessToken } from './gateway/jwt.js'
 import { createMembershipLookup } from './gateway/membership.js'
 import { createAdminLookup } from './gateway/admin/adminAuth.js'
 import { handleAdminRequest } from './gateway/admin/index.js'
-import { handleChatRequest, handleChatHistoryRequest, handleChatHistoryDeleteRequest, type ChatConfig } from './gateway/chat.js'
+import { handleChatRequest, handleChatHistoryRequest, handleChatHistoryDeleteRequest, handleChatUndoRequest, type ChatConfig } from './gateway/chat.js'
 import { handleFlagsRequest, type FlagsConfig } from './gateway/flags.js'
 import { handleAccountDeleteRequest } from './gateway/account/deleteAccount.js'
 import { runJamSync, JAM_SYNC_MONITOR_SLUG, JAM_SYNC_MONITOR_CONFIG } from './gateway/jamSync.js'
@@ -113,7 +113,7 @@ async function handleAppRequest(request: Request, env: Env, ctx: ExecutionContex
 
       // AI chat: needs the service-role key and Gemini, so it lives outside
       // the gateway (which only ever proxies as the caller's own token).
-      if (url.pathname === "/api/chat" || url.pathname === "/api/chat/history") {
+      if (url.pathname === "/api/chat" || url.pathname === "/api/chat/history" || url.pathname === "/api/chat/undo") {
         const chatConfig: ChatConfig = {
           supabaseUrl: env.SUPABASE_URL,
           publishableKey: env.SUPABASE_PUBLISHABLE_KEY,
@@ -128,6 +128,9 @@ async function handleAppRequest(request: Request, env: Env, ctx: ExecutionContex
         };
         if (url.pathname === "/api/chat" && request.method === "POST") {
           return handleChatRequest(chatConfig, request);
+        }
+        if (url.pathname === "/api/chat/undo" && request.method === "POST") {
+          return handleChatUndoRequest(chatConfig, request);
         }
         if (url.pathname === "/api/chat/history" && request.method === "GET") {
           return handleChatHistoryRequest(chatConfig, request);
