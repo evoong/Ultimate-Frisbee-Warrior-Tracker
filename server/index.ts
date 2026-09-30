@@ -18,6 +18,8 @@ import { runJamSync, JAM_SYNC_MONITOR_SLUG, JAM_SYNC_MONITOR_CONFIG } from "../g
 import { runChatAgent } from "../gateway/agent/agent.js";
 import { makeChatTools } from "../gateway/agent/tools.js";
 import { callChatFunction, type ActionsConfig } from "../gateway/gameActions.js";
+import { mapRollbackError } from "../gateway/chat.js";
+import { executeRollback } from "../gateway/chatRecovery.js";
 import { getTeamContext as buildTeamContext, type ChatScope } from "../gateway/agent/context.js";
 import { createMembershipLookup, hasAtLeast, type TeamRole } from "../gateway/membership.js";
 import { isValidSessionId } from "../gateway/sessionId.js";
@@ -358,9 +360,17 @@ app.post("/api/chat", async (req, res) => {
     quotaConsumed = true;
 
     const aiTraceId = crypto.randomUUID();
+    // One request id per chat turn: links the chat_logs rows this request
+    // writes to any chat_actions receipts its tool calls produce.
+    const requestId = crypto.randomUUID();
+    const actionReceipts: { id: string; request_id: string; description: string; status: string }[] = [];
     const tools = makeChatTools({
       dispatch: (name, args) => callChatFunction(actionsConfig, teamId, name, args, scope),
       role: caller.role,
+      recovery: { sessionId: session_id, userId: caller.sub, requestId },
+      actionsConfig,
+      orgId: teamId,
+      onActionReceipt: (receipt) => { actionReceipts.push(receipt); },
       onSpan: (name, args, result, latencyMs) => {
         usedToolCall = true;
         posthogAi.capture({
@@ -406,8 +416,8 @@ app.post("/api/chat", async (req, res) => {
 
     // Save both turns to chat_logs
     const { error: chatLogError } = await supabase.from("chat_logs").insert([
-      { session_id, role: "user", content: message, organization_id: teamId, user_id: caller.sub },
-      { session_id, role: "assistant", content: reply, organization_id: teamId, user_id: caller.sub },
+      { session_id, role: "user", content: message, organization_id: teamId, user_id: caller.sub, request_id: requestId },
+      { session_id, role: "assistant", content: reply, organization_id: teamId, user_id: caller.sub, request_id: requestId },
     ]);
     if (chatLogError) throw chatLogError;
 
@@ -419,7 +429,7 @@ app.post("/api/chat", async (req, res) => {
       used_tool_call: usedToolCall,
     });
     quotaConsumed = false;
-    res.json({ reply });
+    res.json({ reply, actions: actionReceipts });
   } catch (err: unknown) {
     if (quotaConsumed && quotaOrgId != null) {
       quotaConsumed = false;
@@ -459,10 +469,61 @@ app.get("/api/chat/history", async (req, res) => {
       .order("created_at", { ascending: true });
 
     if (error) throw error;
-    res.json(data ?? []);
+
+    // Receipts ride along with history so the UI can attach Undo to the
+    // message whose request_id produced the action. Snapshot columns
+    // (before_rows/after_rows) are never selected: they are server-side
+    // undo mechanics, not client data. Mirrors gateway/chat.ts exactly.
+    const { data: actions, error: actionsError } = await supabase
+      .from("chat_actions")
+      .select("id, request_id, description, status")
+      .eq("session_id", session_id)
+      .eq("organization_id", teamId)
+      .eq("user_id", caller.sub)
+      .order("created_at", { ascending: false })
+      .limit(50);
+
+    if (actionsError) throw actionsError;
+    res.json({ messages: data ?? [], actions: actions ?? [] });
   } catch (err: unknown) {
     Sentry.captureException(err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// POST /api/chat/undo — Express mirror of the Worker's handleChatUndoRequest
+// (gateway/chat.ts). Same shared error mapper (mapRollbackError) and the
+// same editor-tier gate: undo rewrites team data, and on this route there is
+// no model/tool layer to enforce the write gate, so the endpoint gates
+// directly, the way the tools layer gates chat writes.
+app.post("/api/chat/undo", async (req, res) => {
+  try {
+    const { action_id, organization_id } = req.body as { action_id?: string; organization_id?: number };
+    if (!action_id || !isValidSessionId(action_id)) return res.status(400).json({ error: "action_id must be a UUID" });
+    if (!organization_id) return res.status(400).json({ error: "organization_id required" });
+
+    const webRequest = new Request(`${req.protocol}://${req.get("host") ?? "localhost"}${req.originalUrl}`, {
+      headers: { cookie: req.headers.cookie ?? "" },
+    });
+    const caller = await classifyChatCaller(webRequest, Number(organization_id));
+    if (!caller.ok) return res.status(caller.status).json({ error: caller.error });
+    if (!hasAtLeast(caller.role, "editor")) {
+      return res.status(403).json({ error: "editors and above can undo chat actions" });
+    }
+
+    // Scopes by action_id + org + verified user; session_id is never a
+    // scoping key (same rule as the Worker handler).
+    const action = await executeRollback(
+      { supabaseUrl: process.env.SUPABASE_URL || "", supabaseSecretKey: process.env.SUPABASE_SECRET_KEY || "" },
+      Number(organization_id),
+      action_id,
+      caller.sub
+    );
+    return res.json({ ok: true, action });
+  } catch (err: unknown) {
+    const mapped = mapRollbackError(err);
+    if (mapped.status >= 500) Sentry.captureException(err);
+    return res.status(mapped.status).json(mapped.body);
   }
 });
 
@@ -482,6 +543,10 @@ app.delete("/api/chat/history", async (req, res) => {
     if (!caller.ok) return res.status(caller.status).json({ error: caller.error });
     distinctId = caller.sub;
 
+    // Deliberately deletes chat_logs ONLY: chat_actions receipts survive
+    // history clearing (binding spec rule) so an action stays undoable after
+    // the messages describing it are gone. Never add chat_actions here.
+    // Mirrors gateway/chat.ts's delete handler.
     const { error } = await supabase.from("chat_logs").delete().eq("session_id", session_id).eq("organization_id", teamId).eq("user_id", caller.sub);
     if (error) throw error;
     await track(distinctId, "chat_history_cleared", { organization_id, session_id });

@@ -11,6 +11,7 @@ import { makeChatTools } from './agent/tools.js'
 import { callChatFunction, type ActionsConfig } from './gameActions.js'
 import { createMembershipLookup, hasAtLeast, type TeamRole } from './membership.js'
 import { isValidSessionId } from './sessionId.js'
+import { executeRollback, type ChatActionReceipt } from './chatRecovery.js'
 
 // Chat needs privileged (service-role) Supabase access to read all team data
 // regardless of caller identity, plus a Gemini key. Team-context/log queries
@@ -51,7 +52,7 @@ async function supabaseServiceFetch(config: ChatConfig, path: string): Promise<a
   return res.json()
 }
 
-async function insertChatLogs(config: ChatConfig, organizationId: number, userId: string, rows: { session_id: string; role: string; content: string }[]): Promise<void> {
+async function insertChatLogs(config: ChatConfig, organizationId: number, userId: string, rows: { session_id: string; role: string; content: string; request_id?: string }[]): Promise<void> {
   await fetch(`${config.supabaseUrl}/rest/v1/chat_logs`, {
     method: 'POST',
     headers: {
@@ -105,6 +106,25 @@ async function requireTeamMember(
 }
 
 
+// Maps executeRollback's thrown errors (chatRecovery.ts, sealed in Task 2)
+// to HTTP responses. The thrown messages are chatRecovery's only stable
+// contract surface, so this matches stable substrings, not exact sentences,
+// keeping the HTTP contract resilient to wording drift. Both runtimes route
+// through this one function — the Worker handlers below and the Express
+// mirrors in server/index.ts import it — so the error contract cannot
+// diverge between them. The 500 body is generic on purpose: rollback
+// internals (table names, statuses, paths) never leak.
+export function mapRollbackError(err: unknown): { status: number; body: { error: string } } {
+  const msg = err instanceof Error ? err.message : String(err)
+  if (msg.includes('action not found')) return { status: 404, body: { error: 'action not found' } }
+  if (msg.includes('not in applied state')) return { status: 409, body: { error: 'action already undone or in progress' } }
+  if (msg.includes('MISMATCH') || msg.includes('cannot be undone')) {
+    return { status: 409, body: { error: 'action cannot be undone: the affected data has changed since the action was taken' } }
+  }
+  return { status: 500, body: { error: 'undo failed' } }
+}
+
+
 export async function handleChatRequest(config: ChatConfig, request: Request): Promise<Response> {
   try {
     const body: any = await request.json().catch(() => ({}))
@@ -124,6 +144,11 @@ export async function handleChatRequest(config: ChatConfig, request: Request): P
     if (!user.ok) return json({ error: user.error }, user.status)
 
     const teamId = Number(organization_id)
+    // One id per request: links the chat_logs rows to any chat_actions
+    // receipts this turn's tool calls produce (see the migration header in
+    // 20260929120000_chat_actions.sql).
+    const requestId = crypto.randomUUID()
+    const actionReceipts: ChatActionReceipt[] = []
 
     // Player scope (spec: captain/editor = full team; member with an
     // approved link = their player only; member unlinked = full team).
@@ -155,6 +180,10 @@ export async function handleChatRequest(config: ChatConfig, request: Request): P
       const tools = makeChatTools({
         dispatch: (name, args) => callChatFunction(actionsConfig, teamId, name, args, scope),
         role: user.role,
+        recovery: { sessionId: session_id, userId: user.sub, requestId },
+        actionsConfig,
+        orgId: teamId,
+        onActionReceipt: (receipt) => { actionReceipts.push(receipt) },
         onSpan: (name, args, result, latencyMs) => posthog.capture({
           distinctId: user.sub,
           event: '$ai_span',
@@ -198,13 +227,51 @@ export async function handleChatRequest(config: ChatConfig, request: Request): P
     }
 
     await insertChatLogs(config, teamId, user.sub, [
-      { session_id, role: 'user', content: message },
-      { session_id, role: 'assistant', content: reply },
+      { session_id, role: 'user', content: message, request_id: requestId },
+      { session_id, role: 'assistant', content: reply, request_id: requestId },
     ])
 
-    return json({ reply })
+    return json({ reply, actions: actionReceipts })
   } catch (err: unknown) {
     return json({ error: err instanceof Error ? err.message : String(err) }, 500)
+  }
+}
+
+export async function handleChatUndoRequest(config: ChatConfig, request: Request): Promise<Response> {
+  try {
+    const body: any = await request.json().catch(() => ({}))
+    const { action_id, organization_id, session_id } = body as {
+      action_id?: string; organization_id?: number; session_id?: string
+    }
+    if (!action_id || !isValidSessionId(action_id)) return json({ error: 'action_id must be a UUID' }, 400)
+    if (!organization_id) return json({ error: 'organization_id required' }, 400)
+
+    // Undo rewrites team data, so it clears the same bar the write tools
+    // do (the tools layer gates chat writes on editor); there is no tool
+    // layer on this route, so the endpoint gates directly.
+    const lookup = createMembershipLookup({
+      supabaseUrl: config.supabaseUrl,
+      supabaseSecretKey: config.supabaseSecretKey,
+      onLookupError: (err) => Sentry.captureException(err),
+    })
+    const user = await requireTeamMember(config, request, Number(organization_id), 'editor', lookup)
+    if (!user.ok) return json({ error: user.error }, user.status)
+
+    // Scopes by action_id + org + verified user. session_id, when the client
+    // sends one, is deliberately NOT a scoping key: ownership of a receipt
+    // is the user, not the session, so a stale or wrong session_id cannot
+    // widen or narrow what an undo matches.
+    const action = await executeRollback(
+      { supabaseUrl: config.supabaseUrl, supabaseSecretKey: config.supabaseSecretKey },
+      Number(organization_id),
+      action_id,
+      user.sub,
+    )
+    return json({ ok: true, action })
+  } catch (err: unknown) {
+    const mapped = mapRollbackError(err)
+    if (mapped.status >= 500) Sentry.captureException(err)
+    return json(mapped.body, mapped.status)
   }
 }
 
@@ -224,7 +291,15 @@ export async function handleChatHistoryRequest(config: ChatConfig, request: Requ
       config,
       `/chat_logs?select=role,content,created_at&session_id=eq.${encodeURIComponent(sessionId)}&organization_id=eq.${organizationId}&user_id=eq.${encodeURIComponent(user.sub)}&order=created_at.asc`
     )
-    return json(rows ?? [])
+    // Receipts ride along with history so the UI can attach Undo to the
+    // message whose request_id produced the action. before_rows/after_rows
+    // are deliberately never selected: snapshots are server-side undo
+    // mechanics, not client data.
+    const actions = await supabaseServiceFetch(
+      config,
+      `/chat_actions?select=id,request_id,description,status&session_id=eq.${encodeURIComponent(sessionId)}&organization_id=eq.${organizationId}&user_id=eq.${encodeURIComponent(user.sub)}&order=created_at.desc&limit=50`
+    )
+    return json({ messages: rows ?? [], actions: actions ?? [] })
   } catch (err: unknown) {
     return json({ error: err instanceof Error ? err.message : String(err) }, 500)
   }
@@ -242,6 +317,9 @@ export async function handleChatHistoryDeleteRequest(config: ChatConfig, request
     const user = await requireTeamMember(config, request, Number(organizationId))
     if (!user.ok) return json({ error: user.error }, user.status)
 
+    // Deliberately deletes chat_logs ONLY: chat_actions receipts survive
+    // history clearing (binding spec rule) so an action stays undoable
+    // after the messages describing it are gone. Never add chat_actions here.
     const res = await fetch(`${config.supabaseUrl}/rest/v1/chat_logs?session_id=eq.${encodeURIComponent(sessionId)}&organization_id=eq.${organizationId}&user_id=eq.${encodeURIComponent(user.sub)}`, {
       method: 'DELETE',
       headers: {
