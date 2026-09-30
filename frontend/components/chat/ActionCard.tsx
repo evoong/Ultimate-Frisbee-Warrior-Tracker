@@ -68,11 +68,11 @@ export function ActionCard({ proposal, status, outcome, onConfirm, onCancel, onD
               className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
               {status === 'confirming' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4 mr-1.5" />}
-              Confirm
+              Approve
             </Button>
             <Button size="sm" variant="outline" onClick={onCancel} disabled={status === 'confirming'} className="text-muted-foreground hover:text-foreground">
               <X className="w-4 h-4 mr-1.5" />
-              Cancel
+              Decline
             </Button>
           </div>
         )}
