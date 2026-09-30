@@ -2,18 +2,89 @@ import assert from 'node:assert/strict'
 import { AIMessage } from '@langchain/core/messages'
 import { runToolAgent } from './graph.ts'
 import { makeChatTools } from './tools.ts'
+import { callChatFunction } from '../gameActions.ts'
 
-// Stub model: a bindTools-capable object is all the graph requires.
+// Stub model: a bindTools-capable object is all the graph requires. `seen`
+// records the message list each invoke receives, so tests can inspect the
+// ToolMessage content that actually reaches the model.
 class StubModel {
-  constructor(responses) { this.responses = [...responses] }
+  constructor(responses) { this.responses = [...responses]; this.seen = [] }
   bindTools(tools) { this.boundTools = tools; return this }
-  async invoke() { return this.responses.shift() }
+  async invoke(messages) { this.seen.push(messages); return this.responses.shift() }
 }
 
 const toolCallMsg = (name, args) =>
   new AIMessage({ content: '', tool_calls: [{ name, args, id: 'call_1' }] })
 
 const base = { systemPrompt: 'sys', history: [], message: 'hi' }
+
+// The ToolMessage the tools node produced for the single tool call a test
+// made (second model invoke receives [system, human, ai(call), toolMessage]).
+const toolResultOf = (model) => {
+  const msg = model.seen[1].find((m) => m?.tool_call_id !== undefined)
+  assert.ok(msg, 'a ToolMessage reached the model')
+  return JSON.parse(msg.content)
+}
+
+// In-memory PostgREST stub, same convention as chatRecovery.test.mjs: eq
+// filters, order=...desc, limit, PATCH/DELETE returning matched rows,
+// chat_actions POST applying the table's defaults.
+function restStub(tables) {
+  const handler = async (url, init) => {
+    const u = new URL(String(url))
+    const table = u.pathname.split('/rest/v1/')[1]
+    const params = u.searchParams
+    const method = init?.method ?? 'GET'
+    const body = init?.body !== undefined ? JSON.parse(init.body) : undefined
+    const store = (tables[table] ??= [])
+    const matches = () => store.filter((r) => {
+      for (const [k, v] of params.entries()) {
+        if (k === 'select' || k === 'order' || k === 'limit') continue
+        if (!v.startsWith('eq.') || String(r[k]) !== v.slice(3)) return false
+      }
+      return true
+    })
+    if (method === 'GET') {
+      let rows = matches()
+      const order = params.get('order')
+      if (order?.endsWith('.desc')) {
+        const key = order.slice(0, -5)
+        rows = [...rows].sort((a, b) => String(b[key]).localeCompare(String(a[key])))
+      }
+      const limit = params.get('limit')
+      if (limit != null) rows = rows.slice(0, Number(limit))
+      return { ok: true, status: 200, text: async () => JSON.stringify(rows), json: async () => rows }
+    }
+    if (method === 'PATCH') {
+      const matched = matches()
+      for (const r of matched) Object.assign(r, body)
+      return { ok: true, status: 200, text: async () => JSON.stringify(matched), json: async () => matched }
+    }
+    if (method === 'DELETE') {
+      const matched = matches()
+      tables[table] = store.filter((r) => !matched.includes(r))
+      return { ok: true, status: 200, text: async () => JSON.stringify(matched), json: async () => matched }
+    }
+    const inserted = (Array.isArray(body) ? body : [body]).map((r) =>
+      table === 'chat_actions' ? { id: `gen-${r.request_id}`, status: 'applied', ...r } : { ...r })
+    store.push(...inserted)
+    return { ok: true, status: 200, text: async () => JSON.stringify(inserted), json: async () => inserted }
+  }
+  return handler
+}
+
+async function withStubbedFetch(tables, fn) {
+  const realFetch = globalThis.fetch
+  globalThis.fetch = restStub(tables)
+  try {
+    return await fn()
+  } finally {
+    globalThis.fetch = realFetch
+  }
+}
+
+const RECOVERY = { sessionId: 's-1', userId: 'u-1', requestId: 'r-1' }
+const RECOVERY_CONFIG = { supabaseUrl: 'http://stub.invalid', supabaseSecretKey: 'stub-key' }
 
 {
   // Member + write tool -> permission error, dispatch and propose untouched.
@@ -182,5 +253,82 @@ const base = { systemPrompt: 'sys', history: [], message: 'hi' }
   assert.equal(parsed.proposed, true)
   assert.equal(parsed.proposal_id, 'p9')
   assert.ok(parsed.summary.includes('Alice'))
+{
+  // Editor + rollback_last_action -> resolves via findLatestActionToRollback
+  // + executeRollback, never via dispatch, and confirms what was undone.
+  // In the merged world rollback stays a DIRECT tool (not proposed): it is
+  // the recovery path for already-applied actions, card-confirming it would
+  // deadlock the undo UX.
+  const dispatch = []
+  const EVENT = { id: 42, organization_id: 1, game_id: 10, player_id: 5, related_player_id: null, event_type: 'Goal' }
+  const tables = {
+    chat_actions: [{ id: 'act-9', organization_id: 1, session_id: 's-1', user_id: 'u-1', status: 'applied', action_type: 'create_game_event', description: 'Logged Goal: Alex', before_rows: {}, after_rows: { event: { ...EVENT } }, created_at: '2026-09-29T10:00:00Z' }],
+    game_events: [{ ...EVENT }],
+  }
+  await withStubbedFetch(tables, async () => {
+    const model = new StubModel([toolCallMsg('rollback_last_action', {}), new AIMessage('undone')])
+    const tools = makeChatTools({
+      dispatch: async (n) => { dispatch.push(n); return {} },
+      role: 'editor',
+      recovery: RECOVERY,
+      actionsConfig: RECOVERY_CONFIG,
+      orgId: 1,
+    })
+    const reply = await runToolAgent({ ...base, model, tools })
+    assert.equal(reply, 'undone')
+    assert.equal(dispatch.length, 0, 'rollback resolves in the recovery layer, not via dispatch')
+    assert.deepEqual(toolResultOf(model), { undone: { id: 'act-9', description: 'Logged Goal: Alex' } })
+    assert.equal(tables.chat_actions[0].status, 'undone', 'receipt flipped to undone')
+    assert.equal(tables.game_events.length, 0, 'inverse op deleted the created event')
+  })
+}
+{
+  // Rollback with nothing applied -> error object, not a crash.
+  await withStubbedFetch({ chat_actions: [] }, async () => {
+    const model = new StubModel([toolCallMsg('rollback_last_action', {}), new AIMessage('ok')])
+    const tools = makeChatTools({
+      dispatch: async () => { throw new Error('dispatch must not run') },
+      role: 'editor',
+      recovery: RECOVERY,
+      actionsConfig: RECOVERY_CONFIG,
+      orgId: 1,
+    })
+    await runToolAgent({ ...base, model, tools })
+    assert.deepEqual(toolResultOf(model), { error: 'no recent action to undo' })
+  })
+}
+{
+  // Member role is blocked from rollback_last_action; dispatch never called.
+  const dispatch = []
+  const model = new StubModel([toolCallMsg('rollback_last_action', {}), new AIMessage('ok')])
+  const tools = makeChatTools({ dispatch: async (n) => { dispatch.push(n); return {} }, role: 'member' })
+  await runToolAgent({ ...base, model, tools })
+  assert.equal(dispatch.length, 0, 'member rollback never reaches dispatch')
+  assert.deepEqual(toolResultOf(model), { error: "you do not have permission to change this team's data" })
+}
+{
+  // Editor + write tool with NO propose dep (unwired runtime) -> the
+  // unavailable marker, never a silent dispatch. Receipt-at-dispatch tests
+  // moved to the confirm layer (chatProposals.test.mjs): in the merged
+  // runtime write tools never dispatch, so receipts are recorded by the
+  // confirm endpoint instead.
+  const dispatch = []
+  const tools = makeChatTools({
+    dispatch: async (n, a) => { dispatch.push([n, a]); return { our_score: 1 } },
+    role: 'editor',
+    recovery: RECOVERY,
+    actionsConfig: RECOVERY_CONFIG,
+    orgId: 7,
+  })
+  const model = new StubModel([toolCallMsg('create_game_event', { eventType: 'Goal' }), new AIMessage('done')])
+  await runToolAgent({ ...base, model, tools })
+  assert.equal(dispatch.length, 0, 'unwired runtime never dispatches a write')
+  assert.deepEqual(toolResultOf(model), { error: 'action confirmation is unavailable' })
+}
+}
+{
+  const names = makeChatTools({ dispatch: async () => ({}), role: 'editor' }).map(t => t.name)
+  assert.ok(names.includes('apply_lineup_template'), 'template apply remains available')
+  assert.ok(names.includes('rollback_last_action'), 'rollback remains available')
 }
 console.log('✓ gateway/agent/agent.test.mjs all passed')

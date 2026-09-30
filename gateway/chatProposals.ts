@@ -6,7 +6,8 @@
 // an empty array) and executes. Service-role only, Workers-portable raw
 // fetch, mirroring gameActions.ts/supabaseRest.ts conventions.
 import type { ActionsConfig } from './gameActions.js'
-import { callChatFunction, resolveGame, resolvePlayer, resolveSeason, WRITE_FUNCTIONS, type GameRow } from './gameActions.js'
+import { callChatFunction, resolveGame, resolvePlayer, resolveSeason, WRITE_FUNCTIONS, type ActionReceiptData, type GameRow } from './gameActions.js'
+import { recordChatAction, type ChatActionReceipt } from './chatRecovery.js'
 import { hasAtLeast, type TeamRole } from './membership.js'
 import { sbGet, sbWrite } from './supabaseRest.js'
 
@@ -158,6 +159,16 @@ export async function buildProposal(
   return { id: row.id, tool_name, args, summary }
 }
 
+// Same strip as agent/tools.ts: write handlers attach `__receipt` to their
+// return value; it never flows to a client as part of `result`.
+function stripReceipt(output: unknown): { result: unknown; receipt?: ActionReceiptData } {
+  if (output == null || typeof output !== 'object' || Array.isArray(output) || !('__receipt' in output)) {
+    return { result: output }
+  }
+  const { __receipt, ...rest } = output as { __receipt?: ActionReceiptData } & Record<string, unknown>
+  return { result: rest, receipt: __receipt }
+}
+
 // The confirm endpoint's core. Order matters and is load-bearing:
 // 1. GET (ownership-filtered) — not found means wrong id OR wrong
 //    session/org/user; do not distinguish (no oracle).
@@ -166,11 +177,15 @@ export async function buildProposal(
 //    (spec: a role failure must not burn the user's proposal).
 // 4. DELETE claim — the single-use primitive; losing it means a concurrent
 //    confirm won, which must surface as 409, not as a double write.
-// 5. dispatch the ORIGINAL tool via the same callChatFunction the agent used.
+// 5. dispatch the ORIGINAL tool via the same callChatFunction the agent used,
+//    stripping its __receipt and recording it as a chat_actions row when the
+//    runtime supplied session identity — that record is what makes the
+//    agent's rollback_last_action (and the /api/chat/undo button) able to
+//    undo a CARD-confirmed action, exactly as it does reply-executed ones.
 export async function confirmProposal(
   config: ActionsConfig,
-  params: ProposalFilter & { role: TeamRole },
-): Promise<unknown> {
+  params: ProposalFilter & { role: TeamRole; recovery?: { sessionId: string; userId: string; requestId: string } },
+): Promise<{ result: unknown; receipt: ChatActionReceipt | null }> {
   const row = await getProposal(config, params)
   if (!row) throw new ConfirmError(404, 'proposal not found or already used')
   if (isExpired(row)) {
@@ -182,5 +197,22 @@ export async function confirmProposal(
   }
   const claimed = await takeProposal(config, params)
   if (!claimed) throw new ConfirmError(409, 'proposal already confirmed')
-  return callChatFunction(config, params.organization_id, claimed.tool_name, claimed.args)
+  const raw = await callChatFunction(config, params.organization_id, claimed.tool_name, claimed.args)
+  const { result, receipt } = stripReceipt(raw)
+  let recorded: ChatActionReceipt | null = null
+  if (receipt && params.recovery) {
+    // A record failure after the write landed throws — the confirm endpoint
+    // reports it as an error; the write is real either way (same atomicity
+    // caveat tools.ts documents for the reply-executed path).
+    recorded = await recordChatAction(config, params.organization_id, {
+      sessionId: params.recovery.sessionId,
+      userId: params.recovery.userId,
+      requestId: params.recovery.requestId,
+      actionType: claimed.tool_name,
+      description: receipt.description,
+      beforeRows: receipt.before,
+      afterRows: receipt.after,
+    })
+  }
+  return { result, receipt: recorded }
 }

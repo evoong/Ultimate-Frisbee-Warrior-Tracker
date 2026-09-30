@@ -204,6 +204,7 @@ try {
     if (path === '/rest/v1/players') return Response.json(PLAYERS)
     if (path === '/rest/v1/game_lineup_groups' || path === '/rest/v1/game_lineups') {
       if (method === 'GET') return Response.json([])
+      if (method === 'DELETE') return Response.json([]) // no rows removed by default
       writeCalls.push(`${method} ${path}`)
       return Response.json([{ ok: true }])
     }
@@ -232,10 +233,49 @@ try {
 
   // 1. happy path: editor confirms, the write executes, the row is consumed
   let row = seed('add_to_lineup', { playerName: 'Alice' })
-  const result = await confirmProposal(cfg, { ...confirmCtx, id: row.id })
-  assert.ok(result, 'confirm returns the handler result')
+  const confirmed = await confirmProposal(cfg, { ...confirmCtx, id: row.id })
+  assert.ok(confirmed, 'confirm returns the handler result')
+  assert.equal(confirmed.receipt, null, 'no receipt recorded without recovery context')
   assert.ok(writeCalls.some(c => c.startsWith('POST /rest/v1/game_lineups')), 'the write executed')
   assert.equal(rows.length, 0, 'row consumed')
+
+  // 1b. WITH recovery: the write's __receipt is stripped from result and
+  // recorded as a chat_actions row (what makes rollback/undo able to
+  // reverse a CARD-confirmed action, same as a reply-executed one).
+  const receiptPosts = []
+  const withRecoveryFetch = globalThis.fetch
+  globalThis.fetch = async (url, init = {}) => {
+    const u = new URL(String(url))
+    if (u.pathname === '/rest/v1/chat_actions' && (init.method || 'GET') === 'POST') {
+      const body = JSON.parse(init.body)
+      receiptPosts.push(body)
+      return Response.json([{ id: 'rec-1', request_id: body.request_id, description: body.description, status: 'applied' }])
+    }
+    return withRecoveryFetch(url, init)
+  }
+  row = seed('add_to_lineup', { playerName: 'Alice' })
+  const withRecovery = await confirmProposal(cfg, {
+    ...confirmCtx, id: row.id,
+    recovery: { sessionId: confirmCtx.session_id, userId: 'user-1', requestId: 'req-9' },
+  })
+  assert.equal(receiptPosts.length, 1, 'exactly one receipt recorded at confirm time')
+  assert.equal(receiptPosts[0].session_id, confirmCtx.session_id)
+  assert.equal(receiptPosts[0].request_id, 'req-9')
+  assert.equal(receiptPosts[0].action_type, 'add_to_lineup')
+  assert.ok(withRecovery.receipt?.id === 'rec-1', 'recorded receipt returned to the runtime')
+  assert.equal('__receipt' in (withRecovery.result ?? {}), false, '__receipt never reaches the client result')
+
+  // 1c. No-op write (remove_from_lineup on an empty lineup) records nothing.
+  // (Still under the receipt-wrapped fetch.)
+  row = seed('remove_from_lineup', { playerName: 'Alice' })
+  const noop = await confirmProposal(cfg, {
+    ...confirmCtx, id: row.id,
+    recovery: { sessionId: confirmCtx.session_id, userId: 'user-1', requestId: 'req-10' },
+  })
+  assert.equal(receiptPosts.length, 1, 'still only the 1b receipt — the no-op adds none')
+  assert.equal(noop.receipt, null, 'un-invertible no-op records no receipt')
+  assert.equal(noop.result?.removed_rows, 0)
+  globalThis.fetch = withRecoveryFetch
 
   // 2. unknown / foreign id -> 404
   await assert.rejects(() => confirmProposal(cfg, { ...confirmCtx, id: 'missing' }), isConfirmError(404))
