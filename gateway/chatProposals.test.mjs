@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import {
-  createProposal, getProposal, takeProposal, deleteProposal, isExpired, PROPOSAL_TTL_MS,
+  createProposal, getProposal, takeProposal, deleteProposal, isExpired, PROPOSAL_TTL_MS, buildProposal,
 } from './chatProposals.ts'
 
 const config = { supabaseUrl: 'https://example.test', supabaseSecretKey: 'service-role-key' }
@@ -74,6 +74,54 @@ try {
   assert.equal(await getProposal(config, filter2), null)
 
   console.log('✓ gateway/chatProposals.test.mjs all passed')
+
+  // ---- buildProposal: validation reads + summary + store (Task 3) ----
+  const GAMES = [{ id: 201, season_id: 10, opponent: 'Rival A', game_date: '2026-09-29', game_time: '18:00' }]
+  const PLAYERS = [{ id: 101, display_name: 'Alice' }, { id: 102, display_name: 'Bob' }]
+  rows.length = 0
+  globalThis.fetch = async (url, init = {}) => {
+    const u = new URL(String(url))
+    const path = u.pathname
+    if (path === '/rest/v1/chat_action_proposals') {
+      const method = init.method || 'GET'
+      const f = k => u.searchParams.get(k)?.replace('eq.', '')
+      const match = r => r.id === f('id') && r.session_id === f('session_id')
+        && String(r.organization_id) === f('organization_id') && r.user_id === f('user_id')
+      if (method === 'POST') { const b = JSON.parse(init.body); const stored = { ...b, created_at: new Date().toISOString() }; rows.push(stored); return Response.json([stored]) }
+      return Response.json(rows.filter(match))
+    }
+    if (path === '/rest/v1/games') return Response.json(GAMES)
+    if (path === '/rest/v1/players') return Response.json(PLAYERS)
+    throw new Error(`unexpected fetch ${init.method || 'GET'} ${path}`)
+  }
+
+  const cfg = { supabaseUrl: 'https://example.test', supabaseSecretKey: 'service-role-key' }
+  const ctx = { organization_id: 1, session_id: '11111111-1111-4111-8111-111111111111', user_id: 'user-1' }
+
+  // happy path: names resolved into the summary, row stored
+  const p = await buildProposal(cfg, ctx, 'add_to_lineup', { playerName: 'Alice', lineupGroupName: 'Line 1' })
+  assert.equal(p.tool_name, 'add_to_lineup')
+  assert.ok(p.id, 'proposal id present')
+  assert.ok(p.summary.includes('Alice') && p.summary.includes('Rival A'), `summary carries resolved names: "${p.summary}"`)
+  assert.equal(rows.length, 1, 'row stored')
+
+  // unknown player → throws, stores nothing
+  rows.length = 0
+  await assert.rejects(() => buildProposal(cfg, ctx, 'add_to_lineup', { playerName: 'Nobody' }), /No player found/)
+  assert.equal(rows.length, 0, 'nothing stored on validation failure')
+
+  // create_lineup resolves every player and summarizes groups
+  rows.length = 0
+  const lu = await buildProposal(cfg, ctx, 'create_lineup', {
+    groups: [{ name: 'O-Line', players: [{ playerName: 'Alice' }, { playerName: 'Bob', role: 'Cutter' }] }],
+  })
+  assert.ok(lu.summary.includes('O-Line') && lu.summary.includes('Bob'), 'lineup summary lists group and players')
+  assert.equal(rows.length, 1)
+
+  // read-only tools are never proposable
+  await assert.rejects(() => buildProposal(cfg, ctx, 'view_lineup', {}), /Unknown write tool/)
+
+  console.log('✓ buildProposal checks passed')
 } finally {
   globalThis.fetch = origFetch
 }

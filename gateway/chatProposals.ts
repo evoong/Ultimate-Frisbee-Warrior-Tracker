@@ -6,6 +6,7 @@
 // an empty array) and executes. Service-role only, Workers-portable raw
 // fetch, mirroring gameActions.ts/supabaseRest.ts conventions.
 import type { ActionsConfig } from './gameActions.js'
+import { resolveGame, resolvePlayer, WRITE_FUNCTIONS, type GameRow } from './gameActions.js'
 import { sbGet, sbWrite } from './supabaseRest.js'
 
 export interface ProposalRow {
@@ -58,4 +59,90 @@ export async function deleteProposal(config: ActionsConfig, f: ProposalFilter): 
 
 export function isExpired(row: ProposalRow, now = Date.now()): boolean {
   return now - new Date(row.created_at).getTime() > PROPOSAL_TTL_MS
+}
+
+// Validates a write tool's args with the SAME resolution the real handler
+// will use (reads only — no data is written at proposal time), so the card
+// can show real dates/names and invalid input fails before anything is
+// stored. Summaries are server-built from resolved names, never model text.
+async function summarizeProposal(
+  config: ActionsConfig, orgId: number, tool: string, args: Record<string, unknown>
+): Promise<string> {
+  const hint = { gameDate: args.gameDate as string | undefined, opponent: args.opponent as string | undefined }
+  const gameLabel = (g: GameRow) => `the ${g.game_date} game vs ${g.opponent}`
+  const str = (k: string) => (typeof args[k] === 'string' ? args[k] as string : undefined)
+
+  switch (tool) {
+    case 'create_game_event': {
+      const game = await resolveGame(config, orgId, hint)
+      const player = str('playerName') ? await resolvePlayer(config, orgId, str('playerName')!) : null
+      const assister = str('assisterName') ? await resolvePlayer(config, orgId, str('assisterName')!) : null
+      return `Log ${str('eventType')}${player ? ` for ${player.display_name}` : ''}${assister ? ` (assist: ${assister.display_name})` : ''} in ${gameLabel(game)}`
+    }
+    case 'undo_last_event': {
+      const game = await resolveGame(config, orgId, hint)
+      return `Undo the most recent event in ${gameLabel(game)}`
+    }
+    case 'add_to_lineup': {
+      const game = await resolveGame(config, orgId, hint)
+      const player = await resolvePlayer(config, orgId, str('playerName')!)
+      return `Place ${player.display_name} in ${str('lineupGroupName') ?? 'the first lineup group'} for ${gameLabel(game)}`
+    }
+    case 'remove_from_lineup': {
+      const game = await resolveGame(config, orgId, hint)
+      const player = await resolvePlayer(config, orgId, str('playerName')!)
+      return `Remove ${player.display_name} from the lineup of ${gameLabel(game)}`
+    }
+    case 'create_lineup_group': {
+      const game = await resolveGame(config, orgId, hint)
+      return `Add lineup group "${str('name')}" to ${gameLabel(game)}`
+    }
+    case 'create_lineup': {
+      const game = await resolveGame(config, orgId, hint)
+      const groups = args.groups as { name: string; players?: { playerName: string; role?: string }[] }[]
+      if (!Array.isArray(groups) || groups.length === 0) throw new Error('create_lineup requires at least one lineup group.')
+      const parts: string[] = []
+      for (const g of groups) {
+        const names: string[] = []
+        for (const p of g.players ?? []) {
+          const resolved = await resolvePlayer(config, orgId, p.playerName)
+          names.push(resolved.display_name)
+        }
+        parts.push(`${g.name} (${names.join(', ')})`)
+      }
+      return `Set the lineup for ${gameLabel(game)}: ${parts.join('; ')}`
+    }
+    case 'save_lineup_template': {
+      const game = await resolveGame(config, orgId, hint)
+      return `Save ${gameLabel(game)}'s lineup as template "${str('name')}"`
+    }
+    case 'apply_lineup_template': {
+      const game = await resolveGame(config, orgId, hint)
+      const name = str('templateName')!
+      // Same loose match the frontend/agent uses; fails loudly when absent.
+      const templates: { id: number; name: string }[] = game.season_id
+        ? await sbGet(config, `/lineup_templates?organization_id=eq.${orgId}&season_id=eq.${game.season_id}&select=id,name`)
+        : await sbGet(config, `/lineup_templates?organization_id=eq.${orgId}&select=id,name`)
+      const q = name.trim().toLowerCase()
+      let matches = templates.filter(t => t.name.toLowerCase() === q)
+      if (matches.length === 0) matches = templates.filter(t => t.name.toLowerCase().includes(q))
+      if (matches.length === 0) throw new Error(`No lineup template found matching "${name}".`)
+      if (matches.length > 1) throw new Error(`Multiple lineup templates match "${name}": ${matches.map(m => m.name).join(', ')}. Be more specific.`)
+      return `Load lineup template "${matches[0]!.name}" into ${gameLabel(game)}`
+    }
+    default:
+      throw new Error(`Unknown write tool: ${tool}`)
+  }
+}
+
+export async function buildProposal(
+  config: ActionsConfig,
+  ctx: { organization_id: number; session_id: string; user_id: string },
+  tool_name: string,
+  args: Record<string, unknown>,
+): Promise<{ id: string; tool_name: string; args: Record<string, unknown>; summary: string }> {
+  if (!WRITE_FUNCTIONS.has(tool_name)) throw new Error(`Unknown write tool: ${tool_name}`)
+  const summary = await summarizeProposal(config, ctx.organization_id, tool_name, args)
+  const row = await createProposal(config, { ...ctx, tool_name, args })
+  return { id: row.id, tool_name, args, summary }
 }
