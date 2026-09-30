@@ -13,6 +13,7 @@ const AUTH_ERROR_MESSAGES: Record<string, string> = {
   login_expired: 'The sign-in attempt took too long. Please try again.',
   oauth_exchange_failed: 'Google sign-in failed. Please try again.',
   verify_failed: 'That link is invalid or has expired. Request a new one.',
+  account_deleted: 'This account was deleted and cannot be recreated. Contact support.',
   missing_code: 'Sign-in was interrupted. Please try again.',
 }
 

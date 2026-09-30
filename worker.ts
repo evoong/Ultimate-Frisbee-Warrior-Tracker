@@ -6,6 +6,7 @@ import { createAdminLookup } from './gateway/admin/adminAuth.js'
 import { handleAdminRequest } from './gateway/admin/index.js'
 import { handleChatRequest, handleChatHistoryRequest, handleChatHistoryDeleteRequest, handleChatUndoRequest, type ChatConfig } from './gateway/chat.js'
 import { handleFlagsRequest, type FlagsConfig } from './gateway/flags.js'
+import { handleAccountDeleteRequest } from './gateway/account/deleteAccount.js'
 import { runJamSync, JAM_SYNC_MONITOR_SLUG, JAM_SYNC_MONITOR_CONFIG } from './gateway/jamSync.js'
 import { UfwtMcp } from './gateway/mcpAgent.js'
 import { createUfwtOAuthProvider } from './gateway/mcpOAuth.js'
@@ -100,6 +101,15 @@ async function handleAppRequest(request: Request, env: Env, ctx: ExecutionContex
         request
       );
       if (flagsResponse) return flagsResponse;
+
+      const accountResponse = await handleAccountDeleteRequest(
+        {
+          supabaseUrl: env.SUPABASE_URL,
+          supabaseSecretKey: env.SUPABASE_SECRET_KEY,
+        },
+        request
+      );
+      if (accountResponse) return accountResponse;
 
       // AI chat: needs the service-role key and Gemini, so it lives outside
       // the gateway (which only ever proxies as the caller's own token).

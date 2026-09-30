@@ -12,6 +12,7 @@ import { nodeAdapter } from "../gateway/node-adapter.js";
 import { createAdminLookup } from "../gateway/admin/adminAuth.js";
 import { handleAdminRequest, isAdminPath } from "../gateway/admin/index.js";
 import { handleFlagsRequest } from "../gateway/flags.js";
+import { handleAccountDeleteRequest } from "../gateway/account/deleteAccount.js";
 import { createNodeAdapter } from "../gateway/node-adapter.js";
 import { getVaultSecret } from "../gateway/secrets.js";
 import { runJamSync, JAM_SYNC_MONITOR_SLUG, JAM_SYNC_MONITOR_CONFIG } from "../gateway/jamSync.js";
@@ -89,6 +90,18 @@ app.use(
       request
     ),
     (path) => path === "/api/flags"
+  )
+);
+app.use(
+  createNodeAdapter(
+    (request) => handleAccountDeleteRequest(
+      {
+        supabaseUrl: gatewayConfig.supabaseUrl,
+        supabaseSecretKey: process.env.SUPABASE_SECRET_KEY || "",
+      },
+      request
+    ),
+    (path) => path === "/api/account/delete" || path === "/api/account/delete/blockers"
   )
 );
 

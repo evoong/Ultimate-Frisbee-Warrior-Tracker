@@ -59,7 +59,8 @@ select is_empty(
         and c.relkind in ('r', 'p')
         and c.relname not in ('standings', 'feedback_clusters', 'feedback_reports',
                               'platform_admins', 'admin_audit_log', 'deleted_rows_archive',
-                              'processed_stripe_events', 'feature_flags', 'org_feature_flags')
+                              'processed_stripe_events', 'feature_flags', 'org_feature_flags',
+                              'deleted_accounts')
         and not exists (select 1 from pg_policy p where p.polrelid = c.oid) $$,
   'every table in public has at least one policy'
 );
@@ -81,8 +82,9 @@ select is_empty(
        join pg_namespace n on n.oid = p.pronamespace
       where n.nspname = 'public'
         and p.prosecdef
+        and p.oid <> 'public.is_email_deleted(text)'::regprocedure
         and has_function_privilege('anon', p.oid, 'EXECUTE') $$,
-  'no security definer function in public is executable by anon'
+  'no security definer function in public is executable by anon except is_email_deleted'
 );
 
 -- FIX 2: event_types, standings and organization_members sat outside the
