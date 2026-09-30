@@ -6,7 +6,8 @@
 // an empty array) and executes. Service-role only, Workers-portable raw
 // fetch, mirroring gameActions.ts/supabaseRest.ts conventions.
 import type { ActionsConfig } from './gameActions.js'
-import { resolveGame, resolvePlayer, WRITE_FUNCTIONS, type GameRow } from './gameActions.js'
+import { callChatFunction, resolveGame, resolvePlayer, WRITE_FUNCTIONS, type GameRow } from './gameActions.js'
+import { hasAtLeast, type TeamRole } from './membership.js'
 import { sbGet, sbWrite } from './supabaseRest.js'
 
 export interface ProposalRow {
@@ -145,4 +146,31 @@ export async function buildProposal(
   const summary = await summarizeProposal(config, ctx.organization_id, tool_name, args)
   const row = await createProposal(config, { ...ctx, tool_name, args })
   return { id: row.id, tool_name, args, summary }
+}
+
+// The confirm endpoint's core. Order matters and is load-bearing:
+// 1. GET (ownership-filtered) — not found means wrong id OR wrong
+//    session/org/user; do not distinguish (no oracle).
+// 2. expiry — an expired row is inert, so consume it while rejecting.
+// 3. role — checked BEFORE the claim so a denial leaves the row pending
+//    (spec: a role failure must not burn the user's proposal).
+// 4. DELETE claim — the single-use primitive; losing it means a concurrent
+//    confirm won, which must surface as 409, not as a double write.
+// 5. dispatch the ORIGINAL tool via the same callChatFunction the agent used.
+export async function confirmProposal(
+  config: ActionsConfig,
+  params: ProposalFilter & { role: TeamRole },
+): Promise<unknown> {
+  const row = await getProposal(config, params)
+  if (!row) throw new ConfirmError(404, 'proposal not found or already used')
+  if (isExpired(row)) {
+    await deleteProposal(config, params)
+    throw new ConfirmError(410, 'this proposal expired — ask the assistant again')
+  }
+  if (WRITE_FUNCTIONS.has(row.tool_name) && !hasAtLeast(params.role, 'editor')) {
+    throw new ConfirmError(403, "you do not have permission to change this team's data")
+  }
+  const claimed = await takeProposal(config, params)
+  if (!claimed) throw new ConfirmError(409, 'proposal already confirmed')
+  return callChatFunction(config, params.organization_id, claimed.tool_name, claimed.args)
 }

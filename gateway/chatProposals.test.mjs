@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import {
   createProposal, getProposal, takeProposal, deleteProposal, isExpired, PROPOSAL_TTL_MS, buildProposal,
+  confirmProposal, ConfirmError,
 } from './chatProposals.ts'
 
 const config = { supabaseUrl: 'https://example.test', supabaseSecretKey: 'service-role-key' }
@@ -122,6 +123,98 @@ try {
   await assert.rejects(() => buildProposal(cfg, ctx, 'view_lineup', {}), /Unknown write tool/)
 
   console.log('✓ buildProposal checks passed')
+
+  // ---- confirmProposal: claim, gates, single-use (Task 5) ----
+  rows.length = 0
+  const writeCalls = []
+  globalThis.fetch = async (url, init = {}) => {
+    const u = new URL(String(url))
+    const path = u.pathname
+    const method = init.method || 'GET'
+    if (path === '/rest/v1/chat_action_proposals') {
+      const f = k => u.searchParams.get(k)?.replace('eq.', '')
+      const match = r => r.id === f('id') && r.session_id === f('session_id')
+        && String(r.organization_id) === f('organization_id') && r.user_id === f('user_id')
+      if (method === 'POST') { const b = JSON.parse(init.body); const stored = { ...b, created_at: new Date().toISOString() }; rows.push(stored); return Response.json([stored]) }
+      if (method === 'DELETE') {
+        const hit = rows.filter(match)
+        for (const r of hit) rows.splice(rows.indexOf(r), 1)
+        return Response.json(hit)
+      }
+      return Response.json(rows.filter(match))
+    }
+    if (path === '/rest/v1/games') return Response.json(GAMES)
+    if (path === '/rest/v1/players') return Response.json(PLAYERS)
+    if (path === '/rest/v1/game_lineup_groups' || path === '/rest/v1/game_lineups') {
+      if (method === 'GET') return Response.json([])
+      writeCalls.push(`${method} ${path}`)
+      return Response.json([{ ok: true }])
+    }
+    if (path === '/rest/v1/season_players') return Response.json([])
+    throw new Error(`unexpected fetch ${method} ${path}`)
+  }
+
+  const confirmCtx = {
+    id: '',
+    session_id: '11111111-1111-4111-8111-111111111111',
+    organization_id: 1,
+    user_id: 'user-1',
+    role: 'editor',
+  }
+  const seed = (tool, args, ageMs = 0) => {
+    const row = {
+      id: crypto.randomUUID(),
+      session_id: confirmCtx.session_id, organization_id: 1, user_id: 'user-1',
+      tool_name: tool, args,
+      created_at: new Date(Date.now() - ageMs).toISOString(),
+    }
+    rows.push(row)
+    return row
+  }
+  const isConfirmError = (status) => (e) => e instanceof ConfirmError && e.status === status
+
+  // 1. happy path: editor confirms, the write executes, the row is consumed
+  let row = seed('add_to_lineup', { playerName: 'Alice' })
+  const result = await confirmProposal(cfg, { ...confirmCtx, id: row.id })
+  assert.ok(result, 'confirm returns the handler result')
+  assert.ok(writeCalls.some(c => c.startsWith('POST /rest/v1/game_lineups')), 'the write executed')
+  assert.equal(rows.length, 0, 'row consumed')
+
+  // 2. unknown / foreign id -> 404
+  await assert.rejects(() => confirmProposal(cfg, { ...confirmCtx, id: 'missing' }), isConfirmError(404))
+
+  // 3. expired -> 410 AND consumed
+  row = seed('add_to_lineup', { playerName: 'Alice' }, PROPOSAL_TTL_MS + 5000)
+  await assert.rejects(() => confirmProposal(cfg, { ...confirmCtx, id: row.id }), isConfirmError(410))
+  assert.equal(rows.length, 0, 'expired row was deleted')
+
+  // 4. member role -> 403 and NOT consumed (checked BEFORE the claim)
+  row = seed('add_to_lineup', { playerName: 'Alice' })
+  await assert.rejects(() => confirmProposal(cfg, { ...confirmCtx, id: row.id, role: 'member' }), isConfirmError(403))
+  assert.equal(rows[rows.length - 1].id, row.id, 'role-denied row is NOT consumed')
+
+  // 5. another user's id -> 404 (ownership filter fails the GET)
+  await assert.rejects(() => confirmProposal(cfg, { ...confirmCtx, id: row.id, user_id: 'user-2' }), isConfirmError(404))
+
+  // 6. lost claim race: GET sees the row, DELETE returns [] -> 409, no dispatch
+  writeCalls.length = 0
+  const baseFetch = globalThis.fetch
+  globalThis.fetch = async (url, init = {}) => {
+    const u = new URL(String(url))
+    if (u.pathname === '/rest/v1/chat_action_proposals' && init.method === 'DELETE') {
+      return Response.json([]) // the other tab won the claim
+    }
+    if (u.pathname === '/rest/v1/game_lineup_groups' || u.pathname === '/rest/v1/game_lineups') {
+      writeCalls.push(`RACE-EXEC ${init.method} ${u.pathname}`)
+      return Response.json([{ ok: true }])
+    }
+    return baseFetch(url, init) // everything else: the mock above
+  }
+  await assert.rejects(() => confirmProposal(cfg, { ...confirmCtx, id: row.id }), isConfirmError(409))
+  assert.ok(!writeCalls.some(c => c.startsWith('RACE-EXEC')), 'lost race never executes')
+  globalThis.fetch = baseFetch
+
+  console.log('✓ confirmProposal checks passed')
 } finally {
   globalThis.fetch = origFetch
 }
