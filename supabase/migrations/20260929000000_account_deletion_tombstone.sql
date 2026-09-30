@@ -18,7 +18,7 @@ set search_path = public
 as $$
   select exists (
     select 1 from public.deleted_accounts
-    where email = lower(trim(p_email))
+    where lower(email) = lower(trim(p_email))
   );
 $$;
 
