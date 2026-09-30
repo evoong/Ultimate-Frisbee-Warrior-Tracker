@@ -16,9 +16,14 @@ const toolCallMsg = (name, args) =>
 const base = { systemPrompt: 'sys', history: [], message: 'hi' }
 
 {
-  // Member + write tool -> permission error, dispatch untouched.
+  // Member + write tool -> permission error, dispatch and propose untouched.
   const dispatch = []
-  const tools = makeChatTools({ dispatch: async (n, a) => { dispatch.push([n, a]); return { ok: true } }, role: 'member' })
+  const proposals = []
+  const tools = makeChatTools({
+    dispatch: async (n, a) => { dispatch.push([n, a]); return { ok: true } },
+    role: 'member',
+    propose: async (n) => { proposals.push(n); return { proposal_id: 'p1', summary: 's' } },
+  })
   const reply = await runToolAgent({
     ...base,
     model: new StubModel([toolCallMsg('create_game_event', { eventType: 'Goal' }), new AIMessage('done')]),
@@ -26,17 +31,44 @@ const base = { systemPrompt: 'sys', history: [], message: 'hi' }
   })
   assert.equal(reply, 'done')
   assert.equal(dispatch.length, 0, 'member write never reaches dispatch')
+  assert.equal(proposals.length, 0, 'member write never proposes')
 }
 {
-  // Editor + write tool -> dispatched.
+  // Editor + write tool -> proposal created, dispatch never called.
   const dispatch = []
-  const tools = makeChatTools({ dispatch: async (n, a) => { dispatch.push([n, a]); return { our_score: 1 } }, role: 'editor' })
-  await runToolAgent({
+  const proposals = []
+  const tools = makeChatTools({
+    dispatch: async (n, a) => { dispatch.push([n, a]); return { our_score: 1 } },
+    role: 'editor',
+    propose: async (n) => { proposals.push(n); return { proposal_id: 'p1', summary: 'Log Goal in the 2026-09-29 game vs Rival A' } },
+    onProposal: p => proposals.push(p),
+  })
+  const reply = await runToolAgent({
     ...base,
     model: new StubModel([toolCallMsg('create_game_event', { eventType: 'Goal' }), new AIMessage('done')]),
     tools,
   })
-  assert.deepEqual(dispatch, [['create_game_event', { eventType: 'Goal' }]])
+  assert.equal(reply, 'done')
+  assert.equal(dispatch.length, 0, 'write tool never reaches dispatch')
+  assert.equal(proposals[0], 'create_game_event', 'propose was called with the tool name')
+  assert.equal(proposals[1].id, 'p1', 'onProposal carries the id')
+  assert.equal(proposals[1].tool_name, 'create_game_event')
+}
+{
+  // Editor + write tool + propose throws -> error marker result, no dispatch.
+  const dispatch = []
+  const tools = makeChatTools({
+    dispatch: async (n, a) => { dispatch.push([n, a]); return {} },
+    role: 'editor',
+    propose: async () => { throw new Error('No game found matching {}.') },
+  })
+  const reply = await runToolAgent({
+    ...base,
+    model: new StubModel([toolCallMsg('create_game_event', { eventType: 'Goal' }), new AIMessage('handled gracefully')]),
+    tools,
+  })
+  assert.equal(reply, 'handled gracefully')
+  assert.equal(dispatch.length, 0, 'failed proposal never dispatches')
 }
 {
   // Member + read-only tool -> dispatched; span emitted.
@@ -91,7 +123,12 @@ const base = { systemPrompt: 'sys', history: [], message: 'hi' }
 {
   // Member + create_lineup write tool -> permission error, dispatch untouched
   const dispatch = []
-  const tools = makeChatTools({ dispatch: async (n, a) => { dispatch.push([n, a]); return { ok: true } }, role: 'member' })
+  const proposals = []
+  const tools = makeChatTools({
+    dispatch: async (n, a) => { dispatch.push([n, a]); return { ok: true } },
+    role: 'member',
+    propose: async (n) => { proposals.push(n); return { proposal_id: 'p2', summary: 's' } },
+  })
   const reply = await runToolAgent({
     ...base,
     model: new StubModel([toolCallMsg('create_lineup', { groups: [{ name: 'Line 1' }] }), new AIMessage('done')]),
@@ -99,17 +136,51 @@ const base = { systemPrompt: 'sys', history: [], message: 'hi' }
   })
   assert.equal(reply, 'done')
   assert.equal(dispatch.length, 0, 'member cannot write lineup')
+  assert.equal(proposals.length, 0, 'member write never proposes')
 }
 {
-  // Editor + create_lineup write tool -> dispatched
+  // Editor + create_lineup write tool -> proposal, dispatch never called
   const dispatch = []
-  const tools = makeChatTools({ dispatch: async (n, a) => { dispatch.push([n, a]); return { groups: [] } }, role: 'editor' })
+  const proposals = []
+  const tools = makeChatTools({
+    dispatch: async (n, a) => { dispatch.push([n, a]); return { groups: [] } },
+    role: 'editor',
+    propose: async (n) => { proposals.push(n); return { proposal_id: 'p3', summary: 'Set the lineup' } },
+    onProposal: p => proposals.push(p),
+  })
   await runToolAgent({
     ...base,
     model: new StubModel([toolCallMsg('create_lineup', { groups: [{ name: 'Line 1' }] }), new AIMessage('done')]),
     tools,
   })
-  assert.equal(dispatch.length, 1)
-  assert.equal(dispatch[0][0], 'create_lineup')
+  assert.equal(dispatch.length, 0, 'lineup write never reaches dispatch')
+  assert.equal(proposals[0], 'create_lineup', 'propose called for the lineup tool')
+  assert.equal(proposals[1].tool_name, 'create_lineup')
+}
+{
+  // The proposal marker reaches the model as the tool result.
+  const seen = []
+  class SpyModel extends StubModel {
+    async invoke(msgs) {
+      const lastMsg = msgs[msgs.length - 1]
+      if (lastMsg?.getType?.() === 'tool') seen.push(lastMsg.content)
+      return super.invoke(msgs)
+    }
+  }
+  const tools = makeChatTools({
+    dispatch: async () => ({}),
+    role: 'captain',
+    propose: async () => ({ proposal_id: 'p9', summary: 'Place Alice in Line 1' }),
+  })
+  await runToolAgent({
+    ...base,
+    model: new SpyModel([toolCallMsg('add_to_lineup', { playerName: 'Alice' }), new AIMessage('done')]),
+    tools,
+  })
+  assert.equal(seen.length, 1, 'exactly one tool result observed')
+  const parsed = JSON.parse(seen[0])
+  assert.equal(parsed.proposed, true)
+  assert.equal(parsed.proposal_id, 'p9')
+  assert.ok(parsed.summary.includes('Alice'))
 }
 console.log('✓ gateway/agent/agent.test.mjs all passed')

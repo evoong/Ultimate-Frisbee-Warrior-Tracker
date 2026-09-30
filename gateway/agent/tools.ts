@@ -1,16 +1,30 @@
 // LangChain tool wrappers over gameActions' dispatch — the same callChatFunction
 // the old Gemini loop and the MCP server use. The tool layer is where the
-// editor-tier write gate lives now (spec: member = queries only), and where
-// the PostHog $ai_span per tool call is emitted via onSpan.
+// editor-tier write gate lives (spec: member = queries only), where the
+// PostHog $ai_span per tool call is emitted via onSpan, and where write calls
+// become PROPOSALS instead of writes (spec: 2026-09-29-chat-interactive-
+// features): deps.propose validates + stores a chat_action_proposals row and
+// the frontend confirms via POST /api/chat/confirm, which re-dispatches.
 import { DynamicStructuredTool } from '@langchain/core/tools'
 import { z } from 'zod'
 import { hasAtLeast, type TeamRole } from '../membership.js'
 import { WRITE_FUNCTIONS, EVENT_TYPES, STAT_METRICS } from '../gameActions.js'
 
+export interface ChatProposal {
+  id: string
+  tool_name: string
+  args: Record<string, unknown>
+  summary: string
+}
+
 export interface ChatToolDeps {
   dispatch: (name: string, args: Record<string, unknown>) => Promise<unknown>
   role: TeamRole
   onSpan?: (name: string, args: unknown, result: { output?: unknown; error?: string }, latencyMs: number) => void
+  /** Writes never dispatch: the host validates + stores a proposal instead. */
+  propose?: (name: string, args: Record<string, unknown>) => Promise<{ proposal_id: string; summary: string }>
+  /** Fired once per stored proposal; hosts keep the latest (last wins). */
+  onProposal?: (p: ChatProposal) => void
 }
 
 function writeBlocked() {
@@ -19,10 +33,18 @@ function writeBlocked() {
 
 export function makeChatTools(deps: ChatToolDeps): DynamicStructuredTool[] {
   const run = (name: string) => async (args: Record<string, unknown>) => {
-    if (WRITE_FUNCTIONS.has(name) && !hasAtLeast(deps.role, 'editor')) return writeBlocked()
     const start = Date.now()
     try {
-      const output = await deps.dispatch(name, args)
+      let output: unknown
+      if (WRITE_FUNCTIONS.has(name)) {
+        if (!hasAtLeast(deps.role, 'editor')) return writeBlocked()
+        if (!deps.propose) return { error: 'action confirmation is unavailable' }
+        const p = await deps.propose(name, args)
+        deps.onProposal?.({ id: p.proposal_id, tool_name: name, args, summary: p.summary })
+        output = { proposed: true, proposal_id: p.proposal_id, summary: p.summary }
+      } else {
+        output = await deps.dispatch(name, args)
+      }
       deps.onSpan?.(name, args, { output }, Date.now() - start)
       return output
     } catch (err) {
