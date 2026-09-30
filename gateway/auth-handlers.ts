@@ -144,7 +144,26 @@ async function getTeams(config: GatewayConfig, accessToken: string): Promise<Tea
   return Array.isArray(data) ? data : []
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+async function checkEmailDeletedStatus(config: GatewayConfig, email: string): Promise<'deleted' | 'active' | 'error'> {
+  try {
+    const res = await fetch(`${config.supabaseUrl}/rest/v1/rpc/is_email_deleted`, {
+      method: 'POST',
+      headers: {
+        apikey: config.publishableKey,
+        Authorization: `Bearer ${config.publishableKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ p_email: email }),
+    })
+    if (!res.ok) return 'error'
+    const data: unknown = await res.json()
+    return data === true ? 'deleted' : data === false ? 'active' : 'error'
+  } catch {
+    return 'error'
+  }
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 // Proxies a passkey endpoint that requires the caller's session, resolving
 // (and if needed refreshing) the access token from cookies first.
@@ -209,6 +228,12 @@ export async function handleAuthRequest(
       if (password.length < PASSWORD_MIN_LENGTH) {
         return json({ error: `password must be at least ${PASSWORD_MIN_LENGTH} characters` }, 400)
       }
+      const isDeletedStatus = await checkEmailDeletedStatus(config, email)
+      if (isDeletedStatus === 'deleted') {
+        return json({ error: 'This account was deleted and cannot be recreated. Contact support.' }, 403)
+      } else if (isDeletedStatus === 'error') {
+        return json({ error: 'Service Unavailable' }, 503)
+      }
       const { status, data } = await supabaseAuth(config, '/signup', {
         body: { email, password },
       })
@@ -254,6 +279,12 @@ export async function handleAuthRequest(
         if (status !== 200 || !data?.access_token) {
           return redirect('/?auth_error=verify_failed')
         }
+        if (typeof data.user?.email !== 'string' || !data.user.email) {
+          return json({ error: 'Service Unavailable' }, 503)
+        }
+        const isDeletedStatus = await checkEmailDeletedStatus(config, data.user.email)
+        if (isDeletedStatus === 'deleted') return redirect('/?auth_error=account_deleted')
+        if (isDeletedStatus === 'error') return json({ error: 'Service Unavailable' }, 503)
         const target = type === 'recovery' ? '/reset-password' : '/'
         return redirect(target, sessionCookies(url, data))
       }
@@ -270,6 +301,15 @@ export async function handleAuthRequest(
       })
       if (status !== 200 || !data?.access_token) {
         return redirect('/?auth_error=oauth_exchange_failed', [clearPkceCookie(url)])
+      }
+      if (typeof data.user?.email !== 'string' || !data.user.email) {
+        return json({ error: 'Service Unavailable' }, 503, [clearPkceCookie(url)])
+      }
+      const isDeletedStatus = await checkEmailDeletedStatus(config, data.user.email)
+      if (isDeletedStatus === 'deleted') {
+        return redirect('/?auth_error=account_deleted', [clearPkceCookie(url)])
+      } else if (isDeletedStatus === 'error') {
+        return json({ error: 'Service Unavailable' }, 503, [clearPkceCookie(url)])
       }
       return redirect('/', [...sessionCookies(url, data), clearPkceCookie(url)])
     }
