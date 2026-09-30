@@ -122,6 +122,63 @@ try {
   // read-only tools are never proposable
   await assert.rejects(() => buildProposal(cfg, ctx, 'view_lineup', {}), /Unknown write tool/)
 
+  // apply_lineup_template must resolve the template against the SAME season
+  // the handler will use: args.seasonName if given, else the game's season.
+  // The template below lives only in season 11 — the game's season (10) has
+  // a same-named template with DIFFERENT contents, so a season-blind match
+  // would summarize the wrong template (the card would lie).
+  rows.length = 0
+  const SEASONS = [{ id: 10, name: 'Summer', year: 2026, organizer: 'Jam' }, { id: 11, name: 'Fall', year: 2026, organizer: 'Jam' }]
+  const TEMPLATES = [
+    { id: 301, name: 'Starting 7', season_id: 10, organization_id: 1 },
+    { id: 302, name: 'Starting 7', season_id: 11, organization_id: 1 },
+  ]
+  const origFetch3 = globalThis.fetch
+  globalThis.fetch = async (url, init = {}) => {
+    const u = new URL(String(url))
+    const path = u.pathname
+    if (path === '/rest/v1/chat_action_proposals') {
+      const b = JSON.parse(init.body)
+      const stored = { ...b, created_at: new Date().toISOString() }
+      rows.push(stored)
+      return Response.json([stored])
+    }
+    if (path === '/rest/v1/games') return Response.json(GAMES)
+    if (path === '/rest/v1/players') return Response.json(PLAYERS)
+    if (path === '/rest/v1/seasons') return Response.json(SEASONS)
+    if (path === '/rest/v1/lineup_templates') {
+      const sid = u.searchParams.get('season_id')?.replace('eq.', '')
+      return Response.json(TEMPLATES.filter(t => !sid || t.season_id === Number(sid)))
+    }
+    throw new Error(`unexpected fetch ${init.method || 'GET'} ${path}`)
+  }
+  const applied = await buildProposal(cfg, ctx, 'apply_lineup_template', { templateName: 'Starting 7', seasonName: 'Jam Fall 2026' })
+  assert.ok(applied.summary.includes('Starting 7'), 'template name resolved')
+  rows.length = 0
+
+  // save_lineup_template on a game with no season must fail AT PROPOSAL time
+  // (the handler throws "must be associated with a season" — the card must
+  // not promise something confirm can only error on).
+  const NO_SEASON_GAMES = [...GAMES, { id: 202, season_id: null, opponent: 'Lonely', game_date: '2026-10-01', game_time: '12:00' }]
+  globalThis.fetch = async (url, init = {}) => {
+    const u = new URL(String(url))
+    const path = u.pathname
+    if (path === '/rest/v1/chat_action_proposals') {
+      const b = JSON.parse(init.body)
+      const stored = { ...b, created_at: new Date().toISOString() }
+      rows.push(stored)
+      return Response.json([stored])
+    }
+    if (path === '/rest/v1/games') return Response.json(NO_SEASON_GAMES)
+    throw new Error(`unexpected fetch ${init.method || 'GET'} ${path}`)
+  }
+  await assert.rejects(
+    () => buildProposal(cfg, ctx, 'save_lineup_template', { name: 'X', gameDate: '2026-10-01' }),
+    /must be associated with a season/
+  )
+  assert.equal(rows.length, 0, 'no proposal stored for a seasonless save')
+  globalThis.fetch = origFetch3
+
   console.log('✓ buildProposal checks passed')
 
   // ---- confirmProposal: claim, gates, single-use (Task 5) ----

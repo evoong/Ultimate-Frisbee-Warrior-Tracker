@@ -6,7 +6,7 @@
 // an empty array) and executes. Service-role only, Workers-portable raw
 // fetch, mirroring gameActions.ts/supabaseRest.ts conventions.
 import type { ActionsConfig } from './gameActions.js'
-import { callChatFunction, resolveGame, resolvePlayer, WRITE_FUNCTIONS, type GameRow } from './gameActions.js'
+import { callChatFunction, resolveGame, resolvePlayer, resolveSeason, WRITE_FUNCTIONS, type GameRow } from './gameActions.js'
 import { hasAtLeast, type TeamRole } from './membership.js'
 import { sbGet, sbWrite } from './supabaseRest.js'
 
@@ -115,14 +115,24 @@ async function summarizeProposal(
     }
     case 'save_lineup_template': {
       const game = await resolveGame(config, orgId, hint)
+      // The handler requires the game's season (or an explicit seasonName to
+      // override); a seasonless game can only fail at confirm, so fail the
+      // proposal instead — the card must never promise that.
+      if (str('seasonName')) await resolveSeason(config, orgId, str('seasonName')!)
+      else if (!game.season_id) throw new Error('A lineup template must be associated with a season. This game has no season.')
       return `Save ${gameLabel(game)}'s lineup as template "${str('name')}"`
     }
     case 'apply_lineup_template': {
       const game = await resolveGame(config, orgId, hint)
       const name = str('templateName')!
+      // Same season resolution the handler uses: args.seasonName if given,
+      // else the game's season — a season-blind match could summarize a
+      // DIFFERENT same-named template than confirm would load.
+      const seasonName = str('seasonName')
+      const seasonId = seasonName ? (await resolveSeason(config, orgId, seasonName)).id : game.season_id
       // Same loose match the frontend/agent uses; fails loudly when absent.
-      const templates: { id: number; name: string }[] = game.season_id
-        ? await sbGet(config, `/lineup_templates?organization_id=eq.${orgId}&season_id=eq.${game.season_id}&select=id,name`)
+      const templates: { id: number; name: string }[] = seasonId
+        ? await sbGet(config, `/lineup_templates?organization_id=eq.${orgId}&season_id=eq.${seasonId}&select=id,name`)
         : await sbGet(config, `/lineup_templates?organization_id=eq.${orgId}&select=id,name`)
       const q = name.trim().toLowerCase()
       let matches = templates.filter(t => t.name.toLowerCase() === q)
