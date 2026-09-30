@@ -100,8 +100,9 @@ delete handler lowercases before insert.)
    - teams where the user is the sole captain (`team_members.role =
      'captain'` for the user and no other captain row for that team):
      `team_id`, team name
-   - `is_platform_admin: boolean`
-   Response is `{ blockers: [...], deletable: boolean }`.
+    - `is_platform_admin: boolean`
+    - `sole_captain_teams`: `team_id`, team name
+    Response is `{ deletable: boolean, isPlatformAdmin: boolean, soleCaptainTeams: [...] }`.
 2. **`POST /api/account/delete`** (same handler file):
    - Re-check blockers → `409` with the list if any (never rely on the
      GET having been honest).
