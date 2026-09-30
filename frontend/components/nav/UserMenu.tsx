@@ -1,9 +1,10 @@
 import { useState, type ComponentType } from "react"
-import { CaretUpDown, GearSix, Key, Megaphone, SignOut } from "@phosphor-icons/react"
+import { CaretUpDown, GearSix, Key, Megaphone, SignOut, Trash } from "@phosphor-icons/react"
 import type { TeamRole } from "../../lib/authClient"
 import { Avatar, AvatarFallback } from "../../lib/shadcn/avatar"
 import { Popover, PopoverContent, PopoverTrigger } from "../../lib/shadcn/popover"
 import { cn } from "../../lib/shadcn/utils"
+import DeleteAccountDialog from "../DeleteAccountDialog"
 import { accountName, accountSubtitle, initials } from "./identity"
 
 type UserMenuProps = {
@@ -51,6 +52,7 @@ export default function UserMenu({
   variant = "sidebar",
 }: UserMenuProps) {
   const [open, setOpen] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const name = accountName(email)
   const subtitle = accountSubtitle(role, isGuest)
 
@@ -153,6 +155,17 @@ export default function UserMenu({
 
         <div className="my-1 h-px bg-border" />
 
+        {!isGuest && (
+          <button
+            type="button"
+            onClick={run(() => setDeleteDialogOpen(true))}
+            className="flex w-full items-center gap-2.5 rounded-[5px] px-2 py-[7px] text-left text-[13px] text-destructive transition-colors hover:bg-destructive/10 focus-visible:bg-destructive/10 focus-visible:outline-none"
+          >
+            <Trash className="size-4 shrink-0" weight="regular" />
+            Delete account…
+          </button>
+        )}
+
         <button
           type="button"
           onClick={run(logout)}
@@ -162,6 +175,8 @@ export default function UserMenu({
           Sign out
         </button>
       </PopoverContent>
+
+      <DeleteAccountDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen} email={email} />
     </Popover>
   )
 }
