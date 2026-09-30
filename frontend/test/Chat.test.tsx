@@ -143,3 +143,113 @@ describe('Chat action receipts', () => {
     await waitFor(() => expect(screen.getByText(/undone/i)).toBeInTheDocument())
   })
 })
+
+describe('Chat inline proposal cards', () => {
+  const PROPOSAL = {
+    id: 'prop-1',
+    tool_name: 'add_to_lineup',
+    args: { playerName: 'Maya', lineupGroupName: 'Line 1' },
+    summary: 'Place Maya in Line 1 for the game',
+  }
+  const RECEIPT = { id: 'act-9', request_id: 'req-9', description: 'Added Maya to Line 1 lineup', status: 'applied' }
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', fetchMock)
+    fetchMock.mockReset()
+    localStorage.clear()
+    Element.prototype.scrollIntoView = vi.fn()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  async function renderEmptyChat() {
+    fetchMock.mockImplementation(historyReply({ messages: [], actions: [] }))
+    const view = render(<Chat />)
+    await waitFor(() => expect(screen.getByText(/Ask me anything about the team/i)).toBeInTheDocument())
+    return view
+  }
+
+  function sendProposalReply() {
+    fetchMock.mockImplementationOnce(() =>
+      Promise.resolve(jsonResponse(200, { reply: 'Wah gwaan — mi can put Maya pon Line 1.', proposal: PROPOSAL }))
+    )
+    const box = screen.getByPlaceholderText('Ask about stats, players, games…')
+    fireEvent.change(box, { target: { value: 'put maya on line 1' } })
+    fireEvent.keyDown(box, { key: 'Enter' })
+  }
+
+  it('attaches the proposal card inline with the assistant reply, not above the input', async () => {
+    const view = await renderEmptyChat()
+    sendProposalReply()
+
+    await waitFor(() => expect(screen.getByText(PROPOSAL.summary)).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: /approve/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /decline/i })).toBeInTheDocument()
+    // Inline placement: the card lives inside the scrollable message list,
+    // not in the input block below it.
+    const card = screen.getByText(PROPOSAL.summary).closest('[class*="overflow-y-auto"]')
+    expect(card).not.toBeNull()
+  })
+
+  it('Approve posts to /api/chat/confirm and settles with the receipt surfaced', async () => {
+    await renderEmptyChat()
+    sendProposalReply()
+    await waitFor(() => expect(screen.getByRole('button', { name: /approve/i })).toBeInTheDocument())
+
+    fetchMock.mockImplementationOnce((url: string, init?: RequestInit) => {
+      expect(url).toBe('/api/chat/confirm')
+      expect(init?.method).toBe('POST')
+      const body = JSON.parse(String(init?.body))
+      expect(body.proposal_id).toBe('prop-1')
+      expect(body.organization_id).toBe(1)
+      return Promise.resolve(jsonResponse(200, { result: { ok: true }, receipt: RECEIPT }))
+    })
+    fireEvent.click(screen.getByRole('button', { name: /approve/i }))
+
+    await waitFor(() => expect(screen.getByText('Confirmed — the change has been applied.')).toBeInTheDocument())
+    expect(screen.getByText(RECEIPT.description)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument()
+  })
+
+  it('Decline settles the card without any confirm request', async () => {
+    await renderEmptyChat()
+    sendProposalReply()
+    await waitFor(() => expect(screen.getByRole('button', { name: /decline/i })).toBeInTheDocument())
+
+    const callsBefore = fetchMock.mock.calls.length
+    fireEvent.click(screen.getByRole('button', { name: /decline/i }))
+
+    await waitFor(() => expect(screen.getByText('Declined — nothing was changed.')).toBeInTheDocument())
+    expect(fetchMock.mock.calls.length).toBe(callsBefore)
+    expect(screen.getByRole('button', { name: /dismiss/i })).toBeInTheDocument()
+  })
+
+  it('settles with the server error on a terminal confirm failure (410 expired)', async () => {
+    await renderEmptyChat()
+    sendProposalReply()
+    await waitFor(() => expect(screen.getByRole('button', { name: /approve/i })).toBeInTheDocument())
+
+    fetchMock.mockImplementationOnce(() =>
+      Promise.resolve(jsonResponse(410, { error: 'this proposal expired — ask the assistant again' }))
+    )
+    fireEvent.click(screen.getByRole('button', { name: /approve/i }))
+
+    await waitFor(() => expect(screen.getByText('this proposal expired — ask the assistant again')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument()
+  })
+
+  it('discards pending proposal cards when the team changes', async () => {
+    const view = await renderEmptyChat()
+    sendProposalReply()
+    await waitFor(() => expect(screen.getByRole('button', { name: /approve/i })).toBeInTheDocument())
+
+    mockAuth.currentTeamId = 2
+    view.rerender(<Chat />)
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: /approve/i })).not.toBeInTheDocument())
+    expect(screen.queryByText(PROPOSAL.summary)).not.toBeInTheDocument()
+    // The switch also refetches the new team's history (empty here), so the
+    // prior team's reply goes with its card — nothing lingers cross-team.
+    await waitFor(() => expect(screen.getByText(/Ask me anything about the team/i)).toBeInTheDocument())
+    expect(fetchMock.mock.calls.some(c => String(c[0]).includes('organization_id=2'))).toBe(true)
+  })
+})

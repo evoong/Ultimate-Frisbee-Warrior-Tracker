@@ -10,7 +10,17 @@ import { useAuth } from '../contexts/AuthContext'
 import { ChatChips } from '../components/chat/ChatChips'
 import { ActionCard, type ChatProposal, type ProposalStatus } from '../components/chat/ActionCard'
 
-type Message = { role: 'user' | 'assistant'; content: string; actions?: ActionReceipt[] }
+type Message = {
+  role: 'user' | 'assistant'
+  content: string
+  actions?: ActionReceipt[]
+  // Inline proposal card state (spec: cards render under the assistant
+  // reply that produced them). proposalState is kept beside the proposal so
+  // each card settles independently.
+  proposal?: ChatProposal
+  proposalStatus?: ProposalStatus
+  proposalOutcome?: string | null
+}
 
 function parseInline(text: string) {
   return text.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g).map((part, j) => {
@@ -117,14 +127,10 @@ export default function Chat() {
         role: 'assistant',
         content: data.reply ?? data.error ?? 'No response',
         actions: Array.isArray(data.actions) ? data.actions : [],
+        // The proposal rides on the message that produced it, so the card
+        // renders inline under this reply and settles independently.
+        ...(data.proposal ? { proposal: data.proposal as ChatProposal, proposalStatus: 'pending' as ProposalStatus, proposalOutcome: null } : {}),
       }])
-      // A write tool firing in the agent's reply attaches a proposal; a new
-      // one replaces any pending card, a proposal-free reply leaves it be.
-      if (data.proposal) {
-        setProposal(data.proposal as ChatProposal)
-        setProposalStatus('pending')
-        setProposalOutcome(null)
-      }
     } catch {
       setMessages(prev => [...prev, { role: 'assistant', content: 'Failed to reach the server. Please try again.' }])
     } finally {
@@ -178,17 +184,25 @@ export default function Chat() {
       const attached = messages.flatMap(m => m.actions ?? [])
       if (attached.length > 0) setStandaloneActions(prev => [...attached, ...prev])
       setMessages([])
-      setProposal(null)
-      setProposalOutcome(null)
     } finally {
       setClearing(false)
       setConfirmClear(false)
     }
   }
 
-  const confirmProposal = async () => {
-    if (!proposal || currentTeamId == null || proposalStatus === 'confirming') return
-    setProposalStatus('confirming')
+  // --- Inline proposal cards -------------------------------------------------
+  // Each card lives on the assistant message that produced it; these helpers
+  // patch exactly one card by proposal id.
+
+  const patchProposal = (proposalId: string, patch: Partial<Pick<Message, 'proposalStatus' | 'proposalOutcome'>>) => {
+    setMessages(prev => prev.map(m =>
+      m.proposal?.id === proposalId ? { ...m, ...patch } : m
+    ))
+  }
+
+  const confirmProposal = async (proposal: ChatProposal) => {
+    if (currentTeamId == null) return
+    patchProposal(proposal.id, { proposalStatus: 'confirming' })
     try {
       const res = await fetch('/api/chat/confirm', {
         method: 'POST',
@@ -197,34 +211,50 @@ export default function Chat() {
       })
       const data = await res.json()
       if (res.ok) {
-        setProposalStatus('done')
-        setProposalOutcome('Confirmed — the change has been applied.')
+        patchProposal(proposal.id, { proposalStatus: 'done', proposalOutcome: 'Confirmed — the change has been applied.' })
         // The confirm response carries the recorded chat_actions receipt —
         // surface it with the same Undo affordance reply-executed actions
         // get, so a card-confirmed change is reversible identically.
         if (data.receipt) setStandaloneActions(prev => [data.receipt as ActionReceipt, ...prev])
       } else if (res.status === 403 || res.status === 404 || res.status === 410) {
         // Terminal: retrying cannot succeed (role loss, consumed, expired).
-        setProposalStatus('done')
-        setProposalOutcome(data.error ?? 'This proposal can no longer be confirmed.')
+        patchProposal(proposal.id, { proposalStatus: 'done', proposalOutcome: data.error ?? 'This proposal can no longer be confirmed.' })
       } else {
-        // Transient: Confirm stays enabled for a retry.
-        setProposalStatus('error')
-        setProposalOutcome(data.error ?? 'Failed to confirm. Try again.')
+        // Transient: Approve stays enabled for a retry.
+        patchProposal(proposal.id, { proposalStatus: 'error', proposalOutcome: data.error ?? 'Failed to confirm. Try again.' })
       }
     } catch {
-      setProposalStatus('error')
-      setProposalOutcome('Failed to reach the server. Try again.')
+      patchProposal(proposal.id, { proposalStatus: 'error', proposalOutcome: 'Failed to reach the server. Try again.' })
     }
   }
 
+  const declineProposal = (proposal: ChatProposal) => {
+    patchProposal(proposal.id, { proposalStatus: 'done', proposalOutcome: 'Declined — nothing was changed.' })
+  }
+
+  const dismissProposal = (proposal: ChatProposal) => {
+    setMessages(prev => prev.map(m =>
+      m.proposal?.id === proposal.id
+        ? { ...m, proposal: undefined, proposalStatus: undefined, proposalOutcome: undefined }
+        : m
+    ))
+  }
+
+  // Chips yield while any card is still actionable (pending/confirming/error):
+  // one decision at a time, same rule the single-card UX enforced.
+  const hasActionableProposal = messages.some(
+    m => m.proposal != null && m.proposalStatus !== 'done'
+  )
+
   // A pending card belongs to the team it was proposed for; switching teams
-  // discards it (the server would reject the confirm on the org mismatch
-  // anyway — this just keeps the UI from offering a dead button).
+  // discards every card (the server would reject the confirm on the org
+  // mismatch anyway — this keeps the UI from offering dead buttons).
   useEffect(() => {
-    setProposal(null)
-    setProposalStatus('pending')
-    setProposalOutcome(null)
+    setMessages(prev => prev.map(m =>
+      m.proposal != null
+        ? { ...m, proposal: undefined, proposalStatus: undefined, proposalOutcome: undefined }
+        : m
+    ))
   }, [currentTeamId])
 
   return (
@@ -325,6 +355,18 @@ export default function Chat() {
                       ))}
                     </div>
                   )}
+                  {msg.proposal && (
+                    <div className="w-full max-w-[80%]">
+                      <ActionCard
+                        proposal={msg.proposal}
+                        status={msg.proposalStatus ?? 'pending'}
+                        outcome={msg.proposalOutcome}
+                        onConfirm={() => confirmProposal(msg.proposal!)}
+                        onCancel={() => declineProposal(msg.proposal!)}
+                        onDismiss={() => dismissProposal(msg.proposal!)}
+                      />
+                    </div>
+                  )}
                 </div>
               </FadeIn>
             ))
@@ -349,17 +391,7 @@ export default function Chat() {
           the service-role endpoint), so read-only users get a notice instead. */}
       {can.record ? (
         <div className="mt-3 space-y-2">
-          {proposal && (
-            <ActionCard
-              proposal={proposal}
-              status={proposalStatus}
-              outcome={proposalOutcome}
-              onConfirm={confirmProposal}
-              onCancel={() => { setProposal(null); setProposalOutcome(null) }}
-              onDismiss={() => { setProposal(null); setProposalOutcome(null) }}
-            />
-          )}
-          <ChatChips role={role} onSend={m => sendMessage(m)} hidden={loading || proposal != null} />
+          <ChatChips role={role} onSend={m => sendMessage(m)} hidden={loading || hasActionableProposal} />
           <div className="flex gap-2">
             <Input
               value={input}
