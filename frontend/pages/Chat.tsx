@@ -3,7 +3,7 @@ import { Card, CardContent } from '../lib/shadcn/card'
 import { Button } from '../lib/shadcn/button'
 import { Input } from '../lib/shadcn/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../lib/shadcn/dialog'
-import { Send, Bot, User, Loader2, Trash2 } from 'lucide-react'
+import { Send, Bot, User, Loader2, Trash2, Zap } from 'lucide-react'
 import FadeIn from '../components/FadeIn'
 import ActionReceiptCard, { type ActionReceipt } from '../components/chat/ActionReceiptCard'
 import { useAuth } from '../contexts/AuthContext'
@@ -77,6 +77,17 @@ export default function Chat() {
   const bottomRef = useRef<HTMLDivElement>(null)
   const sessionId = useRef(getSessionId())
   const { can, currentTeamId, role } = useAuth()
+  // Auto-approve: proposals confirm themselves the moment they arrive (the
+  // client presses Approve for you). Per-user/per-device, editor-tier only —
+  // members never receive proposals. Cards still render settled, so the
+  // thread keeps its audit line and Undo still works.
+  const [autoApprove, setAutoApprove] = useState(() => localStorage.getItem('ufwt_chat_auto_approve') === '1')
+  const toggleAutoApprove = () => {
+    setAutoApprove(prev => {
+      localStorage.setItem('ufwt_chat_auto_approve', prev ? '0' : '1')
+      return !prev
+    })
+  }
   const [proposal, setProposal] = useState<ChatProposal | null>(null)
   const [proposalStatus, setProposalStatus] = useState<ProposalStatus>('pending')
   const [proposalOutcome, setProposalOutcome] = useState<string | null>(null)
@@ -131,6 +142,13 @@ export default function Chat() {
         // renders inline under this reply and settles independently.
         ...(data.proposal ? { proposal: data.proposal as ChatProposal, proposalStatus: 'pending' as ProposalStatus, proposalOutcome: null } : {}),
       }])
+      // Auto-approve fires at ARRIVAL time only: an arriving proposal
+      // confirms itself when the toggle is on. Toggling later never
+      // re-opens a settled card, and the confirm goes through the same
+      // single-use endpoint a manual Approve uses.
+      if (data.proposal && autoApprove) {
+        void confirmProposal(data.proposal as ChatProposal)
+      }
     } catch {
       setMessages(prev => [...prev, { role: 'assistant', content: 'Failed to reach the server. Please try again.' }])
     } finally {
@@ -261,6 +279,21 @@ export default function Chat() {
     <div className="flex flex-col h-[calc(100vh-8rem)]">
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-2xl font-bold text-foreground">Team Assistant</h1>
+        {/* Auto-approve is an editor-tier affordance — members never receive
+            proposals, so the toggle would be a dead control for them. */}
+        {can.record && (role === 'editor' || role === 'captain') && (
+          <Button
+            variant="outline"
+            size="sm"
+            aria-pressed={autoApprove}
+            onClick={toggleAutoApprove}
+            className={autoApprove ? 'text-foreground border-primary/50' : 'text-muted-foreground'}
+            title="When on, proposed actions are applied as soon as the assistant suggests them — you will still see each change in the thread with Undo."
+          >
+            <Zap className={`w-4 h-4 mr-1.5 ${autoApprove ? 'text-primary' : ''}`} />
+            Auto-approve
+          </Button>
+        )}
         {can.record && messages.length > 0 && (
           <Button
             variant="outline"
