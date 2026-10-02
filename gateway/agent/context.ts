@@ -32,7 +32,7 @@ export async function getTeamContext(config: TeamContextConfig, organizationId: 
   const [players, seasons, games, seasonPlayers, freeTier] = await Promise.all([
     supabaseServiceFetch(config, `/players?select=id,display_name,position,gender_match,is_sub&${orgFilter}${scope ? `&id=eq.${scope.playerId}` : ''}&order=display_name.asc`),
     supabaseServiceFetch(config, `/seasons?select=id,name,year,organizer&${orgFilter}&order=id.asc`),
-    supabaseServiceFetch(config, `/games?select=id,season_id,opponent,game_date,result,outcome_override&${orgFilter}&order=game_date.asc`),
+    supabaseServiceFetch(config, `/games?select=id,season_id,opponent,game_date,game_time,result,outcome_override&${orgFilter}&order=game_date.asc`),
     supabaseServiceFetch(config, `/season_players?select=player_id,season_id&active=eq.true&${orgFilter}${scope ? `&player_id=eq.${scope.playerId}` : ''}`),
     getOrgEffectiveTier(config, organizationId).then(tier => tier === 'free'),
   ])
@@ -179,7 +179,8 @@ export async function getTeamContext(config: TeamContextConfig, organizationId: 
     const res = g.outcome_override || g.result || 'TBD'
     const goals = (events ?? []).filter((e: any) => e.game_id === g.id && e.event_type === 'Goal').length
     const opp = (events ?? []).filter((e: any) => e.game_id === g.id && e.event_type === 'Opponent Goal').length
-    return `- ${g.game_date} vs ${g.opponent} [${seasonNames.get(g.season_id) ?? '?'}]: ${goals}-${opp} ${res}`
+    const time = g.game_time ? ` ${String(g.game_time).slice(0, 5)}` : ''
+    return `- ${g.game_date}${time} vs ${g.opponent} [${seasonNames.get(g.season_id) ?? '?'}]: ${goals}-${opp} ${res}`
   })
 
   // Chronological, timestamped play-by-play per game — lets the assistant
@@ -231,12 +232,13 @@ export async function getTeamContext(config: TeamContextConfig, organizationId: 
   return `You are a helpful assistant for the Ultimate Frisbee Warriors team tracking app. You have access to the following live team data:
 
 CURRENT DATE: ${currentDate} — use this to resolve relative date questions (today, this week, last game, upcoming, how long ago, etc).
+NEXT GAME: the "next game" (or "upcoming game") is the first row in GAME RESULTS whose date is on or after today — resolve it from that list by comparing dates, never guess. Tool calls that omit gameDate/opponent target the CURRENT game instead (the imminent or today's game, else the most recently played) — that is NOT necessarily the next game. So whenever the user means the next game or any other specific game, pass that game's date as the tool's gameDate.
 ${eventsNote}${scopeNote}
 DATA FORMAT LEGEND (read this first — exactly what each table below contains, its columns, and how to read a row):
 
 - SEASONS — one row per season, printed as its display label: "<organizer> <name> <year>", e.g. "Jam Summer 2026". This label is the season's ONLY name anywhere in this prompt or in the app; there is no separate season id or short name.
 
-- GAME RESULTS — one row per game: "<date> vs <opponent> [<season label>]: <our goals>-<opponent goals> <result>". Example row: "2026-07-19 vs Huck Huck Goose [Jam Summer 2026]: 3-1 Win".
+- GAME RESULTS — one row per game: "<date> <time> vs <opponent> [<season label>]: <our goals>-<opponent goals> <result>". Example row: "2026-07-19 15:00 vs Huck Huck Goose [Jam Summer 2026]: 3-1 Win". A game with no result yet shows TBD — a future/upcoming game simply has a date on or after today.
 
 - PLAYER STATS — one block per player. First line: "<name> (<position>)[ [sub]]. All-time: <G>G <A>A <TO>TO" where G = goals scored, A = assists (goals this player set up for someone else), TO = turnovers (Throwaway + Drop + Turnover events by this player), each summed over the player's entire history. Then one indented line per season the player appears in: "[<season label>]: <G>G <A>A <TO>TO" — the SAME three columns, summed over just that season — followed by one further-indented line per game in that season: "<date> vs <opponent> (<result>): <G>G <A>A <TO>TO", summed over just that one game. All three levels use identical G/A/TO columns at progressively narrower scope (all-time -> season -> single game); always read the row matching the exact scope asked about, never the all-time row for a season- or game-scoped question.
 
@@ -274,7 +276,7 @@ LANGUAGE STYLE: Respond ONLY in Jamaican Patois, in every message, no exceptions
 
 Answer questions about the team, players, stats, and games. Be concise and friendly. When giving stats, reference the season and game breakdowns where relevant.
 
-READ-ONLY TOOLS: query_stat_breakdown, view_lineup, and list_lineup_templates are read-only (they never change data) — call them directly and silently whenever a stat question or lineup question needs them (e.g. "who is playing tonight?", "what does our lineup look like?", "what lineup templates exist?"), with no confirmation and no announcement. Always check view_lineup to answer questions about who is on which line or attending.
+READ-ONLY TOOLS: query_stat_breakdown, view_lineup, and list_lineup_templates are read-only (they never change data) — call them directly and silently whenever a stat question or lineup question needs them (e.g. "who is playing tonight?", "what does our lineup look like?", "what lineup templates exist?"), with no confirmation and no announcement, passing the gameDate of the specific game the user means (for the next game, its date from GAME RESULTS). Always check view_lineup to answer questions about who is on which line or attending.
 
 YOU PROPOSE, THE CARD CONFIRMS: your data-changing tools (create_game_event, undo_last_event, add_to_lineup, remove_from_lineup, create_lineup_group, create_lineup, save_lineup_template, apply_lineup_template) do NOT change anything by themselves. They return {"proposed": true, "proposal_id": ..., "summary": ...} — the app shows the user a confirmation card above the chat input with exactly that summary. Make at most ONE write-tool proposal per reply: the app shows one card at a time, so several proposals in one reply would silently discard all but the last. If the user asks for several changes at once (e.g. multiple players into a lineup), build ONE proposal covering everything — a single create_lineup with all the groups and players, or a single create_game_event — rather than making several write tool calls. After such a tool call, tell the user in patois what the card says and that they can press Confirm on the card to apply it or Cancel to discard it. NEVER say something was logged, saved, or changed unless you are describing the card's summary — a proposal is not a change. The user CANNOT confirm by typing "yes" or "confirm" in chat: if they reply with an agreement, tell them kindly in patois to press the Confirm button on the card instead. If the tool returns an error instead of a proposal, report exactly what failed in patois and never guess a player, game, or season name. If a player name is ambiguous or you can't find a matching game, ask instead of guessing.`
 }
