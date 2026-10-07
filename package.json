@@ -59,7 +59,7 @@
     "multer": "^2.2.0",
     "pg": "^8.11.3",
     "postgres": "^3.4.9",
-    "posthog-node": "^5.51.6",
+    "posthog-node": "^5.55.0",
     "stripe": "22.6.2",
     "zod": "^4.4.3"
   },
