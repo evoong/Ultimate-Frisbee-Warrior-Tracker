@@ -331,4 +331,26 @@ const RECOVERY_CONFIG = { supabaseUrl: 'http://stub.invalid', supabaseSecretKey:
   assert.ok(names.includes('apply_lineup_template'), 'template apply remains available')
   assert.ok(names.includes('rollback_last_action'), 'rollback remains available')
 }
+{
+  // The "next game" regression: with no gameDate/opponent hint the dispatch
+  // layer resolves the most recently PLAYED game, so a hint-less view_lineup
+  // call during a "build a lineup for the next game" request returned the
+  // PREVIOUS game and the model relayed it as the next game. The tool text
+  // is the only place the model can learn that, so it must state the
+  // default precisely and point upcoming-game requests at gameDate.
+  const tools = makeChatTools({ dispatch: async () => ({}), role: 'captain' })
+  const viewLineup = tools.find(t => t.name === 'view_lineup')
+  assert.match(viewLineup.description, /most recently played/i,
+    'view_lineup description defines the default as imminent/today, else most recently played')
+  assert.match(viewLineup.description, /next game/i,
+    'view_lineup description tells the model to pass gameDate for the next game')
+  const gameDateDesc = viewLineup.schema.shape.gameDate.description ?? ''
+  assert.match(gameDateDesc, /most recently played/i,
+    'gameDate field describe defines the hint-less default')
+  assert.match(gameDateDesc, /next upcoming game/i,
+    'gameDate field describe contrasts the default with the next upcoming game')
+  const createEvent = tools.find(t => t.name === 'create_game_event')
+  assert.match(createEvent.description, /most recently played/i,
+    'create_game_event description defines the default too')
+}
 console.log('✓ gateway/agent/agent.test.mjs all passed')

@@ -127,8 +127,8 @@ assert(freeChatCtx.includes('DATA WINDOW: this team is on the Free plan'), 'Free
 assert(freeChatCtx.includes('Old Timer (Handler). All-time: 0G 1A 0TO'), 'Old Timer has 0G 1A on Free (ancient game withheld, recent assist counted)')
 assert(freeChatCtx.includes('Recent Star (Cutter). All-time: 1G 0A 0TO'), 'Recent Star has 1G 0A on Free')
 assert(freeChatCtx.includes('Ancient Rival'), 'Ancient game fixture is still listed on Free')
-assert(freeChatCtx.includes('- 2025-08-01 vs Ancient Rival [Jam Summer 2026]: 0-0 Win'), 'Ancient game score is 0-0 on Free (events withheld)')
-assert(freeChatCtx.includes(`- ${threeDaysAgoDate} vs Fresh Rival [Jam Summer 2026]: 1-0 Win`), 'Recent game score shows 1-0 on Free')
+assert(freeChatCtx.includes('- 2025-08-01 18:00 vs Ancient Rival [Jam Summer 2026]: 0-0 Win'), 'Ancient game score is 0-0 on Free (events withheld)')
+assert(freeChatCtx.includes(`- ${threeDaysAgoDate} 19:00 vs Fresh Rival [Jam Summer 2026]: 1-0 Win`), 'Recent game score shows 1-0 on Free')
 console.log('✓ gateway getTeamContext enforces 30-day window on Free')
 
 // Paid tier: immediately restored
@@ -137,7 +137,7 @@ const paidChatCtx = await gatewayContext(chatConfig, 7)
 assert(!paidChatCtx.includes('DATA WINDOW'), 'Paid prompt has no window note')
 assert(paidChatCtx.includes('Old Timer (Handler). All-time: 1G 1A 0TO'), 'Old Timer gets full 1G 1A on Paid')
 assert(paidChatCtx.includes('Recent Star (Cutter). All-time: 2G 0A 0TO'), 'Recent Star gets 2G (both games) on Paid')
-assert(paidChatCtx.includes('- 2025-08-01 vs Ancient Rival [Jam Summer 2026]: 2-0 Win'), 'Ancient game score shows full 2-0 on Paid')
+assert(paidChatCtx.includes('- 2025-08-01 18:00 vs Ancient Rival [Jam Summer 2026]: 2-0 Win'), 'Ancient game score shows full 2-0 on Paid')
 console.log('✓ gateway getTeamContext restores full history on Paid')
 
 console.log('\n--- 2. Server getTeamContext (Free vs Paid) ---')
@@ -322,5 +322,20 @@ console.log('✓ player-scoped getTeamContext filters the linked member view')
   )
 }
 console.log('✓ prompt caps write proposals to one per reply')
+
+console.log('\n--- 8. Next-game guidance in the chat system prompt ---')
+{
+  // Regression: "when is the next game" / "build a lineup for the next game"
+  // got answered with the PREVIOUS game. The context prompt must teach the
+  // model to resolve the next game from GAME RESULTS by date and to pass
+  // that game's date to tools, whose hint-less default targets the most
+  // recently played game instead.
+  const ctx = await gatewayContext(chatConfig, 7)
+  assert.ok(ctx.includes('NEXT GAME:'), 'prompt has an explicit next-game rule')
+  assert.ok(ctx.includes('on or after today'), 'next game is defined as the first GAME RESULTS row dated on or after today')
+  assert.ok(/most recently played/.test(ctx), 'prompt states the tool default resolves to the most recently played game')
+  assert.ok(/pass that game's date as the tool's gameDate/.test(ctx), 'prompt instructs passing the resolved date to tools')
+}
+console.log('✓ prompt teaches the model to resolve the next game by date')
 
 console.log('\nAll Task 2 free-tier history tests passed!')

@@ -118,14 +118,14 @@ export function makeChatTools(deps: ChatToolDeps): DynamicStructuredTool[] {
   }
 
   const gameHint = z.object({
-    gameDate: z.string().optional().describe('YYYY-MM-DD, only to target a specific non-current game.'),
+    gameDate: z.string().optional().describe(`YYYY-MM-DD. Omitting gameDate and opponent targets the current game (the imminent or today's game, else the most recently played) — NOT necessarily the next upcoming game. Pass the game's date whenever the user means the next upcoming game or a specific game they named.`),
     opponent: z.string().optional().describe('Opponent name/substring, only to target a specific non-current game.'),
   })
 
   return [
     new DynamicStructuredTool({
       name: 'create_game_event',
-      description: `Logs a scoring or game event. Valid eventType values: ${EVENT_TYPES.join(', ')}. For "Goal", playerName is the scorer and assisterName (optional) credits the assist. For "Opponent Goal", omit both player names. For other types, playerName is whoever the event happened to/by. Omit gameDate/opponent to target the current/most relevant game; only pass them to target a different, specific game the user named.`,
+      description: `Logs a scoring or game event. Valid eventType values: ${EVENT_TYPES.join(', ')}. For "Goal", playerName is the scorer and assisterName (optional) credits the assist. For "Opponent Goal", omit both player names. For other types, playerName is whoever the event happened to/by. Omit gameDate/opponent to target the current/most relevant game (the imminent or today's game, else the most recently played — not necessarily the next upcoming game); pass the next game's gameDate when that is the game the user means.`,
       schema: gameHint.extend({
         eventType: z.enum(EVENT_TYPES).describe(`Valid eventType values: ${EVENT_TYPES.join(', ')}. For "Goal", playerName is the scorer and assisterName (optional) credits the assist. For "Opponent Goal", omit both player names. For other types, playerName is whoever the event happened to/by.`),
         playerName: z.string().optional(),
@@ -164,7 +164,7 @@ export function makeChatTools(deps: ChatToolDeps): DynamicStructuredTool[] {
     }),
     new DynamicStructuredTool({
       name: 'view_lineup',
-      description: 'Returns the lineup groups and players placed in each for a game (defaults to current game). Use this to see who is on what line, who is attending, or to inspect current lines before making changes.',
+      description: "Returns the lineup groups and players placed in each for a game (defaults to the current game — the imminent or today's game, else the most recently played, which is not necessarily the next game; pass the next game's gameDate when the user means the next game). Use this to see who is on what line, who is attending, or to inspect current lines before making changes.",
       schema: gameHint,
       func: run('view_lineup'),
     }),
