@@ -245,25 +245,11 @@ export function useGetPlayerStats() {
       if (goalsDiff !== 0) return goalsDiff
       const aRate = a.games_played > 0 ? (a.goals + a.assists) / a.games_played : 0
       const bRate = b.games_played > 0 ? (b.goals + b.assists) / b.games_played : 0
-      const rateDiff = bRate - aRate
-      if (rateDiff !== 0) return rateDiff
-      return a.player_name.localeCompare(b.player_name)
+      return bRate - aRate
     })
 
-    // Add ranking (dense ranking)
-    let currentRank = 1
-    result.forEach((s: any, i: number) => {
-      if (i > 0) {
-        const prev = result[i-1]
-        const aRate = s.games_played > 0 ? (s.goals + s.assists) / s.games_played : 0
-        const bRate = prev.games_played > 0 ? (prev.goals + prev.assists) / prev.games_played : 0
-        const isTied = (s.goals + s.assists) === (prev.goals + prev.assists) &&
-                       s.goals === prev.goals &&
-                       aRate === bRate
-        if (!isTied) currentRank++
-      }
-      s.ga_rank = currentRank
-    })
+    // Add ranking
+    result.forEach((s: any, i: number) => { s.ga_rank = i + 1 })
 
     return result
   }, [])
