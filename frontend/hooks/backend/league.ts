@@ -323,7 +323,16 @@ export function computeStandings(league: LeagueData): StandingsRow[] {
     b.points_for - a.points_for ||
     a.team.name.localeCompare(b.team.name)
   )
-  list.forEach((r, i) => { r.rank = i + 1 })
+  let currentRank = 1
+  list.forEach((r, i) => {
+    if (i > 0 && 
+        (r.points !== list[i-1].points || 
+         r.point_diff !== list[i-1].point_diff || 
+         r.points_for !== list[i-1].points_for)) {
+      currentRank++
+    }
+    r.rank = currentRank
+  })
   return list
 }
 
