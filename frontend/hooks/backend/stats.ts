@@ -236,20 +236,31 @@ export function useGetPlayerStats() {
       return { ...s, games_played: gamesPlayed, ga_rank: 0 }
     })
 
-    // Rank by goals+assists first; ties broken by goals, then by (G+A) per
-    // game played (a player with zero games played sorts last among ties).
+    // Rank by goals+assists first, with dense ranking:
+    // tied scores share rank; next distinct score gets next rank.
+    // Ties broken by goals, then by (G+A) per game played.
     result.sort((a: any, b: any) => {
-      const gaDiff = (b.goals + b.assists) - (a.goals + a.assists)
+      const getGa = (p: any) => p.goals + p.assists
+      const gaDiff = getGa(b) - getGa(a)
       if (gaDiff !== 0) return gaDiff
+      
       const goalsDiff = b.goals - a.goals
       if (goalsDiff !== 0) return goalsDiff
-      const aRate = a.games_played > 0 ? (a.goals + a.assists) / a.games_played : 0
-      const bRate = b.games_played > 0 ? (b.goals + b.assists) / b.games_played : 0
+      
+      const aRate = a.games_played > 0 ? getGa(a) / a.games_played : 0
+      const bRate = b.games_played > 0 ? getGa(b) / b.games_played : 0
       return bRate - aRate
     })
 
-    // Add ranking
-    result.forEach((s: any, i: number) => { s.ga_rank = i + 1 })
+    // Add dense ranking
+    let rank = 0
+    let lastGa = -1
+    result.forEach((s: any, i: number) => {
+      const ga = s.goals + s.assists
+      if (ga !== lastGa) rank = i + 1
+      s.ga_rank = rank
+      lastGa = ga
+    })
 
     return result
   }, [])
