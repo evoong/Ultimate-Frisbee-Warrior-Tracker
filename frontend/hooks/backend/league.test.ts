@@ -15,8 +15,16 @@ const league: LeagueData = {
   })),
 }
 
-test('equal standings share rank and next distinct team gets next rank', () => {
-  expect(computeStandings(league).map(({ team, rank }) => [team.name, rank])).toEqual([
+test('ranking modes: row, standard, dense', () => {
+  const standingsRow = (mode: 'row' | 'standard' | 'dense') => computeStandings(league, mode).map(({ team, rank }) => [team.name, rank])
+  
+  expect(standingsRow('row')).toEqual([
+    ['Alpha', 1], ['Beta', 2], ['Gamma', 3],
+  ])
+  expect(standingsRow('standard')).toEqual([
+    ['Alpha', 1], ['Beta', 1], ['Gamma', 3],
+  ])
+  expect(standingsRow('dense')).toEqual([
     ['Alpha', 1], ['Beta', 1], ['Gamma', 2],
   ])
 })

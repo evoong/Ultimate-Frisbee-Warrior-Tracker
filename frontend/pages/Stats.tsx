@@ -6,7 +6,7 @@ import { useGetGames } from '../hooks/backend/games'
 import { useGetPlayers } from '../hooks/backend/players'
 import { useGetPlayerStats, useGetSeasons, useGetCumulativeStats, useGetAllSeasons, useGetAssistPairings, type PairingRow } from '../hooks/backend/stats'
 import {
-  useGetLeague, useGetOpponentHistory, computeStandings,
+  useGetLeague, useGetOpponentHistory, computeStandings, type RankingMode,
   useCreateLeagueTeam, useUpdateLeagueTeam, useDeleteLeagueTeam, useUpdateSeasonPoints,
   type LeagueTeam,
 } from '../hooks/backend/league'
@@ -881,7 +881,8 @@ function Standings() {
 
   const refresh = () => { if (selectedSeasonId != null) fetchLeague({ seasonId: selectedSeasonId }) }
 
-  const standings = useMemo(() => league ? computeStandings(league) : [], [league])
+  const [rankingMode, setRankingMode] = useState<RankingMode>('standard')
+  const standings = useMemo(() => league ? computeStandings(league, rankingMode) : [], [league, rankingMode])
   const usTeam = league?.teams.find(t => t.is_us) ?? null
 
   // Column sort: clicking a header reorders the rows; "#" always shows the
@@ -1186,17 +1187,29 @@ function Standings() {
           placeholder="Select season"
           emptyLabel="No seasons yet"
         />
-        {can.manageTeam && (
-          <button
-            type="button"
-            className="st-btn st-btn--icon"
-            onClick={() => setManageOpen(true)}
-            aria-label="Manage standings"
-            title="Manage standings"
+        <div className="flex items-center gap-2">
+          <select
+            className="st-select text-xs"
+            value={rankingMode}
+            onChange={e => setRankingMode(e.target.value as RankingMode)}
+            aria-label="Ranking Mode"
           >
-            <Gear className="h-4 w-4" weight="bold" />
-          </button>
-        )}
+            <option value="row">Row Index</option>
+            <option value="standard">Standard Rank</option>
+            <option value="dense">Dense Rank</option>
+          </select>
+          {can.manageTeam && (
+            <button
+              type="button"
+              className="st-btn st-btn--icon"
+              onClick={() => setManageOpen(true)}
+              aria-label="Manage standings"
+              title="Manage standings"
+            >
+              <Gear className="h-4 w-4" weight="bold" />
+            </button>
+          )}
+        </div>
       </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
