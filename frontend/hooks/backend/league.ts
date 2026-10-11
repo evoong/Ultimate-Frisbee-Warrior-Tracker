@@ -270,10 +270,12 @@ export function useGetOpponentHistory() {
   return useApiCall<OpponentHistory, { organizationId: number; name: string }>(fn)
 }
 
+export type RankingMode = 'row' | 'standard' | 'dense'
+
 // Pure standings computation so the table derives entirely from entered
 // scores. Only decided regular-season games with both teams known count.
 // Sort defaults: points, then point differential, then points for.
-export function computeStandings(league: LeagueData): StandingsRow[] {
+export function computeStandings(league: LeagueData, mode: RankingMode = 'standard'): StandingsRow[] {
   const rows = new Map<number, StandingsRow>()
   league.teams.forEach(team => {
     rows.set(team.id, {
@@ -323,7 +325,27 @@ export function computeStandings(league: LeagueData): StandingsRow[] {
     b.points_for - a.points_for ||
     a.team.name.localeCompare(b.team.name)
   )
-  list.forEach((r, i) => { r.rank = i + 1 })
+
+  if (mode === 'row') {
+    list.forEach((r, i) => { r.rank = i + 1 })
+  } else if (mode === 'standard') {
+    let rank = 1
+    list.forEach((r, i) => {
+        if (i > 0 && (r.points === list[i-1].points && r.point_diff === list[i-1].point_diff && r.points_for === list[i-1].points_for)) {
+            r.rank = list[i-1].rank
+        } else {
+            r.rank = i + 1
+        }
+    })
+  } else if (mode === 'dense') {
+      let currentRank = 1
+      list.forEach((r, i) => {
+        if (i > 0 && (r.points !== list[i-1].points || r.point_diff !== list[i-1].point_diff || r.points_for !== list[i-1].points_for)) {
+          currentRank++
+        }
+        r.rank = currentRank
+      })
+  }
   return list
 }
 
