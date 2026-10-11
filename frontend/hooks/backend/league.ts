@@ -323,7 +323,12 @@ export function computeStandings(league: LeagueData): StandingsRow[] {
     b.points_for - a.points_for ||
     a.team.name.localeCompare(b.team.name)
   )
-  list.forEach((r, i) => { r.rank = i + 1 })
+  let rank = 0
+  list.forEach((row, index) => {
+    const previous = list[index - 1]
+    if (!previous || row.points !== previous.points || row.point_diff !== previous.point_diff || row.points_for !== previous.points_for) rank++
+    row.rank = rank
+  })
   return list
 }
 
