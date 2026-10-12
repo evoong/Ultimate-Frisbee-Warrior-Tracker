@@ -324,6 +324,8 @@ function PlayerStatsView({
     if (defaultSeasonId != null && cumulativeSeasonId == null) setCumulativeSeasonId(defaultSeasonId)
   }, [defaultSeasonId])
 
+  const [playerRankingMode, setPlayerRankingMode] = useState<RankingMode>('standard')
+  
   useEffect(() => {
     if (currentTeamId == null) return
     // limit: 200 is a practical "all pairs" ceiling — the Top Pairings card
@@ -331,21 +333,21 @@ function PlayerStatsView({
     // read the same pairing data) each derive their own view from this one
     // fetch rather than hitting the network separately per view.
     if (filterType === 'all') {
-      fetchStats({ organizationId: currentTeamId, tier })
+      fetchStats({ organizationId: currentTeamId, tier, mode: playerRankingMode })
       fetchPairings({ organizationId: currentTeamId, limit: 200, tier })
     } else if (filterType === 'season') {
       if (selectedSeasonIds.length > 0) {
-        fetchStats({ seasonIds: selectedSeasonIds, organizationId: currentTeamId, tier })
+        fetchStats({ seasonIds: selectedSeasonIds, organizationId: currentTeamId, tier, mode: playerRankingMode })
         fetchPairings({ seasonIds: selectedSeasonIds, organizationId: currentTeamId, limit: 200, tier })
       } else {
-        fetchStats({ organizationId: currentTeamId, tier })
+        fetchStats({ organizationId: currentTeamId, tier, mode: playerRankingMode })
         fetchPairings({ organizationId: currentTeamId, limit: 200, tier })
       }
     } else if (filterType === 'games' && selectedGameIds.length > 0) {
-      fetchStats({ gameIds: selectedGameIds, organizationId: currentTeamId, tier })
+      fetchStats({ gameIds: selectedGameIds, organizationId: currentTeamId, tier, mode: playerRankingMode })
       fetchPairings({ gameIds: selectedGameIds, organizationId: currentTeamId, limit: 200, tier })
     }
-  }, [filterType, selectedSeasonIds, selectedGameIds, currentTeamId, tier])
+  }, [filterType, selectedSeasonIds, selectedGameIds, currentTeamId, tier, playerRankingMode])
 
   useEffect(() => {
     if (currentTeamId == null || cumulativeSeasonId == null) return
@@ -817,7 +819,21 @@ function PlayerStatsView({
       )}
 
       {tab === 'table' && (
-        <RankingsTable players={playerLines} loading={rangePending} />
+        <>
+          <div className="mb-4 flex justify-end">
+            <select
+              className="st-select text-xs"
+              value={playerRankingMode}
+              onChange={e => setPlayerRankingMode(e.target.value as RankingMode)}
+              aria-label="Ranking Mode"
+            >
+              <option value="row">Row Index</option>
+              <option value="standard">Standard Rank</option>
+              <option value="dense">Dense Rank</option>
+            </select>
+          </div>
+          <RankingsTable players={playerLines} loading={rangePending} rankingMode={playerRankingMode} />
+        </>
       )}
     </div>
   )

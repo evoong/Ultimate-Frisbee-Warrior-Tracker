@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
+import { RankingMode } from './league'
 import { isTurnoverEvent } from '../../lib/eventUtils'
 import { isPastGame } from '../../lib/gameOrder'
 
@@ -115,7 +116,7 @@ export function useUpdateSeason() {
 }
 
 export function useGetPlayerStats() {
-  const fn = useCallback(async (params: { organizationId: number | null; seasonIds?: number[]; gameIds?: number[]; tier?: string | null }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; seasonIds?: number[]; gameIds?: number[]; tier?: string | null; mode?: RankingMode }) => {
     // Resolve the games in scope first so events/attendance can be filtered
     // server-side (supabase caps unfiltered fetches at 1000 rows).
     let gamesQuery = supabase.from('games').select('id, season_id, game_date, game_time').eq('organization_id', params.organizationId)
@@ -236,9 +237,7 @@ export function useGetPlayerStats() {
       return { ...s, games_played: gamesPlayed, ga_rank: 0 }
     })
 
-    // Rank by goals+assists first, with dense ranking:
-    // tied scores share rank; next distinct score gets next rank.
-    // Ties broken by goals, then by (G+A) per game played.
+    // Rank by goals+assists first
     result.sort((a: any, b: any) => {
       const getGa = (p: any) => p.goals + p.assists
       const gaDiff = getGa(b) - getGa(a)
@@ -252,19 +251,31 @@ export function useGetPlayerStats() {
       return bRate - aRate
     })
 
-    // Add dense ranking
+    // Ranking logic
+    const mode = params.mode ?? 'standard'
     let rank = 0
-    let lastGa = -1
     result.forEach((s: any, i: number) => {
-      const ga = s.goals + s.assists
-      if (ga !== lastGa) rank = i + 1
-      s.ga_rank = rank
-      lastGa = ga
+        const getGa = (p: any) => p.goals + p.assists
+        if (mode === 'row') {
+            s.ga_rank = i + 1
+        } else if (mode === 'standard') {
+            if (i > 0 && getGa(s) === getGa(result[i-1]) && s.goals === result[i-1].goals) {
+                s.ga_rank = result[i-1].ga_rank
+            } else {
+                s.ga_rank = i + 1
+            }
+        } else {
+            if (i === 0) rank = 1
+            else if (getGa(s) !== getGa(result[i-1]) || s.goals !== result[i-1].goals) {
+                rank++
+            }
+            s.ga_rank = rank
+        }
     })
 
     return result
   }, [])
-  return useApiCall<any[], { organizationId: number | null; seasonIds?: number[]; gameIds?: number[]; tier?: string | null }>(fn)
+  return useApiCall<any[], { organizationId: number | null; seasonIds?: number[]; gameIds?: number[]; tier?: string | null; mode?: RankingMode }>(fn)
 }
 
 export type PairingRow = {

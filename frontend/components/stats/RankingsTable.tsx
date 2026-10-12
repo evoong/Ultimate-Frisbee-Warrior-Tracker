@@ -39,11 +39,16 @@ const OP_SEGMENTS: SegmentOption<'+' | '-'>[] = [
   { key: '-', label: '-' },
 ]
 
-export default function RankingsTable({ players, loading }: {
+import { RankingMode } from '../../hooks/backend/league'
+
+export default function RankingsTable({ players, loading, rankingMode = 'row' }: {
   players: PlayerLine[]
   loading: boolean
+  rankingMode?: RankingMode
 }) {
   const { flags } = useFlags()
+  // ...
+
   const showTurnovers = flags?.show_turnovers ?? false
   const visibleStatKeys = useMemo(() => getVisibleStatKeys(showTurnovers), [showTurnovers])
   const statSegments: SegmentOption<StatKey>[] = useMemo(
@@ -99,15 +104,37 @@ export default function RankingsTable({ players, loading }: {
 
   const rows = useMemo(() => {
     const arr = [...players]
-    if (!sortColumnId) return arr
+    if (!sortColumnId) {
+      return arr.map((p, i) => ({ ...p, rank: i + 1 }))
+    }
+    
     arr.sort((a, b) => {
       const primary = compareByColumn(sortColumnId, sortDir, allColumns, a, b)
       if (primary !== 0) return primary
       if (sortColumnId2 && sortColumnId2 !== sortColumnId) return compareByColumn(sortColumnId2, sortDir2, allColumns, a, b)
       return 0
     })
-    return arr
-  }, [players, sortColumnId, sortDir, sortColumnId2, sortDir2, allColumns])
+
+    const column = allColumns.find(c => c.id === sortColumnId)
+    if (!column || rankingMode === 'row') {
+      return arr.map((p, i) => ({ ...p, rank: i + 1 }))
+    }
+
+    let currentRank = 1
+    return arr.map((p, i) => {
+      if (i > 0) {
+        const prev = arr[i - 1]
+        const val = getColumnValue(column, p)
+        const prevVal = getColumnValue(column, prev)
+        if (val !== prevVal) {
+          currentRank = rankingMode === 'standard' ? i + 1 : currentRank + 1
+        }
+      } else {
+        currentRank = 1
+      }
+      return { ...p, rank: currentRank }
+    })
+  }, [players, sortColumnId, sortDir, sortColumnId2, sortDir2, allColumns, rankingMode])
 
   const handleSortClick = (colId: string) => {
     if (sortColumnId === colId) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
@@ -359,9 +386,9 @@ export default function RankingsTable({ players, loading }: {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((p, i) => (
+                {rows.map((p) => (
                   <tr key={p.playerId} className="st-tr">
-                    <td className="st-td" style={{ color: 'hsl(var(--st-ink-faint))', fontWeight: 500, fontSize: '0.6875rem' }}>{i + 1}</td>
+                    <td className="st-td" style={{ color: 'hsl(var(--st-ink-faint))', fontWeight: 500, fontSize: '0.6875rem' }}>{(p as any).rank}</td>
                     <td className="st-td st-td--left" style={{ width: widthOf('player_name'), overflow: 'hidden' }}>
                       <span className="st-name" title={p.name}>{p.name}</span>
                     </td>

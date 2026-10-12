@@ -33,6 +33,7 @@ export type PlayerLine = {
   assists: number
   turnovers: number
   gamesPlayed: number
+  rank?: number
 }
 
 /** Team-level totals for the current filter. Every field is optional-by-null
