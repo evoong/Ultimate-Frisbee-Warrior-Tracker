@@ -41,10 +41,11 @@ const OP_SEGMENTS: SegmentOption<'+' | '-'>[] = [
 
 import { RankingMode } from '../../hooks/backend/league'
 
-export default function RankingsTable({ players, loading, rankingMode = 'row' }: {
+export default function RankingsTable({ players, loading, rankingMode = 'row', onRankingModeChange }: {
   players: PlayerLine[]
   loading: boolean
   rankingMode?: RankingMode
+  onRankingModeChange?: (mode: RankingMode) => void
 }) {
   const { flags } = useFlags()
   // ...
@@ -225,6 +226,19 @@ export default function RankingsTable({ players, loading, rankingMode = 'row' }:
             className="stats-scope w-[19rem] rounded-md border-0 bg-transparent p-0 shadow-none"
           >
             <div className="st-tip max-h-[26rem] space-y-3 overflow-y-auto p-2.5">
+              <div className="space-y-2 border-b border-[hsl(var(--st-rule))] pb-2.5">
+                <p className="st-overline px-1">Ranking mode</p>
+                <select
+                  className="st-select text-xs w-full"
+                  value={rankingMode}
+                  onChange={e => onRankingModeChange?.(e.target.value as RankingMode)}
+                  aria-label="Ranking Mode"
+                >
+                  <option value="row">Row Index</option>
+                  <option value="standard">Standard Rank</option>
+                  <option value="dense">Dense Rank</option>
+                </select>
+              </div>
               <div className="space-y-0.5">
                 <p className="st-overline px-1 pb-1">Show columns</p>
                 {allColumns.map(col => {

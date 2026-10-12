@@ -819,21 +819,12 @@ function PlayerStatsView({
       )}
 
       {tab === 'table' && (
-        <>
-          <div className="mb-4 flex justify-end">
-            <select
-              className="st-select text-xs"
-              value={playerRankingMode}
-              onChange={e => setPlayerRankingMode(e.target.value as RankingMode)}
-              aria-label="Ranking Mode"
-            >
-              <option value="row">Row Index</option>
-              <option value="standard">Standard Rank</option>
-              <option value="dense">Dense Rank</option>
-            </select>
-          </div>
-          <RankingsTable players={playerLines} loading={rangePending} rankingMode={playerRankingMode} />
-        </>
+          <RankingsTable 
+            players={playerLines} 
+            loading={rangePending} 
+            rankingMode={playerRankingMode} 
+            onRankingModeChange={setPlayerRankingMode} 
+          />
       )}
     </div>
   )
