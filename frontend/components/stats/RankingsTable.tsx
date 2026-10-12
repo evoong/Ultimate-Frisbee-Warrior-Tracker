@@ -41,7 +41,7 @@ const OP_SEGMENTS: SegmentOption<'+' | '-'>[] = [
 
 import { RankingMode } from '../../hooks/backend/league'
 
-export default function RankingsTable({ players, loading, rankingMode = 'row', onRankingModeChange }: {
+export default function RankingsTable({ players, loading, rankingMode = 'dense', onRankingModeChange }: {
   players: PlayerLine[]
   loading: boolean
   rankingMode?: RankingMode
@@ -105,18 +105,19 @@ export default function RankingsTable({ players, loading, rankingMode = 'row', o
 
   const rows = useMemo(() => {
     const arr = [...players]
+    const defaultSortColumnId = visibleColumns[0]?.id ?? 'goals'
     if (!sortColumnId) {
-      return arr.map((p, i) => ({ ...p, rank: i + 1 }))
+      arr.sort((a, b) => compareByColumn(defaultSortColumnId, 'desc', allColumns, a, b))
+    } else {
+      arr.sort((a, b) => {
+        const primary = compareByColumn(sortColumnId, sortDir, allColumns, a, b)
+        if (primary !== 0) return primary
+        if (sortColumnId2 && sortColumnId2 !== sortColumnId) return compareByColumn(sortColumnId2, sortDir2, allColumns, a, b)
+        return 0
+      })
     }
-    
-    arr.sort((a, b) => {
-      const primary = compareByColumn(sortColumnId, sortDir, allColumns, a, b)
-      if (primary !== 0) return primary
-      if (sortColumnId2 && sortColumnId2 !== sortColumnId) return compareByColumn(sortColumnId2, sortDir2, allColumns, a, b)
-      return 0
-    })
 
-    const column = allColumns.find(c => c.id === sortColumnId)
+    const column = allColumns.find(c => c.id === (sortColumnId ?? defaultSortColumnId))
     if (!column || rankingMode === 'row') {
       return arr.map((p, i) => ({ ...p, rank: i + 1 }))
     }

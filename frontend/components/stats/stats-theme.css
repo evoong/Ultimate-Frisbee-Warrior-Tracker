@@ -374,6 +374,19 @@
   color: hsl(var(--st-ink));
   transition: border-color 160ms ease;
 }
+.st-select {
+  height: 2.125rem;
+  padding: 0 0.5625rem;
+  border: 1px solid hsl(var(--st-rule-strong));
+  border-radius: 6px;
+  background: hsl(var(--st-panel));
+  font-size: 0.8125rem;
+  color: hsl(var(--st-ink));
+}
+.st-select:focus-visible {
+  outline: 2px solid hsl(var(--st-accent));
+  outline-offset: -1px;
+}
 .st-field::placeholder { color: hsl(var(--st-ink-faint)); }
 .st-field:focus-visible {
   outline: 2px solid hsl(var(--st-accent));
