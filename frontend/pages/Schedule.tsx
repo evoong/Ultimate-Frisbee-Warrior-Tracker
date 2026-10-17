@@ -104,7 +104,13 @@ function PlayerChipGrid({ options, value, onChange, photoMap }: {
   photoMap?: Map<number, { photo_url: string | null; gender_match: string | null }>
 }) {
   return (
-    <div className="flex gap-2 overflow-x-auto overscroll-x-contain pb-1 -mx-1 px-1 [scrollbar-width:thin]">
+    <div
+      className="flex gap-2 overflow-x-auto overscroll-x-contain pb-1 -mx-1 px-1 [scrollbar-width:thin]"
+      style={{
+        maskImage: 'linear-gradient(to right, transparent, black 12px, black calc(100% - 20px), transparent)',
+        WebkitMaskImage: 'linear-gradient(to right, transparent, black 12px, black calc(100% - 20px), transparent)',
+      }}
+    >
       {options.map(opt => {
         const selected = value === opt.id
         const pid = parseInt(opt.id)
