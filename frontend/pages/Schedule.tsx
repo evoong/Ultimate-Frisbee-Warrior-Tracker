@@ -89,11 +89,13 @@ function seasonLabel(s: { name: string; year: number; organizer: string | null }
   return [s.organizer, s.name, s.year].filter(Boolean).join(' ')
 }
 
-// Compact quick-select grid for Buttons mode: a roster of 15-20 players as
-// full-width pills gets unreadable fast, so this renders fixed-size avatar
-// chips (real lineup photo when we have one, initials disc otherwise) in a
-// dense wrap instead. Selection state is a ring, not a fill swap, so chips
-// don't reflow as you tap. 'Opponent' and other non-roster sentinel ids
+// Compact quick-select strip for Buttons mode: a roster of 15-20 players as
+// full-width pills, wrapped across several rows per field, is the thing
+// that made this cluttered. One scrollable row per field keeps a field's
+// footprint constant no matter the roster size -- options are pre-sorted
+// (season goals for Scorer, season assists for Assist/2nd) so the player
+// you're about to tap is usually already in view, with the rest a swipe
+// away rather than hidden. 'Opponent' and other non-roster sentinel ids
 // (anything non-numeric) get a plain dashed-outline chip, no avatar.
 function PlayerChipGrid({ options, value, onChange, photoMap }: {
   options: { id: string; label: string }[]
@@ -102,7 +104,7 @@ function PlayerChipGrid({ options, value, onChange, photoMap }: {
   photoMap?: Map<number, { photo_url: string | null; gender_match: string | null }>
 }) {
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex gap-2 overflow-x-auto overscroll-x-contain pb-1 -mx-1 px-1 [scrollbar-width:thin]">
       {options.map(opt => {
         const selected = value === opt.id
         const pid = parseInt(opt.id)
@@ -1403,6 +1405,32 @@ export default function Schedule() {
     return 0 // stable: keeps Opponent first, unlineupped players in roster order
   })
 
+  // This season's goals/assists per player (already fetched for the lineup
+  // editor's balance tool, see lineupSeasonStats above) double as a
+  // relevance ranking here: the Scorer row leads with top scorers, the
+  // Assist/2nd rows lead with top assisters, so the player you're most
+  // likely tapping is already on screen before any scrolling. Everyone
+  // else still follows in lineup order, nobody is hidden.
+  const seasonGoalsByPlayerId = new Map<number, number>()
+  const seasonAssistsByPlayerId = new Map<number, number>()
+  for (const s of (lineupSeasonStats as { player_id: number; goals: number; assists: number }[] | undefined) ?? []) {
+    seasonGoalsByPlayerId.set(s.player_id, s.goals)
+    seasonAssistsByPlayerId.set(s.player_id, s.assists)
+  }
+  const rankByStat = (options: typeof attendingPlayerOptions, statByPlayerId: Map<number, number>) =>
+    [...options].sort((a, b) => {
+      if (a.id === '__opponent__') return -1
+      if (b.id === '__opponent__') return 1
+      const statA = statByPlayerId.get(parseInt(a.id)) ?? 0
+      const statB = statByPlayerId.get(parseInt(b.id)) ?? 0
+      if (statA !== statB) return statB - statA
+      const rankA = lineupOrderByPlayerId.get(parseInt(a.id)) ?? Infinity
+      const rankB = lineupOrderByPlayerId.get(parseInt(b.id)) ?? Infinity
+      return rankA - rankB
+    })
+  const scorerOrderedPlayerOptions = rankByStat(attendingPlayerOptions, seasonGoalsByPlayerId)
+  const assisterOrderedPlayerOptions = rankByStat(attendingPlayerOptions, seasonAssistsByPlayerId)
+
   // Calendar helpers
   const calYear = calendarDate.getFullYear()
   const calMonth = calendarDate.getMonth()
@@ -1656,7 +1684,7 @@ export default function Schedule() {
                         />
                       ) : (
                         <PlayerChipGrid
-                          options={lineupOrderedPlayerOptions}
+                          options={assisterOrderedPlayerOptions}
                           value={newSecondaryAssisterId || '__none__'}
                           onChange={setNewSecondaryAssisterId}
                           photoMap={lineupPhotoByPlayerId}
@@ -1683,7 +1711,7 @@ export default function Schedule() {
                             />
                           ) : (
                             <PlayerChipGrid
-                              options={lineupOrderedPlayerOptions}
+                              options={assisterOrderedPlayerOptions}
                               value={newAssisterId || '__none__'}
                               onChange={setNewAssisterId}
                               photoMap={lineupPhotoByPlayerId}
@@ -1718,7 +1746,7 @@ export default function Schedule() {
                         />
                       ) : (
                         <PlayerChipGrid
-                          options={lineupOrderedPlayerOptions}
+                          options={scorerOrderedPlayerOptions}
                           value={newScorerId || '__none__'}
                           onChange={setNewScorerId}
                           photoMap={lineupPhotoByPlayerId}
