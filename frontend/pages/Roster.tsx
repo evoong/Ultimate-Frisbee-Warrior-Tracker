@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlayer, useGetPlayerGameStats, useSetGameAttendance, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer, useGetSeasonRoster, useCopyPlayersToSeason, useRemovePlayersFromSeason, useGetPlayerAssistPairings, useGetPlayerTurnoverBreakdown, useGetPlayerPrivate, useUpsertPlayerPrivate, type AssistPairingRow, type TurnoverBreakdownRow, type PlayerPrivate } from '../hooks/backend/players'
 import { track } from '../lib/analytics'
-import { useGetAllSeasons, useGetSeasons, useCreateSeason } from '../hooks/backend/stats'
+import { useGetAllSeasons, useGetSeasons, useCreateSeason, useGetSeasonsMeta } from '../hooks/backend/stats'
 import { getDefaultJamSeasonId, getDefaultSeasonForPlayer } from '../lib/seasonUtils'
 import { orderRosterPlayers } from '../lib/rosterOrder'
 import { useMyPlayerLink, useMyPlayerSeasonIds } from '../hooks/backend/playerLink'
@@ -195,6 +195,7 @@ export default function Roster() {
   const { trigger: copyPlayersToSeason } = useCopyPlayersToSeason()
   const { trigger: removePlayersFromSeason } = useRemovePlayersFromSeason()
   const { trigger: createSeason } = useCreateSeason()
+  const { data: seasonsMeta, trigger: fetchSeasonsMeta } = useGetSeasonsMeta()
   // phone lives in player_private (members-only) now. A guest or non-member
   // gets an empty array back (RLS filters rows, not an error) -- that's
   // normal and just means no phone numbers render, not a failure. A genuine
@@ -283,6 +284,7 @@ export default function Roster() {
   // in Schedule (there'd otherwise be no season to add players to yet).
   const [showCreateSeason, setShowCreateSeason] = useState(false)
   const [newSeasonData, setNewSeasonData] = useState({ name: '', year: new Date().getFullYear().toString(), organizer: '', location: '' })
+  const [newSeasonOrganizerMode, setNewSeasonOrganizerMode] = useState<'select' | 'new'>('select')
   const [creatingSeason, setCreatingSeason] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)

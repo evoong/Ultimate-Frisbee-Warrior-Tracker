@@ -228,6 +228,7 @@ export default function Schedule() {
   const [newScorerId, setNewScorerId] = useState<string>('')
   const [newAssisterId, setNewAssisterId] = useState<string>('')
   const [newSecondaryAssisterId, setNewSecondaryAssisterId] = useState<string>('')
+  const [selectionMode, setSelectionMode] = useState<'combobox' | 'buttons'>('combobox')
   const autoOpenedRef = useRef(false)
 
   // Game notes editing
@@ -1529,19 +1530,32 @@ export default function Schedule() {
                   </Select>
                 </div>
 
+                <div className="flex gap-2 mb-2">
+                  <Button variant={selectionMode === 'combobox' ? 'default' : 'outline'} size="sm" className="h-7 text-xs" onClick={() => setSelectionMode('combobox')}>Dropdown</Button>
+                  <Button variant={selectionMode === 'buttons' ? 'default' : 'outline'} size="sm" className="h-7 text-xs" onClick={() => setSelectionMode('buttons')}>Buttons</Button>
+                </div>
+
                 <div className="grid grid-cols-[60px_1fr] items-center gap-2">
                   <span className="text-xs font-medium text-muted-foreground text-right">{isNewEventGoalLike ? 'Scorer' : 'Player'}</span>
-                  <PlayerCombobox
-                    players={attendingPlayerOptions}
-                    otherPlayers={otherPlayerOptions}
-                    value={newScorerId || '__none__'}
-                    onValueChange={setNewScorerId}
-                    onAddPlayer={handleAddPlayer}
-                    onAddExistingPlayer={handleAddExistingScorer}
-                    onDeletePlayer={handleDeleteSub}
-                    placeholder="None"
-                    className="w-full h-9 text-sm bg-background border-border"
-                  />
+                  {selectionMode === 'combobox' ? (
+                    <PlayerCombobox
+                      players={attendingPlayerOptions}
+                      otherPlayers={otherPlayerOptions}
+                      value={newScorerId || '__none__'}
+                      onValueChange={setNewScorerId}
+                      onAddPlayer={handleAddPlayer}
+                      onAddExistingPlayer={handleAddExistingScorer}
+                      onDeletePlayer={handleDeleteSub}
+                      placeholder="None"
+                      className="w-full h-9 text-sm bg-background border-border"
+                    />
+                  ) : (
+                    <div className="flex flex-wrap gap-1">
+                      {attendingPlayerOptions.map(p => (
+                        <Button key={p.id} variant={newScorerId === p.id.toString() ? 'default' : 'secondary'} size="sm" className="h-7 text-xs" onClick={() => setNewScorerId(p.id.toString())}>{p.label}</Button>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {isNewEventGoalLike && newScorerId !== '__opponent__' && (
@@ -1559,31 +1573,47 @@ export default function Schedule() {
                     </div>
                     <div className="grid grid-cols-[60px_1fr] items-center gap-2">
                       <span className="text-xs font-medium text-muted-foreground text-right">Assister</span>
-                      <PlayerCombobox
-                        players={attendingPlayerOptions}
-                        otherPlayers={otherPlayerOptions}
-                        value={newAssisterId || '__none__'}
-                        onValueChange={setNewAssisterId}
-                        onAddPlayer={handleAddAssister}
-                        onAddExistingPlayer={handleAddExistingAssister}
-                        onDeletePlayer={handleDeleteSub}
-                        placeholder="None"
-                        className="w-full h-9 text-sm bg-background border-border"
-                      />
+                      {selectionMode === 'combobox' ? (
+                        <PlayerCombobox
+                          players={attendingPlayerOptions}
+                          otherPlayers={otherPlayerOptions}
+                          value={newAssisterId || '__none__'}
+                          onValueChange={setNewAssisterId}
+                          onAddPlayer={handleAddAssister}
+                          onAddExistingPlayer={handleAddExistingAssister}
+                          onDeletePlayer={handleDeleteSub}
+                          placeholder="None"
+                          className="w-full h-9 text-sm bg-background border-border"
+                        />
+                      ) : (
+                        <div className="flex flex-wrap gap-1">
+                          {attendingPlayerOptions.map(p => (
+                            <Button key={p.id} variant={newAssisterId === p.id.toString() ? 'default' : 'secondary'} size="sm" className="h-7 text-xs" onClick={() => setNewAssisterId(p.id.toString())}>{p.label}</Button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <div className="grid grid-cols-[60px_1fr] items-center gap-2">
                       <span className="text-xs font-medium text-muted-foreground text-right">2nd</span>
-                      <PlayerCombobox
-                        players={attendingPlayerOptions}
-                        otherPlayers={otherPlayerOptions}
-                        value={newSecondaryAssisterId || '__none__'}
-                        onValueChange={setNewSecondaryAssisterId}
-                        onAddPlayer={handleAddSecondaryAssister}
-                        onAddExistingPlayer={handleAddExistingSecondaryAssister}
-                        onDeletePlayer={handleDeleteSub}
-                        placeholder="None"
-                        className="w-full h-9 text-sm bg-background border-border"
-                      />
+                      {selectionMode === 'combobox' ? (
+                        <PlayerCombobox
+                          players={attendingPlayerOptions}
+                          otherPlayers={otherPlayerOptions}
+                          value={newSecondaryAssisterId || '__none__'}
+                          onValueChange={setNewSecondaryAssisterId}
+                          onAddPlayer={handleAddSecondaryAssister}
+                          onAddExistingPlayer={handleAddExistingSecondaryAssister}
+                          onDeletePlayer={handleDeleteSub}
+                          placeholder="None"
+                          className="w-full h-9 text-sm bg-background border-border"
+                        />
+                      ) : (
+                        <div className="flex flex-wrap gap-1">
+                          {attendingPlayerOptions.map(p => (
+                            <Button key={p.id} variant={newSecondaryAssisterId === p.id.toString() ? 'default' : 'secondary'} size="sm" className="h-7 text-xs" onClick={() => setNewSecondaryAssisterId(p.id.toString())}>{p.label}</Button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </>
                 )}
