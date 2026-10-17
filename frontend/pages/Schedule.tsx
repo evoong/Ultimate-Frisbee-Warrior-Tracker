@@ -28,6 +28,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '../lib/shadcn/popover'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '../lib/shadcn/command'
 import PlayerCombobox from '../components/PlayerCombobox'
 import PlayerAvatar from '../components/PlayerAvatar'
+import { initials } from '../components/nav/identity'
 import GenderTag, { GenderRatio } from '../components/GenderTag'
 import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
@@ -86,6 +87,59 @@ type LineupEntry = { id: number; player_id: number; lineup_name: string; sort_or
 
 function seasonLabel(s: { name: string; year: number; organizer: string | null }) {
   return [s.organizer, s.name, s.year].filter(Boolean).join(' ')
+}
+
+// Compact quick-select grid for Buttons mode: a roster of 15-20 players as
+// full-width pills gets unreadable fast, so this renders fixed-size avatar
+// chips (real lineup photo when we have one, initials disc otherwise) in a
+// dense wrap instead. Selection state is a ring, not a fill swap, so chips
+// don't reflow as you tap. 'Opponent' and other non-roster sentinel ids
+// (anything non-numeric) get a plain dashed-outline chip, no avatar.
+function PlayerChipGrid({ options, value, onChange, photoMap }: {
+  options: { id: string; label: string }[]
+  value: string
+  onChange: (id: string) => void
+  photoMap?: Map<number, { photo_url: string | null; gender_match: string | null }>
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map(opt => {
+        const selected = value === opt.id
+        const pid = parseInt(opt.id)
+        const info = !isNaN(pid) ? photoMap?.get(pid) : undefined
+        const isSentinel = isNaN(pid)
+        return (
+          <button
+            key={opt.id}
+            type="button"
+            onClick={() => onChange(opt.id)}
+            title={opt.label}
+            className={`flex flex-col items-center gap-1 w-14 shrink-0 rounded-md py-1.5 transition-colors ${selected ? 'bg-accent' : 'hover:bg-accent/50'}`}
+          >
+            {isSentinel ? (
+              <div className={`w-9 h-9 rounded-full border-2 border-dashed flex items-center justify-center ${selected ? 'border-primary text-primary' : 'border-muted-foreground/40 text-muted-foreground'}`}>
+                <Minus className="w-3.5 h-3.5" />
+              </div>
+            ) : info?.photo_url ? (
+              <img
+                src={info.photo_url}
+                alt={opt.label}
+                draggable={false}
+                className={`w-9 h-9 rounded-full object-cover select-none border-2 ${selected ? 'border-primary' : 'border-transparent'}`}
+              />
+            ) : (
+              <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-semibold select-none border-2 ${selected ? 'bg-primary/15 border-primary text-primary' : 'bg-muted border-transparent text-muted-foreground'}`}>
+                {initials(opt.label)}
+              </div>
+            )}
+            <span className={`text-[10px] leading-tight text-center truncate w-full ${selected ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
+              {opt.label.split(' ')[0]}
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
 }
 
 // A game counts as "upcoming" until its actual start time passes, not just
@@ -1326,6 +1380,29 @@ export default function Schedule() {
   const otherPlayerOptions = ((otherPlayers as { id: number; display_name: string }[] | undefined) ?? [])
     .map(p => ({ id: p.id.toString(), label: p.display_name }))
 
+  // Buttons-mode quick-select grid: ordered to match this game's actual
+  // lines (lineup group, then each player's position within it) instead of
+  // roster order, and carrying each player's real photo/gender so the grid
+  // reads as the lineup board the captain already knows, not an alphabetical
+  // wall of names. Players never placed in a lineup (attending by default,
+  // see attendingPlayerIds above) sort after everyone who has a line.
+  const lineupGroupOrder = new Map(
+    ((lineupGroups as LineupGroup[] | undefined) ?? []).map(g => [g.lineup_name, g.sort_order])
+  )
+  const lineupOrderByPlayerId = new Map<number, number>()
+  const lineupPhotoByPlayerId = new Map<number, { photo_url: string | null; gender_match: string | null }>()
+  for (const entry of (lineups as LineupEntry[] | undefined) ?? []) {
+    const groupRank = lineupGroupOrder.get(entry.lineup_name) ?? 999
+    lineupOrderByPlayerId.set(entry.player_id, groupRank * 1000 + entry.sort_order)
+    lineupPhotoByPlayerId.set(entry.player_id, { photo_url: entry.photo_url, gender_match: entry.gender_match })
+  }
+  const lineupOrderedPlayerOptions = [...attendingPlayerOptions].sort((a, b) => {
+    const rankA = lineupOrderByPlayerId.get(parseInt(a.id)) ?? Infinity
+    const rankB = lineupOrderByPlayerId.get(parseInt(b.id)) ?? Infinity
+    if (rankA !== rankB) return rankA - rankB
+    return 0 // stable: keeps Opponent first, unlineupped players in roster order
+  })
+
   // Calendar helpers
   const calYear = calendarDate.getFullYear()
   const calMonth = calendarDate.getMonth()
@@ -1578,11 +1655,12 @@ export default function Schedule() {
                           className="w-full h-9 text-sm bg-background border-border"
                         />
                       ) : (
-                        <div className="flex flex-wrap gap-1">
-                          {attendingPlayerOptions.map(p => (
-                            <Button key={p.id} variant={newSecondaryAssisterId === p.id.toString() ? 'default' : 'secondary'} size="sm" className="h-7 text-xs" onClick={() => setNewSecondaryAssisterId(p.id.toString())}>{p.label}</Button>
-                          ))}
-                        </div>
+                        <PlayerChipGrid
+                          options={lineupOrderedPlayerOptions}
+                          value={newSecondaryAssisterId || '__none__'}
+                          onChange={setNewSecondaryAssisterId}
+                          photoMap={lineupPhotoByPlayerId}
+                        />
                       )}
                     </div>
 
@@ -1604,11 +1682,12 @@ export default function Schedule() {
                               className="w-full h-9 text-sm bg-background border-border"
                             />
                           ) : (
-                            <div className="flex flex-wrap gap-1">
-                              {attendingPlayerOptions.map(p => (
-                                <Button key={p.id} variant={newAssisterId === p.id.toString() ? 'default' : 'secondary'} size="sm" className="h-7 text-xs" onClick={() => setNewAssisterId(p.id.toString())}>{p.label}</Button>
-                              ))}
-                            </div>
+                            <PlayerChipGrid
+                              options={lineupOrderedPlayerOptions}
+                              value={newAssisterId || '__none__'}
+                              onChange={setNewAssisterId}
+                              photoMap={lineupPhotoByPlayerId}
+                            />
                           )}
                         </div>
                         <button
@@ -1638,11 +1717,12 @@ export default function Schedule() {
                           className="w-full h-9 text-sm bg-background border-border"
                         />
                       ) : (
-                        <div className="flex flex-wrap gap-1">
-                          {attendingPlayerOptions.map(p => (
-                            <Button key={p.id} variant={newScorerId === p.id.toString() ? 'default' : 'secondary'} size="sm" className="h-7 text-xs" onClick={() => setNewScorerId(p.id.toString())}>{p.label}</Button>
-                          ))}
-                        </div>
+                        <PlayerChipGrid
+                          options={lineupOrderedPlayerOptions}
+                          value={newScorerId || '__none__'}
+                          onChange={setNewScorerId}
+                          photoMap={lineupPhotoByPlayerId}
+                        />
                       )}
                     </div>
                   </div>
@@ -1662,11 +1742,12 @@ export default function Schedule() {
                         className="w-full h-9 text-sm bg-background border-border"
                       />
                     ) : (
-                      <div className="flex flex-wrap gap-1">
-                        {attendingPlayerOptions.map(p => (
-                          <Button key={p.id} variant={newScorerId === p.id.toString() ? 'default' : 'secondary'} size="sm" className="h-7 text-xs" onClick={() => setNewScorerId(p.id.toString())}>{p.label}</Button>
-                        ))}
-                      </div>
+                      <PlayerChipGrid
+                        options={lineupOrderedPlayerOptions}
+                        value={newScorerId || '__none__'}
+                        onChange={setNewScorerId}
+                        photoMap={lineupPhotoByPlayerId}
+                      />
                     )}
                   </div>
                 )}
