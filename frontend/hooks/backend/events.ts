@@ -67,7 +67,7 @@ export function useGetEventTypes() {
 }
 
 export function useCreateGoalEvent() {
-  const fn = useCallback(async (params: { organizationId: number | null; gameId: number; playerId: number | null; relatedPlayerId: number | null; eventType?: string; notes?: string }) => {
+  const fn = useCallback(async (params: { organizationId: number | null; gameId: number; playerId: number | null; relatedPlayerId: number | null; secondaryAssisterId?: number | null; eventType?: string; notes?: string }) => {
     const { data, error } = await supabase
       .from('game_events')
       .insert({
@@ -75,6 +75,7 @@ export function useCreateGoalEvent() {
         game_id: params.gameId,
         player_id: params.playerId,
         related_player_id: params.relatedPlayerId,
+        secondary_assister_id: params.secondaryAssisterId ?? null,
         event_type: params.eventType || 'Goal',
         event_timestamp: new Date().toISOString(),
         notes: params.notes,
@@ -117,13 +118,17 @@ export function useDeleteEvent() {
 }
 
 export function useUpdateEvent() {
-  const fn = useCallback(async (params: { eventId: number; playerId: number | null; relatedPlayerId: number | null }) => {
+  const fn = useCallback(async (params: { eventId: number; playerId: number | null; relatedPlayerId: number | null; secondaryAssisterId?: number | null }) => {
+    const updatePayload: Record<string, any> = {
+      player_id: params.playerId,
+      related_player_id: params.relatedPlayerId,
+    }
+    if (params.secondaryAssisterId !== undefined) {
+      updatePayload.secondary_assister_id = params.secondaryAssisterId
+    }
     const { data, error } = await supabase
       .from('game_events')
-      .update({
-        player_id: params.playerId,
-        related_player_id: params.relatedPlayerId,
-      })
+      .update(updatePayload)
       .eq('id', params.eventId)
       .select()
     if (error) throw new Error(error.message)

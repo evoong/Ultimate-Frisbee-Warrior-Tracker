@@ -78,7 +78,7 @@ type Game = {
   id: number; opponent: string; game_date: string; game_time: string; game_type: string
   our_score: number; their_score: number; result: string; outcome_override: string | null; notes: string | null; season_id: number | null
 }
-type GameEvent = { id: number; event_type: string; event_timestamp: string; player_id: number | null; related_player_id: number | null; notes: string | null }
+type GameEvent = { id: number; event_type: string; event_timestamp: string; player_id: number | null; related_player_id: number | null; secondary_assister_id?: number | null; notes: string | null }
 type Player = { id: number; display_name: string; position: string | null; gender_match: string | null; is_sub: boolean | null; photo_url: string | null }
 type Season = { id: number; name: string; year: number; organizer: string | null; location: string | null; league_name: string | null; default_game_time: string | null; start_date: string | null; end_date: string | null }
 type SeasonMeta = { organizers: string[]; names: string[]; years: number[]; locations: string[] }
@@ -206,6 +206,7 @@ export default function Schedule() {
   const [editingEventId, setEditingEventId] = useState<number | null>(null)
   const [editScorerId, setEditScorerId] = useState<string>('')
   const [editAssisterId, setEditAssisterId] = useState<string>('')
+  const [editSecondaryAssisterId, setEditSecondaryAssisterId] = useState<string>('')
 
   // Drag-to-reorder Recent Activity. dragOrder mirrors the list with the
   // dragged row moved to its live position as the pointer crosses each
@@ -226,6 +227,7 @@ export default function Schedule() {
   const [newEventType, setNewEventType] = useState<string>('Goal')
   const [newScorerId, setNewScorerId] = useState<string>('')
   const [newAssisterId, setNewAssisterId] = useState<string>('')
+  const [newSecondaryAssisterId, setNewSecondaryAssisterId] = useState<string>('')
   const autoOpenedRef = useRef(false)
 
   // Game notes editing
@@ -590,6 +592,7 @@ export default function Schedule() {
     setNewEventType('Goal')
     setNewScorerId('')
     setNewAssisterId('')
+    setNewSecondaryAssisterId('')
     setAddingLineupName(false)
     setNewLineupNameInput('')
     setSavingTemplateOpen(false)
@@ -877,6 +880,7 @@ export default function Schedule() {
     setEditingEventId(event.id)
     setEditScorerId(event.player_id ? String(event.player_id) : '__none__')
     setEditAssisterId(event.related_player_id ? String(event.related_player_id) : '__none__')
+    setEditSecondaryAssisterId(event.secondary_assister_id ? String(event.secondary_assister_id) : '__none__')
   }
 
   const handleSaveEventEdit = async () => {
@@ -885,6 +889,7 @@ export default function Schedule() {
       eventId: editingEventId,
       playerId: editScorerId && editScorerId !== '__none__' ? parseInt(editScorerId) : null,
       relatedPlayerId: editAssisterId && editAssisterId !== '__none__' ? parseInt(editAssisterId) : null,
+      secondaryAssisterId: editSecondaryAssisterId && editSecondaryAssisterId !== '__none__' ? parseInt(editSecondaryAssisterId) : null,
     })
     track('game_event_updated', { game_id: selectedGame.id, event_id: editingEventId })
     setEditingEventId(null)
@@ -904,6 +909,7 @@ export default function Schedule() {
         gameId: selectedGame.id,
         playerId: resolveNewPlayerId(newScorerId),
         relatedPlayerId: resolveNewPlayerId(newAssisterId),
+        secondaryAssisterId: resolveNewPlayerId(newSecondaryAssisterId),
         eventType: newEventType,
         organizationId: currentTeamId,
       })
@@ -976,14 +982,37 @@ export default function Schedule() {
     setNewAssisterId(playerId)
   }
 
+  const handleAddSecondaryAssister = async (name: string) => {
+    if (!selectedGame) return
+    const result = await createPlayerForGame({ display_name: name, gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentTeamId, lineupName: defaultLineupName })
+    if (result) {
+      track('player_created', { game_id: selectedGame.id, source: 'quick_add' })
+      await refreshRoster()
+      fetchAttendance({ gameId: selectedGame.id })
+      fetchLineups({ gameId: selectedGame.id })
+      setNewSecondaryAssisterId((result as { id: number }).id.toString())
+    }
+  }
+
+  const handleAddExistingSecondaryAssister = async (playerId: string) => {
+    if (!selectedGame) return
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentTeamId, lineupName: defaultLineupName })
+    await refreshRoster()
+    fetchAttendance({ gameId: selectedGame.id })
+    fetchLineups({ gameId: selectedGame.id })
+    setNewSecondaryAssisterId(playerId)
+  }
+
   const handleDeleteSub = async (playerId: string) => {
     if (!selectedGame) return
     await deleteSubPlayer({ playerId: parseInt(playerId), gameId: selectedGame.id, seasonId: selectedGameSeasonId })
     await refreshRoster()
     if (newScorerId === playerId) setNewScorerId('')
     if (newAssisterId === playerId) setNewAssisterId('')
+    if (newSecondaryAssisterId === playerId) setNewSecondaryAssisterId('')
     if (editScorerId === playerId) setEditScorerId('')
     if (editAssisterId === playerId) setEditAssisterId('')
+    if (editSecondaryAssisterId === playerId) setEditSecondaryAssisterId('')
   }
 
   // Clicking a candidate in "Select players..." adds them immediately —
@@ -1542,6 +1571,20 @@ export default function Schedule() {
                         className="w-full h-9 text-sm bg-background border-border"
                       />
                     </div>
+                    <div className="grid grid-cols-[60px_1fr] items-center gap-2">
+                      <span className="text-xs font-medium text-muted-foreground text-right">2nd</span>
+                      <PlayerCombobox
+                        players={attendingPlayerOptions}
+                        otherPlayers={otherPlayerOptions}
+                        value={newSecondaryAssisterId || '__none__'}
+                        onValueChange={setNewSecondaryAssisterId}
+                        onAddPlayer={handleAddSecondaryAssister}
+                        onAddExistingPlayer={handleAddExistingSecondaryAssister}
+                        onDeletePlayer={handleDeleteSub}
+                        placeholder="None"
+                        className="w-full h-9 text-sm bg-background border-border"
+                      />
+                    </div>
                   </>
                 )}
 
@@ -1605,6 +1648,7 @@ export default function Schedule() {
                   {(dragOrder ?? gameEvents).map((event, i) => {
                     const scorer = getPlayerName(event.player_id)
                     const assister = getPlayerName(event.related_player_id)
+                    const secondaryAssister = getPlayerName(event.secondary_assister_id ?? null)
                     const isGoal = event.event_type === 'Goal'
                     const isOpponentGoal = event.event_type === 'Opponent Goal'
                     const isTurnover = isTurnoverEvent(event.event_type)
@@ -1622,6 +1666,10 @@ export default function Schedule() {
                             <div className="space-y-1">
                               <Label className="text-xs">Assister / Related</Label>
                               <PlayerCombobox players={playerOptions} value={editAssisterId || '__none__'} onValueChange={setEditAssisterId} placeholder="Select player..." className="w-full bg-card border-border" />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">2nd Assister</Label>
+                              <PlayerCombobox players={playerOptions} value={editSecondaryAssisterId || '__none__'} onValueChange={setEditSecondaryAssisterId} placeholder="Select player..." className="w-full bg-card border-border" />
                             </div>
                             <div className="flex gap-2">
                               <Button size="sm" onClick={handleSaveEventEdit} className="flex-1 bg-primary text-primary-foreground h-8 text-xs"><FloppyDisk className="w-3 h-3 mr-1" />Save</Button>
@@ -1653,7 +1701,13 @@ export default function Schedule() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="font-medium text-foreground text-sm">
-                            {isGoal && (<>{scorer ?? 'Our Goal'}{assister && <span className="text-xs text-muted-foreground ml-1">(from {assister})</span>}</>)}
+                            {isGoal && (
+                              <>
+                                {scorer ?? 'Our Goal'}
+                                {assister && <span className="text-xs text-muted-foreground ml-1">(from {assister}{secondaryAssister && `, 2nd: ${secondaryAssister}`})</span>}
+                                {!assister && secondaryAssister && <span className="text-xs text-muted-foreground ml-1">(2nd: {secondaryAssister})</span>}
+                              </>
+                            )}
                             {isOpponentGoal && 'Opponent Goal'}
                             {isTurnover && <>{scorer ?? 'Unknown'} turned it over</>}
                             {!isGoal && !isOpponentGoal && !isTurnover && event.event_type}
