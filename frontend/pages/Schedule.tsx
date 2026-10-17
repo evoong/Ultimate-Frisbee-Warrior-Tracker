@@ -1518,18 +1518,6 @@ export default function Schedule() {
             </button>
             {showAddEvent && (
               <CardContent className="pt-0 space-y-3">
-                <div className="grid grid-cols-[60px_1fr] items-center gap-2">
-                  <span className="text-xs font-medium text-muted-foreground text-right">Event</span>
-                  <Select value={newEventType} onValueChange={setNewEventType}>
-                    <SelectTrigger className="h-9 text-sm bg-background text-foreground border-border"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {(eventTypes as { id: number; name: string }[] | undefined)?.map(et => (
-                        <SelectItem key={et.id} value={et.name}>{et.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
                 <div className="flex items-center bg-muted p-1 rounded-lg w-fit mb-2">
                   <button
                     type="button"
@@ -1548,64 +1536,34 @@ export default function Schedule() {
                 </div>
 
                 <div className="grid grid-cols-[60px_1fr] items-center gap-2">
-                  <span className="text-xs font-medium text-muted-foreground text-right">{isNewEventGoalLike ? 'Scorer' : 'Player'}</span>
+                  <span className="text-xs font-medium text-muted-foreground text-right">Event</span>
                   {selectionMode === 'combobox' ? (
-                    <PlayerCombobox
-                      players={attendingPlayerOptions}
-                      otherPlayers={otherPlayerOptions}
-                      value={newScorerId || '__none__'}
-                      onValueChange={setNewScorerId}
-                      onAddPlayer={handleAddPlayer}
-                      onAddExistingPlayer={handleAddExistingScorer}
-                      onDeletePlayer={handleDeleteSub}
-                      placeholder="None"
-                      className="w-full h-9 text-sm bg-background border-border"
-                    />
+                    <Select value={newEventType} onValueChange={setNewEventType}>
+                      <SelectTrigger className="h-9 text-sm bg-background text-foreground border-border"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {(eventTypes as { id: number; name: string }[] | undefined)?.map(et => (
+                          <SelectItem key={et.id} value={et.name}>{et.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   ) : (
                     <div className="flex flex-wrap gap-1">
-                      {attendingPlayerOptions.map(p => (
-                        <Button key={p.id} variant={newScorerId === p.id.toString() ? 'default' : 'secondary'} size="sm" className="h-7 text-xs" onClick={() => setNewScorerId(p.id.toString())}>{p.label}</Button>
+                      {(eventTypes as { id: number; name: string }[] | undefined)?.map(et => (
+                        <Button key={et.id} variant={newEventType === et.name ? 'default' : 'secondary'} size="sm" className="h-7 text-xs" onClick={() => setNewEventType(et.name)}>{et.name}</Button>
                       ))}
                     </div>
                   )}
                 </div>
 
-                {isNewEventGoalLike && newScorerId !== '__opponent__' && (
-                  <>
-                    <div className="flex items-center justify-center">
-                      <button
-                        onClick={() => { const tmp = newScorerId; setNewScorerId(newAssisterId); setNewAssisterId(tmp) }}
-                        title="Swap Scorer ↔ Assister"
-                        aria-label="Swap scorer and assister"
-                        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-0.5 rounded hover:bg-accent"
-                      >
-                        <ArrowsLeftRight className="w-3 h-3" />
-                        <span>swap</span>
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-[60px_1fr] items-center gap-2">
-                      <span className="text-xs font-medium text-muted-foreground text-right">Assister</span>
-                      {selectionMode === 'combobox' ? (
-                        <PlayerCombobox
-                          players={attendingPlayerOptions}
-                          otherPlayers={otherPlayerOptions}
-                          value={newAssisterId || '__none__'}
-                          onValueChange={setNewAssisterId}
-                          onAddPlayer={handleAddAssister}
-                          onAddExistingPlayer={handleAddExistingAssister}
-                          onDeletePlayer={handleDeleteSub}
-                          placeholder="None"
-                          className="w-full h-9 text-sm bg-background border-border"
-                        />
-                      ) : (
-                        <div className="flex flex-wrap gap-1">
-                          {attendingPlayerOptions.map(p => (
-                            <Button key={p.id} variant={newAssisterId === p.id.toString() ? 'default' : 'secondary'} size="sm" className="h-7 text-xs" onClick={() => setNewAssisterId(p.id.toString())}>{p.label}</Button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <div className="grid grid-cols-[60px_1fr] items-center gap-2">
+                {isNewEventGoalLike && newScorerId !== '__opponent__' ? (
+                  // Possession chain: disc moves 2nd assist -> assist -> scorer, top to bottom,
+                  // in the order it was actually thrown. The dots and connecting line are
+                  // real sequence information (who touched it, in order), not decoration.
+                  <div className="relative pl-6 space-y-3">
+                    <div className="absolute left-[7px] top-[14px] bottom-[18px] w-px bg-border" aria-hidden="true" />
+
+                    <div className="relative grid grid-cols-[52px_1fr] items-center gap-2">
+                      <span className="absolute -left-6 top-1/2 -translate-y-1/2 w-[9px] h-[9px] rounded-full border-2 border-border bg-card" aria-hidden="true" />
                       <span className="text-xs font-medium text-muted-foreground text-right">2nd</span>
                       {selectionMode === 'combobox' ? (
                         <PlayerCombobox
@@ -1627,7 +1585,90 @@ export default function Schedule() {
                         </div>
                       )}
                     </div>
-                  </>
+
+                    <div className="relative grid grid-cols-[52px_1fr] items-center gap-2">
+                      <span className="absolute -left-6 top-1/2 -translate-y-1/2 w-[9px] h-[9px] rounded-full border-2 border-border bg-card" aria-hidden="true" />
+                      <span className="text-xs font-medium text-muted-foreground text-right">Assist</span>
+                      <div className="flex items-center gap-1">
+                        <div className="flex-1">
+                          {selectionMode === 'combobox' ? (
+                            <PlayerCombobox
+                              players={attendingPlayerOptions}
+                              otherPlayers={otherPlayerOptions}
+                              value={newAssisterId || '__none__'}
+                              onValueChange={setNewAssisterId}
+                              onAddPlayer={handleAddAssister}
+                              onAddExistingPlayer={handleAddExistingAssister}
+                              onDeletePlayer={handleDeleteSub}
+                              placeholder="None"
+                              className="w-full h-9 text-sm bg-background border-border"
+                            />
+                          ) : (
+                            <div className="flex flex-wrap gap-1">
+                              {attendingPlayerOptions.map(p => (
+                                <Button key={p.id} variant={newAssisterId === p.id.toString() ? 'default' : 'secondary'} size="sm" className="h-7 text-xs" onClick={() => setNewAssisterId(p.id.toString())}>{p.label}</Button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => { const tmp = newScorerId; setNewScorerId(newAssisterId); setNewAssisterId(tmp) }}
+                          title="Swap Scorer and Assister"
+                          aria-label="Swap scorer and assister"
+                          className="shrink-0 w-9 h-9 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                        >
+                          <ArrowsLeftRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="relative grid grid-cols-[52px_1fr] items-center gap-2">
+                      <span className="absolute -left-6 top-1/2 -translate-y-1/2 w-[9px] h-[9px] rounded-full bg-green-600 dark:bg-green-500" aria-hidden="true" />
+                      <span className="text-xs font-medium text-foreground text-right">Scorer</span>
+                      {selectionMode === 'combobox' ? (
+                        <PlayerCombobox
+                          players={attendingPlayerOptions}
+                          otherPlayers={otherPlayerOptions}
+                          value={newScorerId || '__none__'}
+                          onValueChange={setNewScorerId}
+                          onAddPlayer={handleAddPlayer}
+                          onAddExistingPlayer={handleAddExistingScorer}
+                          onDeletePlayer={handleDeleteSub}
+                          placeholder="None"
+                          className="w-full h-9 text-sm bg-background border-border"
+                        />
+                      ) : (
+                        <div className="flex flex-wrap gap-1">
+                          {attendingPlayerOptions.map(p => (
+                            <Button key={p.id} variant={newScorerId === p.id.toString() ? 'default' : 'secondary'} size="sm" className="h-7 text-xs" onClick={() => setNewScorerId(p.id.toString())}>{p.label}</Button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-[60px_1fr] items-center gap-2">
+                    <span className="text-xs font-medium text-muted-foreground text-right">Player</span>
+                    {selectionMode === 'combobox' ? (
+                      <PlayerCombobox
+                        players={attendingPlayerOptions}
+                        otherPlayers={otherPlayerOptions}
+                        value={newScorerId || '__none__'}
+                        onValueChange={setNewScorerId}
+                        onAddPlayer={handleAddPlayer}
+                        onAddExistingPlayer={handleAddExistingScorer}
+                        onDeletePlayer={handleDeleteSub}
+                        placeholder="None"
+                        className="w-full h-9 text-sm bg-background border-border"
+                      />
+                    ) : (
+                      <div className="flex flex-wrap gap-1">
+                        {attendingPlayerOptions.map(p => (
+                          <Button key={p.id} variant={newScorerId === p.id.toString() ? 'default' : 'secondary'} size="sm" className="h-7 text-xs" onClick={() => setNewScorerId(p.id.toString())}>{p.label}</Button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 <div className="border-t border-border" />
