@@ -54,7 +54,7 @@ npm run dev
 
 Use this for migrations, RLS tests, gateway integration tests, destructive cases — **never touches production**.
 
-**On the Ubuntu dev box this mode is disabled by default**: the stack costs ~1GB RAM across 10 Docker containers and is kept stopped. Do not start it unless the human explicitly asks for local QA; feature work against cloud Supabase needs no local stack. When it is used, stop it after: `npx supabase stop`.
+**On the Ubuntu dev box (bootyhole-vm) this mode is removed** (2026-10-17): the local stack, its volume and images were deleted to save RAM, and testing there uses production Supabase through the root `.env` (see CLAUDE.md step 6 for the safety rules). Do not run `npx supabase start` or any `qa:*` / `db:*` script on that box. The steps below are for other machines only.
 
 ### Prerequisites
 - Docker Desktop running

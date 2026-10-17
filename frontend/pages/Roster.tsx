@@ -305,6 +305,7 @@ export default function Roster() {
     if (currentTeamId == null) return
     fetchAllSeasons({ organizationId: currentTeamId })
     fetchSeasonsWithGames({ organizationId: currentTeamId })
+    fetchSeasonsMeta({ organizationId: currentTeamId })
   }, [currentTeamId])
 
   useEffect(() => {
@@ -585,6 +586,7 @@ export default function Roster() {
     setRosterSeasonIds([created.id])
     setShowCreateSeason(false)
     setNewSeasonData({ name: '', year: new Date().getFullYear().toString(), organizer: '', location: '' })
+    setNewSeasonOrganizerMode('select')
   }
 
   const toggleManagePlayer = (playerId: number) => {
@@ -1546,7 +1548,17 @@ export default function Roster() {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label className="text-xs">Organizer</Label>
-                <Input value={newSeasonData.organizer} onChange={e => setNewSeasonData(d => ({ ...d, organizer: e.target.value }))} placeholder="Optional" className="h-9 text-sm bg-background border-border" />
+                {newSeasonOrganizerMode === 'select' && (seasonsMeta as SeasonMeta | undefined)?.organizers && (seasonsMeta as SeasonMeta | undefined)!.organizers.length > 0 ? (
+                  <Select value={newSeasonData.organizer} onValueChange={v => v === '__new__' ? setNewSeasonOrganizerMode('new') : setNewSeasonData(d => ({ ...d, organizer: v }))}>
+                    <SelectTrigger className="h-9 text-sm bg-background border-border text-foreground"><SelectValue placeholder="Select organizer" /></SelectTrigger>
+                    <SelectContent>
+                      {((seasonsMeta as SeasonMeta).organizers).map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                      <SelectItem value="__new__"><span className="text-primary">+ New organizer</span></SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input value={newSeasonData.organizer} onChange={e => setNewSeasonData(d => ({ ...d, organizer: e.target.value }))} placeholder="Optional" className="h-9 text-sm bg-background border-border" />
+                )}
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Name *</Label>

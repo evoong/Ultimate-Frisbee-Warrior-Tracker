@@ -75,6 +75,6 @@ npx supabase stop          # stop containers (keeps DB volume)
 npx supabase stop --no-backup  # stop and wipe the local DB volume
 ```
 
-**On the Ubuntu dev box this stack is disabled by default** — keep it stopped unless actively running local QA.
+**On the Ubuntu dev box (bootyhole-vm) this stack was removed (2026-10-17)**: testing there uses production Supabase via the root `.env`; see CLAUDE.md step 6.
 
 See `docs/QA_ENVIRONMENT.md` for details.

@@ -1530,9 +1530,21 @@ export default function Schedule() {
                   </Select>
                 </div>
 
-                <div className="flex gap-2 mb-2">
-                  <Button variant={selectionMode === 'combobox' ? 'default' : 'outline'} size="sm" className="h-7 text-xs" onClick={() => setSelectionMode('combobox')}>Dropdown</Button>
-                  <Button variant={selectionMode === 'buttons' ? 'default' : 'outline'} size="sm" className="h-7 text-xs" onClick={() => setSelectionMode('buttons')}>Buttons</Button>
+                <div className="flex items-center bg-muted p-1 rounded-lg w-fit mb-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectionMode('combobox')}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${selectionMode === 'combobox' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    Dropdown
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectionMode('buttons')}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${selectionMode === 'buttons' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    Buttons
+                  </button>
                 </div>
 
                 <div className="grid grid-cols-[60px_1fr] items-center gap-2">
