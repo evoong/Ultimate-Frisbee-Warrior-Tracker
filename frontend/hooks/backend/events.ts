@@ -66,6 +66,24 @@ export function useGetEventTypes() {
   return useApiCall<any[]>(fn)
 }
 
+// Lets a captain type a one-off event name (e.g. "Injury sub", "Timeout")
+// from the Add Event "More" menu. It's a real event_types row, not a
+// throwaway string, so it shows up in that same menu for every future game,
+// not just this one -- category is left null since these are ad hoc, not
+// pre-classified as Offense/Defense/Special like the seeded types.
+export function useCreateEventType() {
+  const fn = useCallback(async (name: string) => {
+    const { data, error } = await supabase
+      .from('event_types')
+      .insert({ name })
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data
+  }, [])
+  return useApiCall<any, string>(fn)
+}
+
 export function useCreateGoalEvent() {
   const fn = useCallback(async (params: { organizationId: number | null; gameId: number; playerId: number | null; relatedPlayerId: number | null; secondaryAssisterId?: number | null; eventType?: string; notes?: string }) => {
     const { data, error } = await supabase

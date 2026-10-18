@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useGetGames, useGetGame, useCreateGame, useUpdateGame, useDeleteGame, useGetLineups, useAddToLineup, useRemoveFromLineup, useMoveLineupEntry, useUpdateLineupSortOrder, useUpdateLineupRole, useGetLineupGroups, useCreateLineupGroup, useRenameLineupGroup, useReorderLineupGroups, useDeleteLineupGroup, useGetRecentLineupGames, useGetLineupTemplates, useGetLineupTemplateDetail, useSaveLineupTemplate, useDeleteLineupTemplate, type LineupGroup, type LineupTemplate, type RecentLineupGame } from '../hooks/backend/games'
-import { useGetGameEvents, useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useUpdateEventTimestamp, useGetEventTypes } from '../hooks/backend/events'
+import { useGetGameEvents, useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useUpdateEventTimestamp, useGetEventTypes, useCreateEventType } from '../hooks/backend/events'
 import { useGetSeasonRoster, useGetPlayersNotInSeason, useCreatePlayerForGame, useDeleteSubPlayer, useAddPlayerToGame } from '../hooks/backend/players'
 import { useGetAllSeasons, useGetSeasons, useCreateSeason, useUpdateSeason, useGetSeasonsMeta, useGetPlayerStats } from '../hooks/backend/stats'
 import { useGetGameAttendance } from '../hooks/backend/attendance'
@@ -22,7 +22,7 @@ import { Button } from '../lib/shadcn/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../lib/shadcn/dialog'
 import { Input } from '../lib/shadcn/input'
 import { Label } from '../lib/shadcn/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../lib/shadcn/select'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectSeparator } from '../lib/shadcn/select'
 import { Badge } from '../lib/shadcn/badge'
 import { Popover, PopoverContent, PopoverTrigger } from '../lib/shadcn/popover'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '../lib/shadcn/command'
@@ -97,12 +97,27 @@ function seasonLabel(s: { name: string; year: number; organizer: string | null }
 // you're about to tap is usually already in view, with the rest a swipe
 // away rather than hidden. 'Opponent' and other non-roster sentinel ids
 // (anything non-numeric) get a plain dashed-outline chip, no avatar.
-function PlayerChipGrid({ options, value, onChange, photoMap }: {
+function PlayerChipGrid({ options, value, onChange, photoMap, wrap }: {
   options: { id: string; label: string }[]
   value: string
   onChange: (id: string) => void
   photoMap?: Map<number, { photo_url: string | null; gender_match: string | null }>
+  // Default: one horizontally-scrolling row (the Add Event chain rows, which
+  // sit three deep already and can't each afford more height). Pass wrap
+  // for a field that's alone on its row (the standalone "Player" selector
+  // for non-goal events) -- wraps to as many rows as the roster needs
+  // instead of a single scrolling strip; no inner scroll, it just grows.
+  wrap?: boolean
 }) {
+  if (wrap) {
+    return (
+      <div className="flex flex-wrap gap-x-2 gap-y-1 -mx-1 px-1">
+        {options.map(opt => (
+          <PlayerChip key={opt.id} opt={opt} selected={value === opt.id} onChange={onChange} photoMap={photoMap} />
+        ))}
+      </div>
+    )
+  }
   return (
     <div
       className="flex gap-2 overflow-x-auto overscroll-x-contain pb-1 -mx-1 px-1"
@@ -111,44 +126,52 @@ function PlayerChipGrid({ options, value, onChange, photoMap }: {
         WebkitMaskImage: 'linear-gradient(to right, transparent, black 12px, black calc(100% - 20px), transparent)',
       }}
     >
-      {options.map(opt => {
-        const selected = value === opt.id
-        const pid = parseInt(opt.id)
-        const info = !isNaN(pid) ? photoMap?.get(pid) : undefined
-        const isSentinel = isNaN(pid)
-        return (
-          <button
-            key={opt.id}
-            type="button"
-            onClick={() => onChange(opt.id)}
-            title={opt.label}
-            className={`flex flex-col items-center gap-1 w-14 shrink-0 rounded-md py-1.5 transition-colors ${selected ? 'bg-accent' : 'hover:bg-accent/50'}`}
-          >
-            {isSentinel ? (
-              <div className={`w-9 h-9 rounded-full border-2 border-dashed flex items-center justify-center ${selected ? 'border-primary text-primary' : 'border-muted-foreground/40 text-muted-foreground'}`}>
-                <Minus className="w-3.5 h-3.5" />
-              </div>
-            ) : info?.photo_url ? (
-              <img
-                src={info.photo_url}
-                alt={opt.label}
-                draggable={false}
-                className={`w-9 h-9 rounded-full object-cover select-none border-2 ${selected ? 'border-primary' : 'border-transparent'}`}
-              />
-            ) : (
-              <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-semibold select-none border-2 ${selected ? 'bg-primary/15 border-primary text-primary' : 'bg-muted border-transparent text-muted-foreground'}`}>
-                {initials(opt.label)}
-              </div>
-            )}
-            <span className={`text-[10px] leading-tight text-center truncate w-full ${selected ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
-              {opt.label.split(' ')[0]}
-            </span>
-          </button>
-        )
-      })}
+      {options.map(opt => (
+        <PlayerChip key={opt.id} opt={opt} selected={value === opt.id} onChange={onChange} photoMap={photoMap} />
+      ))}
     </div>
   )
 }
+
+function PlayerChip({ opt, selected, onChange, photoMap }: {
+  opt: { id: string; label: string }
+  selected: boolean
+  onChange: (id: string) => void
+  photoMap?: Map<number, { photo_url: string | null; gender_match: string | null }>
+}) {
+  const pid = parseInt(opt.id)
+  const info = !isNaN(pid) ? photoMap?.get(pid) : undefined
+  const isSentinel = isNaN(pid)
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(opt.id)}
+      title={opt.label}
+      className={`flex flex-col items-center gap-1 w-14 shrink-0 rounded-md py-1.5 transition-colors ${selected ? 'bg-accent' : 'hover:bg-accent/50'}`}
+    >
+      {isSentinel ? (
+        <div className={`w-9 h-9 rounded-full border-2 border-dashed flex items-center justify-center ${selected ? 'border-primary text-primary' : 'border-muted-foreground/40 text-muted-foreground'}`}>
+          <Minus className="w-3.5 h-3.5" />
+        </div>
+      ) : info?.photo_url ? (
+        <img
+          src={info.photo_url}
+          alt={opt.label}
+          draggable={false}
+          className={`w-9 h-9 rounded-full object-cover select-none border-2 ${selected ? 'border-primary' : 'border-transparent'}`}
+        />
+      ) : (
+        <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-semibold select-none border-2 ${selected ? 'bg-primary/15 border-primary text-primary' : 'bg-muted border-transparent text-muted-foreground'}`}>
+          {initials(opt.label)}
+        </div>
+      )}
+      <span className={`text-[10px] leading-tight text-center truncate w-full ${selected ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
+        {opt.label.split(' ')[0]}
+      </span>
+    </button>
+  )
+}
+
 
 // A game counts as "upcoming" until its actual start time passes, not just
 // its calendar date, so a game later today still shows as upcoming.
@@ -207,12 +230,18 @@ export default function Schedule() {
   const { trigger: updateEvent } = useUpdateEvent()
   const { trigger: updateEventTimestamp } = useUpdateEventTimestamp()
   const { data: eventTypes, trigger: fetchEventTypes } = useGetEventTypes()
+  const { trigger: createEventType } = useCreateEventType()
   // These event types still exist (Opponent Goal backs the "They Score"
   // button, the others are historical data other games may reference) but
-  // are hidden from manual selection here per request -- the Event picker
-  // only needs to offer the ones a captain actually logs mid-game.
-  const RETIRED_EVENT_TYPES = new Set(['Caught OB', 'Drop', 'Throwaway', 'Pull', 'Opponent Goal'])
-  const selectableEventTypes = (eventTypes as { id: number; name: string }[] | undefined)?.filter(et => !RETIRED_EVENT_TYPES.has(et.name))
+  // are hidden from the main Event picker -- the 3 buttons shown by default
+  // are the ones a captain logs on nearly every point. Everything else is
+  // one tap away behind the "More" control below, not gone.
+  const HIDDEN_EVENT_TYPES = new Set(['Assist', 'Caught OB', 'Drop', 'Throwaway', 'Pull', 'Opponent Goal'])
+  const selectableEventTypes = (eventTypes as { id: number; name: string }[] | undefined)?.filter(et => !HIDDEN_EVENT_TYPES.has(et.name))
+  const hiddenEventTypes = (eventTypes as { id: number; name: string }[] | undefined)?.filter(et => HIDDEN_EVENT_TYPES.has(et.name))
+  const [moreEventTypesOpen, setMoreEventTypesOpen] = useState(false)
+  const [customEventTypeInput, setCustomEventTypeInput] = useState('')
+  const [customEventTypeSaving, setCustomEventTypeSaving] = useState(false)
   const { data: leagueTeams, trigger: fetchLeagueTeams } = useGetLeagueTeams()
   const playerLink = useMyPlayerLink()
   const playerSeasonIds = useMyPlayerSeasonIds()
@@ -296,7 +325,7 @@ export default function Schedule() {
   const [newScorerId, setNewScorerId] = useState<string>('')
   const [newAssisterId, setNewAssisterId] = useState<string>('')
   const [newSecondaryAssisterId, setNewSecondaryAssisterId] = useState<string>('')
-  const [selectionMode, setSelectionMode] = useState<'combobox' | 'buttons'>('combobox')
+  const [selectionMode, setSelectionMode] = useState<'combobox' | 'buttons'>('buttons')
   const autoOpenedRef = useRef(false)
 
   // Game notes editing
@@ -967,6 +996,31 @@ export default function Schedule() {
 
   const resolveNewPlayerId = (id: string) => (id && id !== '__none__' && id !== '__opponent__') ? parseInt(id) : null
 
+  const handleCreateCustomEventType = async () => {
+    const name = customEventTypeInput.trim()
+    if (!name) return
+    // Reuse an existing type (case-insensitive) instead of creating a
+    // near-duplicate if the captain typed something that already exists,
+    // e.g. typing "fouls" when "Fouls" is already a row.
+    const existing = (eventTypes as { id: number; name: string }[] | undefined)?.find(
+      et => et.name.toLowerCase() === name.toLowerCase()
+    )
+    if (existing) {
+      setNewEventType(existing.name)
+    } else {
+      setCustomEventTypeSaving(true)
+      try {
+        await createEventType(name)
+        await fetchEventTypes()
+        setNewEventType(name)
+      } finally {
+        setCustomEventTypeSaving(false)
+      }
+    }
+    setCustomEventTypeInput('')
+    setMoreEventTypesOpen(false)
+  }
+
   const handleAddEvent = async () => {
     if (!selectedGame) return
     // Picking "— Opponent —" as scorer on a goal means the other team scored
@@ -1368,27 +1422,26 @@ export default function Schedule() {
   const newEventPlayerOptions = [{ id: '__opponent__', label: 'Opponent' }, ...playerOptions]
   const isNewEventGoalLike = ['Goal', 'Caught OB'].includes(newEventType)
 
-  // Scorer/assister quick-select should only offer players placed in a
-  // lineup for this game (attendance is a pure read of lineup membership —
-  // see useGetGameAttendance). A missing row defaults to "attending" for a
-  // full roster player (they may just not have been placed in a lineup
-  // yet), but NOT for a sub: a sub is only ever part of a game once
-  // explicitly added to it (see useCreatePlayerForGame/useAddPlayerToGame),
-  // so no lineup row for a sub means they were never part of this game, not
-  // that they're attending by default. The Edit Event dialog still uses the
-  // full roster so past events referencing a player who's since been
-  // removed from the lineup stay editable.
+  // Scorer/assister quick-select is scoped to players actually placed in a
+  // lineup for this specific game (attendance is a pure read of lineup
+  // membership -- see useGetGameAttendance). No row at all means they were
+  // never put in a line for this game, so they're excluded -- a player who
+  // didn't play this game (e.g. on the roster but not in this matchup's
+  // lineups) must not be selectable here, even though they're a full
+  // roster member. The Edit Event dialog still uses the full roster so
+  // past events referencing a player who's since been removed from the
+  // lineup stay editable.
   const attendingPlayerIds = new Set(
     ((players as Player[] | undefined) ?? [])
       .filter(p => {
         const row = (attendanceRows as { player_id: number; in: boolean }[] | undefined)?.find(r => r.player_id === p.id)
-        return row ? row.in : !p.is_sub
+        return row ? row.in : false
       })
       .map(p => p.id)
   )
   const attendingPlayerOptions = [
-    { id: '__opponent__', label: 'Opponent' },
     ...playerOptions.filter(p => attendingPlayerIds.has(parseInt(p.id))),
+    { id: '__opponent__', label: 'Opponent' },
   ]
 
   const otherPlayerOptions = ((otherPlayers as { id: number; display_name: string }[] | undefined) ?? [])
@@ -1414,7 +1467,7 @@ export default function Schedule() {
     const rankA = lineupOrderByPlayerId.get(parseInt(a.id)) ?? Infinity
     const rankB = lineupOrderByPlayerId.get(parseInt(b.id)) ?? Infinity
     if (rankA !== rankB) return rankA - rankB
-    return 0 // stable: keeps Opponent first, unlineupped players in roster order
+    return 0 // stable: keeps Opponent last, unlineupped players in roster order
   })
 
   // This season's goals/assists per player (already fetched for the lineup
@@ -1431,8 +1484,8 @@ export default function Schedule() {
   }
   const rankByStat = (options: typeof attendingPlayerOptions, statByPlayerId: Map<number, number>) =>
     [...options].sort((a, b) => {
-      if (a.id === '__opponent__') return -1
-      if (b.id === '__opponent__') return 1
+      if (a.id === '__opponent__') return 1
+      if (b.id === '__opponent__') return -1
       const statA = statByPlayerId.get(parseInt(a.id)) ?? 0
       const statB = statByPlayerId.get(parseInt(b.id)) ?? 0
       if (statA !== statB) return statB - statA
@@ -1661,13 +1714,68 @@ export default function Schedule() {
                         {selectableEventTypes?.map(et => (
                           <SelectItem key={et.id} value={et.name}>{et.name}</SelectItem>
                         ))}
+                        {hiddenEventTypes && hiddenEventTypes.length > 0 && (
+                          <>
+                            <SelectSeparator />
+                            {hiddenEventTypes.map(et => (
+                              <SelectItem key={et.id} value={et.name}>{et.name}</SelectItem>
+                            ))}
+                          </>
+                        )}
                       </SelectContent>
                     </Select>
                   ) : (
-                    <div className="flex flex-wrap gap-1">
+                    <div className="flex flex-wrap items-center gap-1">
                       {selectableEventTypes?.map(et => (
                         <Button key={et.id} variant={newEventType === et.name ? 'default' : 'secondary'} size="sm" className="h-7 text-xs" onClick={() => setNewEventType(et.name)}>{et.name}</Button>
                       ))}
+                      {/* The currently active type stays visible even when it's one of
+                          the hidden ones, so picking something from "More" doesn't make
+                          the selection disappear from view. */}
+                      {hiddenEventTypes?.find(et => et.name === newEventType) && (
+                        <Button variant="default" size="sm" className="h-7 text-xs" onClick={() => setMoreEventTypesOpen(true)}>{newEventType}</Button>
+                      )}
+                      <Popover open={moreEventTypesOpen} onOpenChange={setMoreEventTypesOpen}>
+                        <PopoverTrigger asChild>
+                          <Button variant="outline" size="sm" className="h-7 text-xs gap-1 border-dashed">
+                            <Plus className="w-3 h-3" />
+                            More
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-52 p-1" align="start">
+                          <div className="flex flex-col">
+                            {hiddenEventTypes?.map(et => (
+                              <button
+                                key={et.id}
+                                type="button"
+                                onClick={() => { setNewEventType(et.name); setMoreEventTypesOpen(false) }}
+                                className={`text-left text-sm px-2 py-1.5 rounded ${newEventType === et.name ? 'bg-accent text-accent-foreground' : 'hover:bg-accent hover:text-accent-foreground'}`}
+                              >
+                                {et.name}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="border-t border-border mt-1 pt-1 px-1 flex items-center gap-1">
+                            <Input
+                              value={customEventTypeInput}
+                              onChange={e => setCustomEventTypeInput(e.target.value)}
+                              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleCreateCustomEventType() } }}
+                              placeholder="Custom..."
+                              className="h-7 text-xs bg-background border-border"
+                            />
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              className="h-7 w-7 p-0 shrink-0"
+                              disabled={!customEventTypeInput.trim() || customEventTypeSaving}
+                              onClick={handleCreateCustomEventType}
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
                     </div>
                   )}
                 </div>
@@ -1676,11 +1784,11 @@ export default function Schedule() {
                   // Possession chain: disc moves 2nd assist -> assist -> scorer, top to bottom,
                   // in the order it was actually thrown. The dots and connecting line are
                   // real sequence information (who touched it, in order), not decoration.
-                  <div className="relative pl-6 space-y-3">
-                    <div className="absolute left-[7px] top-[14px] bottom-[18px] w-px bg-border" aria-hidden="true" />
+                  <div className="relative pl-3 space-y-3">
+                    <div className="absolute left-[4px] top-[14px] bottom-[18px] w-px bg-border" aria-hidden="true" />
 
-                    <div className="relative grid grid-cols-[52px_1fr] items-center gap-2">
-                      <span className="absolute -left-6 top-1/2 -translate-y-1/2 w-[9px] h-[9px] rounded-full border-2 border-border bg-card" aria-hidden="true" />
+                    <div className="relative grid grid-cols-[44px_1fr] items-center gap-2">
+                      <span className="absolute -left-3 top-1/2 -translate-y-1/2 w-[9px] h-[9px] rounded-full border-2 border-border bg-card" aria-hidden="true" />
                       <span className="text-xs font-medium text-muted-foreground text-right">2nd</span>
                       {selectionMode === 'combobox' ? (
                         <PlayerCombobox
@@ -1704,8 +1812,8 @@ export default function Schedule() {
                       )}
                     </div>
 
-                    <div className="relative grid grid-cols-[52px_1fr] items-center gap-2">
-                      <span className="absolute -left-6 top-1/2 -translate-y-1/2 w-[9px] h-[9px] rounded-full border-2 border-border bg-card" aria-hidden="true" />
+                    <div className="relative grid grid-cols-[44px_1fr] items-center gap-2">
+                      <span className="absolute -left-3 top-1/2 -translate-y-1/2 w-[9px] h-[9px] rounded-full border-2 border-border bg-card" aria-hidden="true" />
                       <div className="flex flex-col items-end gap-0.5">
                         <span className="text-xs font-medium text-muted-foreground text-right">Assist</span>
                         <button
@@ -1739,8 +1847,8 @@ export default function Schedule() {
                       )}
                     </div>
 
-                    <div className="relative grid grid-cols-[52px_1fr] items-center gap-2">
-                      <span className="absolute -left-6 top-1/2 -translate-y-1/2 w-[9px] h-[9px] rounded-full bg-green-600 dark:bg-green-500" aria-hidden="true" />
+                    <div className="relative grid grid-cols-[44px_1fr] items-center gap-2">
+                      <span className="absolute -left-3 top-1/2 -translate-y-1/2 w-[9px] h-[9px] rounded-full bg-green-600 dark:bg-green-500" aria-hidden="true" />
                       <span className="text-xs font-medium text-foreground text-right">Scorer</span>
                       {selectionMode === 'combobox' ? (
                         <PlayerCombobox
@@ -1785,6 +1893,7 @@ export default function Schedule() {
                         value={newScorerId || '__none__'}
                         onChange={setNewScorerId}
                         photoMap={lineupPhotoByPlayerId}
+                        wrap
                       />
                     )}
                   </div>
@@ -2435,17 +2544,15 @@ export default function Schedule() {
                       <th className="text-left font-medium px-3 pb-2">Player</th>
                       <th className="w-10 text-center font-medium text-green-600 dark:text-green-400 pb-2">G</th>
                       <th className="w-10 text-center font-medium text-blue-600 dark:text-blue-400 pb-2">A</th>
-                      {showTurnovers && <th className="w-10 text-center font-medium text-orange-600 dark:text-orange-400 pb-2">TO</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {playerStats.map((p, i) => (
-                      <tr key={p.name} className="border-t border-border">
-                        <td className="w-8 text-center tabular-nums text-muted-foreground">{i + 1}</td>
+                      <tr key={p.name} className="border-t border-border/50">
+                        <td className="text-center text-muted-foreground py-2 text-xs">{i + 1}</td>
                         <td className="px-3 py-2 font-medium text-foreground">{p.name}</td>
                         <td className="w-10 text-center font-bold text-green-600 dark:text-green-400">{p.goals}</td>
                         <td className="w-10 text-center font-bold text-blue-600 dark:text-blue-400">{p.assists}</td>
-                        {showTurnovers && <td className="w-10 text-center font-bold text-orange-600 dark:text-orange-400">{p.turnovers}</td>}
                       </tr>
                     ))}
                   </tbody>
