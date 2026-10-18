@@ -51,7 +51,7 @@ select is_empty(
 -- reason: the admin console reads and writes them only through /api/admin/*
 -- handlers holding the service-role key.
 --
--- chat_action_proposals (20260929120000_chat_action_proposals.sql) is
+-- chat_action_proposals (20260929120001_chat_action_proposals.sql) is
 -- zero-policy for the same reason: the confirm endpoint reaches it only
 -- under the service-role key; no client role is ever meant to see a row.
 select is_empty(
