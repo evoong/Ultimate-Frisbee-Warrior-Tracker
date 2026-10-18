@@ -2100,7 +2100,11 @@ export default function Schedule() {
                             )}
                             {isOpponentGoal && 'Opponent Goal'}
                             {isTurnover && <>{scorer ?? 'Unknown'} turned it over</>}
-                            {!isGoal && !isOpponentGoal && !isTurnover && event.event_type}
+                            {!isGoal && !isOpponentGoal && !isTurnover && (
+                              scorer
+                                ? <>{scorer} <span className="text-xs text-muted-foreground ml-1">({event.event_type})</span></>
+                                : event.event_type
+                            )}
                           </div>
                           <div className="text-xs text-muted-foreground">{formatTimestamp(event.event_timestamp)}</div>
                         </div>
