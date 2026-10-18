@@ -707,6 +707,23 @@ export default function OrganizationSettingsDialog({ open, onOpenChange, tier, i
                               beside an address on a phone, so it wraps under it. */}
                           <div className="ml-11 flex w-full items-center justify-end gap-2 sm:ml-0 sm:w-auto">
                             <RoleChip role={i.role} />
+                            {/* invite_member upserts on (team, email), so re-inviting
+                                the same address renews the 30-day expiry. */}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-9 shrink-0 px-2 text-xs text-muted-foreground sm:h-8"
+                              onClick={async () => {
+                                if (currentTeamId == null) return
+                                const ok = await invite.trigger({ teamId: currentTeamId, email: i.email, role: i.role })
+                                if (ok) {
+                                  track('team_invite_resent', { invite_id: i.id })
+                                  await invites.trigger({ teamId: currentTeamId })
+                                }
+                              }}
+                            >
+                              Resend
+                            </Button>
                             <Button
                               variant="ghost"
                               size="sm"

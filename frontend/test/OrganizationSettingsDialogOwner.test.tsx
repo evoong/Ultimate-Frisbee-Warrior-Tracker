@@ -129,4 +129,25 @@ describe('OrganizationSettingsDialog - Owner self-service', () => {
       expect(mockTriggerDeleteTeam).toHaveBeenCalledWith({ teamId: 1 })
     })
   })
+
+  it('resends a pending invite by re-inviting the same email and role', async () => {
+    const mockInvite = vi.fn().mockResolvedValue(true)
+    vi.spyOn(teamsHooks, 'useGetTeamInvites').mockReturnValue({
+      data: [{ id: 9, team_id: 1, email: 'new@test.com', role: 'member', expires_at: '2026-11-01T00:00:00Z' }],
+      loading: false,
+      error: null,
+      trigger: mockTriggerInvites as any,
+    })
+    vi.spyOn(teamsHooks, 'useInviteMember').mockReturnValue({
+      data: undefined,
+      loading: false,
+      error: null,
+      trigger: mockInvite as any,
+    })
+    render(<OrganizationSettingsDialog open={true} onOpenChange={vi.fn()} tier="free" />)
+    fireEvent.click(screen.getByRole('button', { name: /Resend/i }))
+    await vi.waitFor(() => {
+      expect(mockInvite).toHaveBeenCalledWith({ teamId: 1, email: 'new@test.com', role: 'member' })
+    })
+  })
 })
