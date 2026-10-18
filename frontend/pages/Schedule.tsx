@@ -1700,39 +1700,37 @@ export default function Schedule() {
 
                     <div className="relative grid grid-cols-[52px_1fr] items-center gap-2">
                       <span className="absolute -left-6 top-1/2 -translate-y-1/2 w-[9px] h-[9px] rounded-full border-2 border-border bg-card" aria-hidden="true" />
-                      <span className="text-xs font-medium text-muted-foreground text-right">Assist</span>
-                      <div className="flex items-center gap-1 min-w-0">
-                        <div className="flex-1 min-w-0">
-                          {selectionMode === 'combobox' ? (
-                            <PlayerCombobox
-                              players={attendingPlayerOptions}
-                              otherPlayers={otherPlayerOptions}
-                              value={newAssisterId || '__none__'}
-                              onValueChange={setNewAssisterId}
-                              onAddPlayer={handleAddAssister}
-                              onAddExistingPlayer={handleAddExistingAssister}
-                              onDeletePlayer={handleDeleteSub}
-                              placeholder="None"
-                              className="w-full h-9 text-sm bg-background border-border"
-                            />
-                          ) : (
-                            <PlayerChipGrid
-                              options={assisterOrderedPlayerOptions}
-                              value={newAssisterId || '__none__'}
-                              onChange={setNewAssisterId}
-                              photoMap={lineupPhotoByPlayerId}
-                            />
-                          )}
-                        </div>
+                      <div className="flex flex-col items-end gap-0.5">
+                        <span className="text-xs font-medium text-muted-foreground text-right">Assist</span>
                         <button
                           onClick={() => { const tmp = newScorerId; setNewScorerId(newAssisterId); setNewAssisterId(tmp) }}
                           title="Swap Scorer and Assister"
                           aria-label="Swap scorer and assister"
-                          className="shrink-0 w-9 h-9 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                          className="w-6 h-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
                         >
-                          <ArrowsLeftRight className="w-3.5 h-3.5" />
+                          <ArrowsLeftRight className="w-3 h-3" />
                         </button>
                       </div>
+                      {selectionMode === 'combobox' ? (
+                        <PlayerCombobox
+                          players={attendingPlayerOptions}
+                          otherPlayers={otherPlayerOptions}
+                          value={newAssisterId || '__none__'}
+                          onValueChange={setNewAssisterId}
+                          onAddPlayer={handleAddAssister}
+                          onAddExistingPlayer={handleAddExistingAssister}
+                          onDeletePlayer={handleDeleteSub}
+                          placeholder="None"
+                          className="w-full h-9 text-sm bg-background border-border"
+                        />
+                      ) : (
+                        <PlayerChipGrid
+                          options={assisterOrderedPlayerOptions}
+                          value={newAssisterId || '__none__'}
+                          onChange={setNewAssisterId}
+                          photoMap={lineupPhotoByPlayerId}
+                        />
+                      )}
                     </div>
 
                     <div className="relative grid grid-cols-[52px_1fr] items-center gap-2">
