@@ -360,6 +360,7 @@ export default function Schedule() {
   // Lineup
   const [lineupName, setLineupName] = useState('Lineup 1')
   const [lineupPopoverOpen, setLineupPopoverOpen] = useState(false)
+  const [lineupSearch, setLineupSearch] = useState('')
   const [copyingLineup, setCopyingLineup] = useState(false)
   const [showCopyLineupDialog, setShowCopyLineupDialog] = useState(false)
   const [selectedCopyGameId, setSelectedCopyGameId] = useState<number | null>(null)
@@ -2237,9 +2238,29 @@ export default function Schedule() {
                         rather than overhanging it. */}
                     <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0">
                       <Command>
-                        <CommandInput placeholder="Search players..." />
+                        <CommandInput
+                          placeholder="Search players..."
+                          value={lineupSearch}
+                          onValueChange={setLineupSearch}
+                        />
                         <CommandList>
-                          <CommandEmpty>No player found.</CommandEmpty>
+                          <CommandEmpty>
+                            <div className="flex flex-col items-center gap-2">
+                              <span>No player found.</span>
+                              {can.record && lineupSearch.trim() && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleCreateSubForLineup(lineupSearch)}
+                                  className="h-7 text-xs bg-primary/10 text-primary hover:bg-primary/20 border-primary/20"
+                                >
+                                  <Plus className="w-3 h-3 mr-1" />
+                                  Add "{lineupSearch}" as sub
+                                </Button>
+                              )}
+                            </div>
+                          </CommandEmpty>
                           <CommandGroup>
                             <div className="grid grid-cols-2 gap-x-1">
                               {lineupCandidates.map(p => {
