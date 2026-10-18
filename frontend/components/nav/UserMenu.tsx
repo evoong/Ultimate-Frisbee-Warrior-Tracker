@@ -4,6 +4,8 @@ import type { TeamRole } from "../../lib/authClient"
 import { Avatar, AvatarFallback } from "../../lib/shadcn/avatar"
 import { Popover, PopoverContent, PopoverTrigger } from "../../lib/shadcn/popover"
 import { cn } from "../../lib/shadcn/utils"
+import { useAuth } from "../../contexts/AuthContext"
+import { usePendingJoinRequestCount } from "../../hooks/backend/teams"
 import DeleteAccountDialog from "../DeleteAccountDialog"
 import { accountName, accountSubtitle, initials } from "./identity"
 
@@ -24,7 +26,7 @@ type UserMenuProps = {
   variant?: "sidebar" | "bar"
 }
 
-type MenuAction = { icon: ComponentType<{ className?: string; weight?: "regular" | "bold" }>; label: string; onSelect: () => void }
+type MenuAction = { icon: ComponentType<{ className?: string; weight?: "regular" | "bold" }>; label: string; onSelect: () => void; badge?: number }
 
 /**
  * Everything that used to be a separate row in the sidebar footer -- the raw
@@ -53,6 +55,10 @@ export default function UserMenu({
 }: UserMenuProps) {
   const [open, setOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const { can, currentTeamId } = useAuth()
+  // Refreshed each time the menu opens, so a request that arrived while the
+  // page was idle shows up the next time anyone looks.
+  const pendingRequests = usePendingJoinRequestCount(currentTeamId, !isGuest && can.manageTeam, open)
   const name = accountName(email)
   const subtitle = accountSubtitle(role, isGuest)
 
@@ -60,7 +66,7 @@ export default function UserMenu({
     // A guest holds no membership on the team they are browsing, so the
     // settings dialog would open in its own view-only state and offer them
     // nothing. Hiding it is what the database would do anyway.
-    ...(isGuest ? [] : [{ icon: GearSix, label: "Team settings", onSelect: openSettings }]),
+    ...(isGuest ? [] : [{ icon: GearSix, label: "Team settings", onSelect: openSettings, badge: pendingRequests }]),
     ...(openPasskeys ? [{ icon: Key, label: "Passkeys", onSelect: openPasskeys }] : []),
     { icon: Megaphone, label: "Feedback", onSelect: openFeedback },
   ]
@@ -84,11 +90,19 @@ export default function UserMenu({
               : "p-1"
           )}
         >
-          <Avatar className="size-8 shrink-0 rounded-[6px]">
-            <AvatarFallback className="nav-mono rounded-[6px] bg-muted text-[10px] font-bold tracking-[0.04em] text-foreground/70">
-              {initials(name)}
-            </AvatarFallback>
-          </Avatar>
+          <span className="relative shrink-0">
+            <Avatar className="size-8 shrink-0 rounded-[6px]">
+              <AvatarFallback className="nav-mono rounded-[6px] bg-muted text-[10px] font-bold tracking-[0.04em] text-foreground/70">
+                {initials(name)}
+              </AvatarFallback>
+            </Avatar>
+            {pendingRequests > 0 && (
+              <span
+                aria-label={`${pendingRequests} pending join request${pendingRequests === 1 ? "" : "s"}`}
+                className="absolute -right-1 -top-1 size-2.5 rounded-full border-2 border-background bg-[hsl(var(--nav-accent))]"
+              />
+            )}
+          </span>
           {variant === "sidebar" && (
             <>
               <span className="min-w-0 flex-1 text-left group-data-[collapsible=icon]:hidden">
@@ -140,7 +154,7 @@ export default function UserMenu({
         <div className="my-1 h-px bg-border" />
 
         <div className="flex flex-col">
-          {actions.map(({ icon: Icon, label, onSelect }) => (
+          {actions.map(({ icon: Icon, label, onSelect, badge }) => (
             <button
               key={label}
               type="button"
@@ -149,6 +163,11 @@ export default function UserMenu({
             >
               <Icon className="size-4 shrink-0 text-muted-foreground" weight="regular" />
               {label}
+              {badge ? (
+                <span className="nav-mono ml-auto rounded-[4px] bg-[hsl(var(--nav-accent-wash)/0.18)] px-1.5 py-px text-[10px] font-semibold text-[hsl(var(--nav-accent-ink))]">
+                  {badge} waiting
+                </span>
+              ) : null}
             </button>
           ))}
         </div>

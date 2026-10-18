@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import type { TeamRole } from '../../lib/authClient'
 
@@ -110,6 +110,31 @@ export function useGetJoinRequests() {
     return (data ?? []) as JoinRequest[]
   }, [])
   return useApiCall<JoinRequest[], { teamId?: number }>(fn)
+}
+
+// Count of requests waiting on a team the caller manages. RLS already limits
+// the rows to the caller's own requests plus their managed teams', and the
+// teamId filter narrows it to one team. `refreshKey` re-reads on demand.
+export function usePendingJoinRequestCount(teamId: number | null, enabled: boolean, refreshKey?: unknown) {
+  const [count, setCount] = useState(0)
+  useEffect(() => {
+    if (!enabled || teamId == null) {
+      setCount(0)
+      return
+    }
+    let live = true
+    void supabase
+      .from('team_join_requests')
+      .select('id', { count: 'exact', head: true })
+      .eq('team_id', teamId)
+      .then(({ count: n }) => {
+        if (live) setCount(n ?? 0)
+      })
+    return () => {
+      live = false
+    }
+  }, [teamId, enabled, refreshKey])
+  return count
 }
 
 function useJoinRequestRpc(rpc: string, arg: 'p_team_id' | 'p_request_id') {
