@@ -239,15 +239,27 @@ export default function Schedule() {
   // one tap away behind the "More" control below, not gone.
   const HIDDEN_EVENT_TYPES = new Set(['Assist', 'Caught OB', 'Drop', 'Throwaway', 'Pull', 'Opponent Goal'])
   const EVENT_TYPE_ORDER: Record<string, number> = { Goal: 1, Pass: 2, Block: 3, Fouls: 4, Foul: 4 }
-  const selectableEventTypes = (eventTypes as { id: number; name: string }[] | undefined)
+  const rawSelectable = (eventTypes as { id: number; name: string }[] | undefined)
     ?.filter(et => !HIDDEN_EVENT_TYPES.has(et.name))
+  const selectableEventTypes = rawSelectable
+    ?.filter((et, index, self) => index === self.findIndex(t => t.name === et.name))
     ?.sort((a, b) => {
       const orderA = EVENT_TYPE_ORDER[a.name] ?? 99
       const orderB = EVENT_TYPE_ORDER[b.name] ?? 99
       if (orderA !== orderB) return orderA - orderB
       return a.name.localeCompare(b.name)
     })
-  const hiddenEventTypes = (eventTypes as { id: number; name: string }[] | undefined)?.filter(et => HIDDEN_EVENT_TYPES.has(et.name))
+  const REMOVED_FROM_MORE = new Set(['Assist', 'Opponent Goal'])
+  const MORE_EVENT_ORDER: Record<string, number> = { Drop: 1, Throwaway: 2 }
+  const hiddenEventTypes = (eventTypes as { id: number; name: string }[] | undefined)
+    ?.filter(et => HIDDEN_EVENT_TYPES.has(et.name) && !REMOVED_FROM_MORE.has(et.name))
+    ?.filter((et, index, self) => index === self.findIndex(t => t.name === et.name))
+    ?.sort((a, b) => {
+      const orderA = MORE_EVENT_ORDER[a.name] ?? 99
+      const orderB = MORE_EVENT_ORDER[b.name] ?? 99
+      if (orderA !== orderB) return orderA - orderB
+      return a.name.localeCompare(b.name)
+    })
   const [moreEventTypesOpen, setMoreEventTypesOpen] = useState(false)
   const [customEventTypeInput, setCustomEventTypeInput] = useState('')
   const [customEventTypeSaving, setCustomEventTypeSaving] = useState(false)
