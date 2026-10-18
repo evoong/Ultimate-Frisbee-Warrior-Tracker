@@ -2042,6 +2042,8 @@ export default function Schedule() {
                     const isGoal = event.event_type === 'Goal'
                     const isOpponentGoal = event.event_type === 'Opponent Goal'
                     const isTurnover = isTurnoverEvent(event.event_type)
+                    const isOther = !isGoal && !isOpponentGoal && !isTurnover
+                    const otherPlayer = isOther && event.player_id ? (players as Player[] | undefined)?.find(p => p.id === event.player_id) : undefined
                     const isEditing = editingEventId === event.id
                     const isDragging = dragEventId === event.id
 
@@ -2088,6 +2090,9 @@ export default function Schedule() {
                           {isGoal && <Target className="w-5 h-5 text-stat-goals" />}
                           {isOpponentGoal && <Target className="w-5 h-5 text-destructive" />}
                           {isTurnover && <TrendUp className="w-5 h-5 text-stat-turnovers" />}
+                          {otherPlayer && (otherPlayer.photo_url
+                            ? <img src={otherPlayer.photo_url} alt={otherPlayer.display_name} draggable={false} className="w-10 h-10 rounded-full object-cover select-none" />
+                            : <span className="text-xs font-semibold text-muted-foreground select-none">{initials(otherPlayer.display_name)}</span>)}
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="font-medium text-foreground text-sm">
@@ -2100,7 +2105,7 @@ export default function Schedule() {
                             )}
                             {isOpponentGoal && 'Opponent Goal'}
                             {isTurnover && <>{scorer ?? 'Unknown'} turned it over</>}
-                            {!isGoal && !isOpponentGoal && !isTurnover && (
+                            {isOther && (
                               scorer
                                 ? <>{scorer} <span className="text-xs text-muted-foreground ml-1">({event.event_type})</span></>
                                 : event.event_type
