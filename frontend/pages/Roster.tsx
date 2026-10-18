@@ -34,6 +34,7 @@ type Player = {
 }
 type GameStat = { game_id: number; opponent: string; game_date: string; game_time: string | null; game_type: string; season_id: number | null; in: boolean; goals: string; assists: string; turnovers: string }
 type Season = { id: number; name: string; year: number; organizer: string | null; start_date: string | null; end_date: string | null }
+type SeasonMeta = { organizers: string[]; names: string[]; years: number[]; locations: string[] }
 type PlayerSeason = { id: number; name: string; year: number; organizer: string | null; active: boolean; is_sub: boolean }
 
 const GENDERS = ['Man', 'Woman']
@@ -283,8 +284,14 @@ export default function Roster() {
   // since the roster is often set up before the season's first game exists
   // in Schedule (there'd otherwise be no season to add players to yet).
   const [showCreateSeason, setShowCreateSeason] = useState(false)
-  const [newSeasonData, setNewSeasonData] = useState({ name: '', year: new Date().getFullYear().toString(), organizer: '', location: '' })
+  const [newSeasonData, setNewSeasonData] = useState({ name: '', year: new Date().getFullYear().toString(), organizer: '', location: '', default_game_time: '' })
+  // Same select-or-create pattern as Schedule's create-season form: each
+  // field offers known values from the org's existing seasons, with a
+  // "+ New …" row flipping to a free-text input for anything else.
   const [newSeasonOrganizerMode, setNewSeasonOrganizerMode] = useState<'select' | 'new'>('select')
+  const [newSeasonNameMode, setNewSeasonNameMode] = useState<'select' | 'new'>('select')
+  const [newSeasonYearMode, setNewSeasonYearMode] = useState<'select' | 'new'>('select')
+  const [newSeasonLocationMode, setNewSeasonLocationMode] = useState<'select' | 'new'>('select')
   const [creatingSeason, setCreatingSeason] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -575,6 +582,7 @@ export default function Roster() {
       year: parseInt(newSeasonData.year),
       organizer: newSeasonData.organizer || undefined,
       location: newSeasonData.location || undefined,
+      default_game_time: newSeasonData.default_game_time || undefined,
     }) as Season | undefined
     setCreatingSeason(false)
     if (!created) {
@@ -585,8 +593,11 @@ export default function Roster() {
     await fetchAllSeasons({ organizationId: currentTeamId })
     setRosterSeasonIds([created.id])
     setShowCreateSeason(false)
-    setNewSeasonData({ name: '', year: new Date().getFullYear().toString(), organizer: '', location: '' })
+    setNewSeasonData({ name: '', year: new Date().getFullYear().toString(), organizer: '', location: '', default_game_time: '' })
     setNewSeasonOrganizerMode('select')
+    setNewSeasonNameMode('select')
+    setNewSeasonYearMode('select')
+    setNewSeasonLocationMode('select')
   }
 
   const toggleManagePlayer = (playerId: number) => {
@@ -1561,19 +1572,53 @@ export default function Roster() {
                 )}
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Name *</Label>
-                <Input value={newSeasonData.name} onChange={e => setNewSeasonData(d => ({ ...d, name: e.target.value }))} placeholder="e.g. Summer" className="h-9 text-sm bg-background border-border" />
+                <Label className="text-xs">Name</Label>
+                {newSeasonNameMode === 'select' && (seasonsMeta as SeasonMeta | undefined)?.names && (seasonsMeta as SeasonMeta | undefined)!.names.length > 0 ? (
+                  <Select value={newSeasonData.name} onValueChange={v => v === '__new__' ? setNewSeasonNameMode('new') : setNewSeasonData(d => ({ ...d, name: v }))}>
+                    <SelectTrigger className="h-9 text-sm bg-background border-border text-foreground"><SelectValue placeholder="Select or create..." /></SelectTrigger>
+                    <SelectContent>
+                      {((seasonsMeta as SeasonMeta).names).map(n => <SelectItem key={n} value={n}>{n}</SelectItem>)}
+                      <SelectItem value="__new__"><span className="text-primary">+ New name</span></SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input value={newSeasonData.name} onChange={e => setNewSeasonData(d => ({ ...d, name: e.target.value }))} placeholder="e.g. Summer" className="h-9 text-sm bg-background border-border" />
+                )}
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <Label className="text-xs">Year *</Label>
-                <Input type="number" value={newSeasonData.year} onChange={e => setNewSeasonData(d => ({ ...d, year: e.target.value }))} className="h-9 text-sm bg-background border-border" />
+                <Label className="text-xs">Year</Label>
+                {newSeasonYearMode === 'select' && (seasonsMeta as SeasonMeta | undefined)?.years && (seasonsMeta as SeasonMeta | undefined)!.years.length > 0 ? (
+                  <Select value={newSeasonData.year} onValueChange={v => v === '__new__' ? setNewSeasonYearMode('new') : setNewSeasonData(d => ({ ...d, year: v }))}>
+                    <SelectTrigger className="h-9 text-sm bg-background border-border text-foreground"><SelectValue placeholder="Select or type..." /></SelectTrigger>
+                    <SelectContent>
+                      {((seasonsMeta as SeasonMeta).years).map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
+                      <SelectItem value="__new__"><span className="text-primary">+ Other year</span></SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input type="number" value={newSeasonData.year} onChange={e => setNewSeasonData(d => ({ ...d, year: e.target.value }))} className="h-9 text-sm bg-background border-border" />
+                )}
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Location</Label>
-                <Input value={newSeasonData.location} onChange={e => setNewSeasonData(d => ({ ...d, location: e.target.value }))} placeholder="Optional" className="h-9 text-sm bg-background border-border" />
+                {newSeasonLocationMode === 'select' && (seasonsMeta as SeasonMeta | undefined)?.locations && (seasonsMeta as SeasonMeta | undefined)!.locations.length > 0 ? (
+                  <Select value={newSeasonData.location} onValueChange={v => v === '__new__' ? setNewSeasonLocationMode('new') : setNewSeasonData(d => ({ ...d, location: v }))}>
+                    <SelectTrigger className="h-9 text-sm bg-background border-border text-foreground"><SelectValue placeholder="Select or add..." /></SelectTrigger>
+                    <SelectContent>
+                      {((seasonsMeta as SeasonMeta).locations).map(l => <SelectItem key={l} value={l}>{l}</SelectItem>)}
+                      <SelectItem value="__new__"><span className="text-primary">+ New location</span></SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input value={newSeasonData.location} onChange={e => setNewSeasonData(d => ({ ...d, location: e.target.value }))} placeholder="Optional" className="h-9 text-sm bg-background border-border" />
+                )}
               </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Default Game Start Time (optional)</Label>
+              <Input type="time" value={newSeasonData.default_game_time} onChange={e => setNewSeasonData(d => ({ ...d, default_game_time: e.target.value }))} className="h-9 text-sm bg-background border-border" />
             </div>
             <Button onClick={handleCreateSeason} disabled={!newSeasonData.name || !newSeasonData.year || creatingSeason} className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
               {creatingSeason ? 'Creating…' : 'Create Season'}
