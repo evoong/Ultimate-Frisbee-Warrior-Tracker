@@ -156,6 +156,7 @@ export default function Stats() {
   const entitlement = useEffectiveTier(currentTeamId)
   const { subtab } = useParams<{ subtab: string }>()
   const [genderFilter, setGenderFilter] = useState<'all' | 'Man' | 'Woman'>('all')
+  const [includeSubs, setIncludeSubs] = useState(true)
   // A guest holds no membership and can never claim a roster spot, so "Me"
   // never appears for one -- there is nothing there but a claim picker that
   // would 403 on every selection.
@@ -287,6 +288,18 @@ export default function Stats() {
                 ariaLabel="Filter by gender"
               />
             )}
+            {(pageTab === 'overview' || pageTab === 'table') && (
+              <button
+                type="button"
+                className="st-legend"
+                data-active={includeSubs}
+                aria-pressed={includeSubs}
+                onClick={() => setIncludeSubs(v => !v)}
+              >
+                <CheckIcon className="h-3 w-3" weight="bold" />
+                Subs
+              </button>
+            )}
           </div>
         )}
       </StatsHeader>
@@ -302,6 +315,7 @@ export default function Stats() {
           tier={entitlement.tier}
           genderFilter={genderFilter}
           onGenderFilterChange={setGenderFilter}
+          includeSubs={includeSubs}
         />
       )}
     </div>
@@ -314,7 +328,7 @@ export default function Stats() {
 // filters differs by tab.
 function PlayerStatsView({
   tab, games, allSeasons, filterType, selectedSeasonIds, selectedGameIds, tier,
-  genderFilter, onGenderFilterChange,
+  genderFilter, onGenderFilterChange, includeSubs,
 }: {
   tab: 'me' | 'overview' | 'table'
   /** Hoisted to Stats() along with the filter below -- see the comment there. */
@@ -326,6 +340,7 @@ function PlayerStatsView({
   tier: string | null
   genderFilter: 'all' | 'Man' | 'Woman'
   onGenderFilterChange: (v: 'all' | 'Man' | 'Woman') => void
+  includeSubs: boolean
 }) {
   const { currentTeamId, user } = useAuth()
   const link = useMyPlayerLink()
@@ -342,7 +357,6 @@ function PlayerStatsView({
   // Shared between the Assists and Goals network graphs, so selecting a
   // player in one highlights them in the other too.
   const [networkSelectedId, setNetworkSelectedId] = useState<number | null>(null)
-  const [includeSubsInNetwork, setIncludeSubsInNetwork] = useState(true)
 
   const [cumulativeStat, setCumulativeStat] = useState<ProgressionStat>('points')
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<number[]>([])
@@ -459,6 +473,13 @@ function PlayerStatsView({
   // the leaderboard so the two can never disagree about who is top. Photos
   // come off the org roster, not off `stats`: player_stats is an aggregate
   // over game events and carries no profile columns at all.
+  // Players to leave out of every panel when the Subs toggle is off.
+  const hiddenIds = useMemo(
+    () => new Set(includeSubs ? [] : ((orgPlayers as { id: number; is_sub: boolean }[] | undefined) ?? [])
+      .filter(p => p.is_sub).map(p => p.id)),
+    [orgPlayers, includeSubs],
+  )
+
   const playerLines: PlayerLine[] = useMemo(() => {
     const photoById = new Map(
       ((orgPlayers as { id: number; photo_url: string | null }[] | undefined) ?? [])
@@ -469,6 +490,7 @@ function PlayerStatsView({
         .map(p => [p.id, p.gender_match] as const),
     )
     return (statsArr ?? [])
+      .filter(p => !hiddenIds.has(p.player_id))
       .filter(p => genderFilter === 'all' || genderById.get(p.player_id) === genderFilter)
       .map(p => ({
       playerId: p.player_id,
@@ -482,7 +504,7 @@ function PlayerStatsView({
       blocks: parseInt(p.blocks ?? '0'),
       gamesPlayed: parseInt(p.games_played ?? '0'),
     }))
-  }, [statsArr, orgPlayers, genderFilter])
+  }, [statsArr, orgPlayers, genderFilter, hiddenIds])
 
   const tiedScorers = getTiedLeaders(playerLines, 'points')
   const tiedFinishers = getTiedLeaders(playerLines, 'goals')
@@ -513,7 +535,7 @@ function PlayerStatsView({
 
   // ── Cumulative line chart data ───────────────────────────────────────────────
   const { lineData, allPlayersForSelection, topPlayers } = useMemo(() => {
-    const rows = cumulativeRaw as CumulativeRow[] | undefined
+    const rows = (cumulativeRaw as CumulativeRow[] | undefined)?.filter(r => !hiddenIds.has(r.player_id))
     if (!rows || rows.length === 0) return { lineData: [], allPlayersForSelection: [], topPlayers: [] }
 
     // Build game order from ALL games the filter covers (not just games
@@ -563,7 +585,7 @@ function PlayerStatsView({
       .map(([id, { name, total }]) => ({ id: parseInt(id), name, total }))
     const eventIds = new Set(withEvents.map(p => p.id))
     const rosterOnly = ((progressionRoster as { id: number; display_name: string }[] | undefined) ?? [])
-      .filter(p => !eventIds.has(p.id))
+      .filter(p => !eventIds.has(p.id) && !hiddenIds.has(p.id))
       .map(p => ({ id: p.id, name: p.display_name, total: 0 }))
       .sort((a, b) => a.name.localeCompare(b.name))
     const allPlayersForSelection = [...withEvents, ...rosterOnly]
@@ -595,7 +617,7 @@ function PlayerStatsView({
     })
 
     return { lineData, allPlayersForSelection, topPlayers: displayPlayers }
-  }, [cumulativeRaw, cumulativeStat, selectedPlayerIds, games, filterType, selectedSeasonIds, selectedGameIds, progressionRoster])
+  }, [cumulativeRaw, cumulativeStat, selectedPlayerIds, games, filterType, selectedSeasonIds, selectedGameIds, progressionRoster, hiddenIds])
 
   // ── Team line ───────────────────────────────────────────────────────────
   // The games the current filter actually covers. This is the denominator for
@@ -643,7 +665,10 @@ function PlayerStatsView({
   // matrix takes all of them, because it filters by one player at a time and
   // a pairing outside the top ten is exactly the one a mid-roster player
   // needs to see.
-  const pairingRows = settled.current.pairings ?? NO_PAIRINGS
+  const pairingRows = useMemo(
+    () => (settled.current.pairings ?? NO_PAIRINGS).filter(r => !hiddenIds.has(r.assisterId) && !hiddenIds.has(r.scorerId)),
+    [settled.current.pairings, hiddenIds],
+  )
 
   const orgPlayerMap = useMemo(() => new Map(
     ((orgPlayers as { id: number; photo_url: string | null; is_sub: boolean }[] | undefined) ?? [])
@@ -664,14 +689,13 @@ function PlayerStatsView({
   )
 
   // The matrix's roster: everyone with stats in range, ranked by assists
-  // (the picker's default lands on the top assister), optionally minus subs.
+  // (the picker's default lands on the top assister), already minus subs when the page toggle is off.
   // No cap — the old graph capped at 30 because that many nodes on a ring is
   // already a hairball; a list has no such ceiling.
   const matrixPlayers = useMemo(
     () => [...playerLines]
-      .filter(p => includeSubsInNetwork || orgPlayerMap.get(p.playerId)?.is_sub !== true)
       .sort((a, b) => b.assists - a.assists || b.goals - a.goals || a.name.localeCompare(b.name)),
-    [playerLines, includeSubsInNetwork, orgPlayerMap],
+    [playerLines],
   )
 
   const matrixEdges: MatrixEdge[] = useMemo(() => {
@@ -892,8 +916,6 @@ function PlayerStatsView({
             edges={matrixEdges}
             selectedId={matrixSelectedId}
             onSelect={setNetworkSelectedId}
-            includeSubs={includeSubsInNetwork}
-            onIncludeSubsChange={setIncludeSubsInNetwork}
             loading={rangePending}
             error={pairingsError ? `Error: ${pairingsError}` : null}
             emptyLabel={filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No assisted goals in this range yet'}
