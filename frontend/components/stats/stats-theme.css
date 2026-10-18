@@ -72,13 +72,13 @@
      sits 65° clear of it, clear of the green, and clear of the amber.
      Turnovers is amber rather than red because red is the ledger's loss
      colour and a turnover is a caution, not a result. */
-  --st-goals: 152 65% 32%;
-  --st-assists: 258 62% 48%;
-  --st-turnovers: 28 88% 38%;
+  --st-goals: var(--stat-goals);
+  --st-assists: var(--stat-assists);
+  --st-turnovers: var(--stat-turnovers);
   /* Warrior-point system. MVP (PTS) is the headline metric, styled in rich gold. */
-  --st-points: 42 92% 38%;
-  --st-second: 340 64% 44%;
-  --st-blocks: 228 58% 48%;
+  --st-points: var(--stat-points);
+  --st-second: var(--stat-second);
+  --st-blocks: var(--stat-blocks);
 
   /* Point differential. Signed, so it needs the ledger's own win/loss hues
      rather than a series colour — a positive differential and a win are the
@@ -113,12 +113,12 @@
   --st-accent-ink: 193 92% 64%;
   --st-accent-wash: 193 90% 52%;
 
-  --st-goals: 152 62% 46%;
-  --st-assists: 258 88% 72%;
-  --st-turnovers: 28 88% 54%;
-  --st-points: 44 96% 62%;
-  --st-second: 340 82% 70%;
-  --st-blocks: 228 80% 72%;
+  --st-goals: var(--stat-goals);
+  --st-assists: var(--stat-assists);
+  --st-turnovers: var(--stat-turnovers);
+  --st-points: var(--stat-points);
+  --st-second: var(--stat-second);
+  --st-blocks: var(--stat-blocks);
 
   --st-up: 142 71% 45%;
   --st-down: 0 84% 60%;

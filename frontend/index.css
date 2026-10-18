@@ -41,6 +41,14 @@
     --sidebar-border: 0 0% 91%;
     --sidebar-ring: 193 95% 30%;
 
+    /* Stat series tokens (shared with stats-theme.css) */
+    --stat-goals: 152 65% 32%;
+    --stat-assists: 258 62% 48%;
+    --stat-turnovers: 28 88% 38%;
+    --stat-points: 42 92% 38%;
+    --stat-second: 340 64% 44%;
+    --stat-blocks: 228 58% 48%;
+
     /* Nav accent -- a sharp azure cyan. The neutral palette above has no
        colour in it at all (--accent is a grey, --primary is black), which is
        deliberate: it leaves exactly one hue free to mean "this is the active
@@ -117,6 +125,14 @@
     --sidebar-accent-foreground: 0 0% 97%;
     --sidebar-border: 0 0% 14%;
     --sidebar-ring: 193 92% 56%;
+
+    /* Stat series tokens (shared with stats-theme.css) */
+    --stat-goals: 152 62% 46%;
+    --stat-assists: 258 88% 72%;
+    --stat-turnovers: 28 88% 54%;
+    --stat-points: 44 96% 62%;
+    --stat-second: 340 82% 70%;
+    --stat-blocks: 228 80% 72%;
 
     /* Dark counterparts. Same rule the ledger follows: contrast is the goal,
        not brightness, and which direction that means depends on the ground.

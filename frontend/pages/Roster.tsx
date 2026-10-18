@@ -127,7 +127,7 @@ function PlayerEgoNetworkGraph({ centerName, received, given }: {
               const strokeWidth = 1.5 + (rCount / maxCount) * 3
               return (
                 <g>
-                  <path d={d} stroke="#2563eb" strokeWidth={strokeWidth} fill="none" opacity={0.75} />
+                  <path d={d} stroke="hsl(var(--stat-goals))" strokeWidth={strokeWidth} fill="none" opacity={0.75} />
                   <circle cx={labelX} cy={labelY} r={6} fill="hsl(var(--card))" stroke="hsl(var(--border))" strokeWidth={0.75} />
                   <text x={labelX} y={labelY} textAnchor="middle" dominantBaseline="central" fontSize={7} fill="hsl(var(--foreground))">{rCount}</text>
                 </g>
@@ -138,7 +138,7 @@ function PlayerEgoNetworkGraph({ centerName, received, given }: {
               const strokeWidth = 1.5 + (gCount / maxCount) * 3
               return (
                 <g>
-                  <path d={d} stroke="#16a34a" strokeWidth={strokeWidth} fill="none" opacity={0.75} />
+                  <path d={d} stroke="hsl(var(--stat-assists))" strokeWidth={strokeWidth} fill="none" opacity={0.75} />
                   <circle cx={labelX} cy={labelY} r={6} fill="hsl(var(--card))" stroke="hsl(var(--border))" strokeWidth={0.75} />
                   <text x={labelX} y={labelY} textAnchor="middle" dominantBaseline="central" fontSize={7} fill="hsl(var(--foreground))">{gCount}</text>
                 </g>
@@ -959,27 +959,27 @@ export default function Roster() {
               <div className="text-[10px] text-muted-foreground mt-0.5">GP</div>
             </CardContent>
           </Card>
-          <Card className="bg-primary/5 border-primary/20">
+          <Card className="bg-stat-points/5 border-stat-points/20">
             <CardContent className="pt-3 pb-2 text-center">
-              <div className="text-xl font-bold text-primary">{summary.points}</div>
+              <div className="text-xl font-bold text-stat-points">{summary.points}</div>
               <div className="text-[10px] text-muted-foreground mt-0.5">PTS</div>
             </CardContent>
           </Card>
-          <Card className="bg-green-500/5 border-green-500/20">
+          <Card className="bg-stat-goals/5 border-stat-goals/20">
             <CardContent className="pt-3 pb-2 text-center">
-              <div className="text-xl font-bold text-green-600 dark:text-green-400">{summary.goals}</div>
+              <div className="text-xl font-bold text-stat-goals">{summary.goals}</div>
               <div className="text-[10px] text-muted-foreground mt-0.5">Goals</div>
             </CardContent>
           </Card>
-          <Card className="bg-blue-500/5 border-blue-500/20">
+          <Card className="bg-stat-assists/5 border-stat-assists/20">
             <CardContent className="pt-3 pb-2 text-center">
-              <div className="text-xl font-bold text-blue-600 dark:text-blue-400">{summary.assists}</div>
+              <div className="text-xl font-bold text-stat-assists">{summary.assists}</div>
               <div className="text-[10px] text-muted-foreground mt-0.5">Assists</div>
             </CardContent>
           </Card>
-          <Card className="bg-orange-500/5 border-orange-500/20">
+          <Card className="bg-stat-blocks/5 border-stat-blocks/20">
             <CardContent className="pt-3 pb-2 text-center">
-              <div className="text-xl font-bold text-orange-600 dark:text-orange-400">{summary.blocks}</div>
+              <div className="text-xl font-bold text-stat-blocks">{summary.blocks}</div>
               <div className="text-[10px] text-muted-foreground mt-0.5">Blocks</div>
             </CardContent>
           </Card>
@@ -996,11 +996,11 @@ export default function Roster() {
                 <div className="text-xs text-muted-foreground mt-0.5">{formatDate(bestStat.game_date)}</div>
               </div>
               <div className="flex gap-3 text-center shrink-0">
-                <div><div className="font-bold text-primary">{bestStat.points}</div><div className="text-xs text-muted-foreground">PTS</div></div>
-                <div><div className="font-bold text-green-600 dark:text-green-400">{bestStat.goals}</div><div className="text-xs text-muted-foreground">G</div></div>
-                <div><div className="font-bold text-blue-600 dark:text-blue-400">{bestStat.assists}</div><div className="text-xs text-muted-foreground">A</div></div>
-                <div><div className="font-bold text-blue-400 dark:text-blue-500">{bestStat.secondAssists}</div><div className="text-xs text-muted-foreground">2ND</div></div>
-                <div><div className="font-bold text-orange-600 dark:text-orange-400">{bestStat.blocks}</div><div className="text-xs text-muted-foreground">BLK</div></div>
+                <div><div className="font-bold text-stat-points">{bestStat.points}</div><div className="text-xs text-muted-foreground">PTS</div></div>
+                <div><div className="font-bold text-stat-goals">{bestStat.goals}</div><div className="text-xs text-muted-foreground">G</div></div>
+                <div><div className="font-bold text-stat-assists">{bestStat.assists}</div><div className="text-xs text-muted-foreground">A</div></div>
+                <div><div className="font-bold text-stat-second">{bestStat.secondAssists}</div><div className="text-xs text-muted-foreground">2ND</div></div>
+                <div><div className="font-bold text-stat-blocks">{bestStat.blocks}</div><div className="text-xs text-muted-foreground">BLK</div></div>
               </div>
             </CardContent>
           </Card>
@@ -1009,33 +1009,33 @@ export default function Roster() {
         {/* Avg per game */}
         {summary.games > 0 && (
           <div className="grid grid-cols-5 gap-1.5">
-            <Card className="bg-primary/5 border-primary/20">
+            <Card className="bg-stat-points/5 border-stat-points/20">
               <CardContent className="pt-2 pb-2 text-center">
-                <div className="text-lg font-bold text-primary">{avgPoints}</div>
+                <div className="text-lg font-bold text-stat-points">{avgPoints}</div>
                 <div className="text-[10px] text-muted-foreground">PTS/gm</div>
               </CardContent>
             </Card>
-            <Card className="bg-green-500/5 border-green-500/20">
+            <Card className="bg-stat-goals/5 border-stat-goals/20">
               <CardContent className="pt-2 pb-2 text-center">
-                <div className="text-lg font-bold text-green-600 dark:text-green-400">{avgGoals}</div>
+                <div className="text-lg font-bold text-stat-goals">{avgGoals}</div>
                 <div className="text-[10px] text-muted-foreground">G/gm</div>
               </CardContent>
             </Card>
-            <Card className="bg-blue-500/5 border-blue-500/20">
+            <Card className="bg-stat-assists/5 border-stat-assists/20">
               <CardContent className="pt-2 pb-2 text-center">
-                <div className="text-lg font-bold text-blue-600 dark:text-blue-400">{avgAssists}</div>
+                <div className="text-lg font-bold text-stat-assists">{avgAssists}</div>
                 <div className="text-[10px] text-muted-foreground">A/gm</div>
               </CardContent>
             </Card>
-            <Card className="bg-blue-400/5 border-blue-400/20">
+            <Card className="bg-stat-second/5 border-stat-second/20">
               <CardContent className="pt-2 pb-2 text-center">
-                <div className="text-lg font-bold text-blue-400 dark:text-blue-500">{avgSecond}</div>
+                <div className="text-lg font-bold text-stat-second">{avgSecond}</div>
                 <div className="text-[10px] text-muted-foreground">2ND/gm</div>
               </CardContent>
             </Card>
-            <Card className="bg-orange-500/5 border-orange-500/20">
+            <Card className="bg-stat-blocks/5 border-stat-blocks/20">
               <CardContent className="pt-2 pb-2 text-center">
-                <div className="text-lg font-bold text-orange-600 dark:text-orange-400">{avgBlocks}</div>
+                <div className="text-lg font-bold text-stat-blocks">{avgBlocks}</div>
                 <div className="text-[10px] text-muted-foreground">BLK/gm</div>
               </CardContent>
             </Card>
@@ -1083,7 +1083,7 @@ export default function Roster() {
               ) : (
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <div className="text-xs font-medium text-blue-600 dark:text-blue-400 mb-2">Received from</div>
+                  <div className="text-xs font-medium text-stat-assists mb-2">Received from</div>
                   {pairings.received.length > 0 ? (
                     <div className="space-y-1.5">
                       {pairings.received.map(row => (
@@ -1096,7 +1096,7 @@ export default function Roster() {
                   ) : <span className="text-xs text-muted-foreground">No assisted goals yet</span>}
                 </div>
                 <div>
-                  <div className="text-xs font-medium text-green-600 dark:text-green-400 mb-2">Assisted to</div>
+                  <div className="text-xs font-medium text-stat-goals mb-2">Assisted to</div>
                   {pairings.given.length > 0 ? (
                     <div className="space-y-1.5">
                       {pairings.given.map(row => (
@@ -1132,11 +1132,11 @@ export default function Roster() {
                 <div className="flex items-center gap-2 px-3 text-[10px] text-muted-foreground font-medium">
                   <div className="flex-1">Game</div>
                   <div className="w-6 text-center">In</div>
-                  <div className="w-8 text-center text-primary">PTS</div>
-                  <div className="w-6 text-center text-green-600 dark:text-green-400">G</div>
-                  <div className="w-6 text-center text-blue-600 dark:text-blue-400">A</div>
-                  <div className="w-6 text-center text-blue-400 dark:text-blue-500">2ND</div>
-                  <div className="w-6 text-center text-orange-600 dark:text-orange-400">BLK</div>
+                  <div className="w-8 text-center text-stat-points">PTS</div>
+                  <div className="w-6 text-center text-stat-goals">G</div>
+                  <div className="w-6 text-center text-stat-assists">A</div>
+                  <div className="w-6 text-center text-stat-second">2ND</div>
+                  <div className="w-6 text-center text-stat-blocks">BLK</div>
                 </div>
                 <div className="max-h-[300px] overflow-y-auto space-y-1">
                   {filteredStats.map(stat => (
@@ -1160,11 +1160,11 @@ export default function Roster() {
                           className={`accent-primary w-3.5 h-3.5 ${can.record ? 'cursor-pointer' : 'cursor-default'}`}
                         />
                       </div>
-                      <div className="w-8 text-center font-bold text-primary text-xs">{stat.in ? stat.points : '-'}</div>
-                      <div className="w-6 text-center font-bold text-green-600 dark:text-green-400 text-xs">{stat.in ? stat.goals : '-'}</div>
-                      <div className="w-6 text-center font-bold text-blue-600 dark:text-blue-400 text-xs">{stat.in ? stat.assists : '-'}</div>
-                      <div className="w-6 text-center font-bold text-blue-400 dark:text-blue-500 text-xs">{stat.in ? stat.secondAssists : '-'}</div>
-                      <div className="w-6 text-center font-bold text-orange-600 dark:text-orange-400 text-xs">{stat.in ? stat.blocks : '-'}</div>
+                      <div className="w-8 text-center font-bold text-stat-points text-xs">{stat.in ? stat.points : '-'}</div>
+                      <div className="w-6 text-center font-bold text-stat-goals text-xs">{stat.in ? stat.goals : '-'}</div>
+                      <div className="w-6 text-center font-bold text-stat-assists text-xs">{stat.in ? stat.assists : '-'}</div>
+                      <div className="w-6 text-center font-bold text-stat-second text-xs">{stat.in ? stat.secondAssists : '-'}</div>
+                      <div className="w-6 text-center font-bold text-stat-blocks text-xs">{stat.in ? stat.blocks : '-'}</div>
                     </div>
                   ))}
                 </div>
@@ -1189,21 +1189,21 @@ export default function Roster() {
                 <div className="flex items-center gap-2 px-3 text-[10px] text-muted-foreground font-medium">
                   <div className="flex-1">Season</div>
                   <div className="w-8 text-center">GP</div>
-                  <div className="w-10 text-center text-primary">PTS</div>
-                  <div className="w-6 text-center text-green-600 dark:text-green-400">G</div>
-                  <div className="w-6 text-center text-blue-600 dark:text-blue-400">A</div>
-                  <div className="w-6 text-center text-blue-400 dark:text-blue-500">2ND</div>
-                  <div className="w-6 text-center text-orange-600 dark:text-orange-400">BLK</div>
+                  <div className="w-10 text-center text-stat-points">PTS</div>
+                  <div className="w-6 text-center text-stat-goals">G</div>
+                  <div className="w-6 text-center text-stat-assists">A</div>
+                  <div className="w-6 text-center text-stat-second">2ND</div>
+                  <div className="w-6 text-center text-stat-blocks">BLK</div>
                 </div>
                 {seasonTrend.map(row => (
                   <div key={row.seasonId} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-background">
                     <div className="flex-1 min-w-0 text-xs text-foreground truncate">{row.label}</div>
                     <div className="w-8 text-center text-xs text-muted-foreground">{row.games}</div>
-                    <div className="w-10 text-center font-bold text-primary text-xs">{row.points}</div>
-                    <div className="w-6 text-center font-bold text-green-600 dark:text-green-400 text-xs">{row.goals}</div>
-                    <div className="w-6 text-center font-bold text-blue-600 dark:text-blue-400 text-xs">{row.assists}</div>
-                    <div className="w-6 text-center font-bold text-blue-400 dark:text-blue-500 text-xs">{row.secondAssists}</div>
-                    <div className="w-6 text-center font-bold text-orange-600 dark:text-orange-400 text-xs">{row.blocks}</div>
+                    <div className="w-10 text-center font-bold text-stat-points text-xs">{row.points}</div>
+                    <div className="w-6 text-center font-bold text-stat-goals text-xs">{row.goals}</div>
+                    <div className="w-6 text-center font-bold text-stat-assists text-xs">{row.assists}</div>
+                    <div className="w-6 text-center font-bold text-stat-second text-xs">{row.secondAssists}</div>
+                    <div className="w-6 text-center font-bold text-stat-blocks text-xs">{row.blocks}</div>
                   </div>
                 ))}
               </div>

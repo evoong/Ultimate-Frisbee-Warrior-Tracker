@@ -2084,10 +2084,10 @@ export default function Schedule() {
                         className={`flex items-center gap-3 py-2 border-b border-border last:border-0 ${isDragging ? 'relative z-10 bg-card shadow-lg rounded-lg' : ''}`}
                         style={isDragging ? { transform: `translateY(${dragOffsetY}px)` } : undefined}
                       >
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${isGoal ? 'bg-green-100 dark:bg-green-950' : isOpponentGoal ? 'bg-red-100 dark:bg-red-950' : 'bg-orange-100 dark:bg-orange-950'}`}>
-                          {isGoal && <Target className="w-5 h-5 text-green-600 dark:text-green-400" />}
-                          {isOpponentGoal && <Target className="w-5 h-5 text-red-600 dark:text-red-400" />}
-                          {isTurnover && <TrendUp className="w-5 h-5 text-orange-600 dark:text-orange-400" />}
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${isGoal ? 'bg-stat-goals/10' : isOpponentGoal ? 'bg-destructive/10' : 'bg-stat-turnovers/10'}`}>
+                          {isGoal && <Target className="w-5 h-5 text-stat-goals" />}
+                          {isOpponentGoal && <Target className="w-5 h-5 text-destructive" />}
+                          {isTurnover && <TrendUp className="w-5 h-5 text-stat-turnovers" />}
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="font-medium text-foreground text-sm">
@@ -2122,7 +2122,7 @@ export default function Schedule() {
                           </div>
                         )}
                         {(isGoal || isOpponentGoal) && (
-                          <div className={`text-lg font-bold tabular-nums ml-1 ${isGoal ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>+1</div>
+                          <div className={`text-lg font-bold tabular-nums ml-1 ${isGoal ? 'text-stat-goals' : 'text-destructive'}`}>+1</div>
                         )}
                       </RowTag>
                     )
@@ -2657,11 +2657,11 @@ export default function Schedule() {
                     <tr className="text-xs text-muted-foreground font-medium border-b border-border">
                       <th className="w-8 text-center font-medium py-3">#</th>
                       <th className="text-left font-medium px-3 py-3">Player</th>
-                      <th className="w-12 text-center font-bold text-primary py-3">PTS</th>
-                      <th className="w-8 text-center font-medium text-green-600 dark:text-green-400 py-3">G</th>
-                      <th className="w-8 text-center font-medium text-blue-600 dark:text-blue-400 py-3">A</th>
-                      <th className="w-8 text-center font-medium text-blue-400 dark:text-blue-500 py-3">2ND</th>
-                      <th className="w-8 text-center font-medium text-orange-600 dark:text-orange-400 py-3">BLK</th>
+                      <th className="w-12 text-center font-bold text-stat-points py-3">PTS</th>
+                      <th className="w-8 text-center font-medium text-stat-goals py-3">G</th>
+                      <th className="w-8 text-center font-medium text-stat-assists py-3">A</th>
+                      <th className="w-8 text-center font-medium text-stat-second py-3">2ND</th>
+                      <th className="w-8 text-center font-medium text-stat-blocks py-3">BLK</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/50">
@@ -2669,11 +2669,11 @@ export default function Schedule() {
                       <tr key={p.name} className="hover:bg-accent/5 transition-colors">
                         <td className="text-center text-muted-foreground py-3 text-xs">{i + 1}</td>
                         <td className="px-3 py-3 font-medium text-foreground">{p.name}</td>
-                        <td className="w-12 text-center font-black text-primary py-3">{p.points}</td>
-                        <td className="w-8 text-center font-bold text-green-600 dark:text-green-400 py-3">{p.goals}</td>
-                        <td className="w-8 text-center font-bold text-blue-600 dark:text-blue-400 py-3">{p.assists}</td>
-                        <td className="w-8 text-center font-bold text-blue-400 dark:text-blue-500 py-3">{p.secondAssists}</td>
-                        <td className="w-8 text-center font-bold text-orange-600 dark:text-orange-400 py-3">{p.blocks}</td>
+                        <td className="w-12 text-center font-black text-stat-points py-3">{p.points}</td>
+                        <td className="w-8 text-center font-bold text-stat-goals py-3">{p.goals}</td>
+                        <td className="w-8 text-center font-bold text-stat-assists py-3">{p.assists}</td>
+                        <td className="w-8 text-center font-bold text-stat-second py-3">{p.secondAssists}</td>
+                        <td className="w-8 text-center font-bold text-stat-blocks py-3">{p.blocks}</td>
                       </tr>
                     ))}
                   </tbody>

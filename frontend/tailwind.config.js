@@ -32,6 +32,14 @@ export default {
         },
         "gender-man": "hsl(var(--gender-man))",
         "gender-woman": "hsl(var(--gender-woman))",
+        stat: {
+          goals: "hsl(var(--stat-goals))",
+          assists: "hsl(var(--stat-assists))",
+          turnovers: "hsl(var(--stat-turnovers))",
+          points: "hsl(var(--stat-points))",
+          second: "hsl(var(--stat-second))",
+          blocks: "hsl(var(--stat-blocks))",
+        },
         muted: {
           DEFAULT: "hsl(var(--muted))",
           foreground: "hsl(var(--muted-foreground))",
