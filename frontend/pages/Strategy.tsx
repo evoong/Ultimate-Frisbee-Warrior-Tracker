@@ -47,10 +47,13 @@ const TRANSITION_SPEEDS = [
   { label: 'Fast', ms: 350 },
   { label: 'Off', ms: 0 },
 ] as const
+// Default is "Slow" — players visibly glide between steps out of the box.
 const DEFAULT_TRANSITION_MS: number = 1200
 
 function loadTransitionMs(): number {
-  const stored = Number(localStorage.getItem(TRANSITION_SPEED_KEY))
+  const raw = localStorage.getItem(TRANSITION_SPEED_KEY)
+  if (raw === null) return DEFAULT_TRANSITION_MS
+  const stored = Number(raw)
   return TRANSITION_SPEEDS.some(s => s.ms === stored) ? stored : DEFAULT_TRANSITION_MS
 }
 
@@ -265,6 +268,22 @@ export default function Strategy() {
     if (highlightRows) setHighlights(highlightRows)
     if (lineRows) setLines(lineRows)
   }
+
+  // When switching steps, players slide to their new positions over transitionMs.
+  // Smoothly fade out the arrows, wait for players to move, then fade the new step's arrows back in.
+  const [arrowsVisible, setArrowsVisible] = useState(true)
+  const prevStepIdRef = useRef(selectedStepId)
+  useEffect(() => {
+    if (prevStepIdRef.current === selectedStepId) return
+    prevStepIdRef.current = selectedStepId
+    if (transitionMs === 0) {
+      setArrowsVisible(true)
+      return
+    }
+    setArrowsVisible(false)
+    const t = window.setTimeout(() => setArrowsVisible(true), transitionMs)
+    return () => window.clearTimeout(t)
+  }, [selectedStepId, transitionMs])
 
   useEffect(() => {
     if (selectedStepId !== null) loadStepData(selectedStepId)
@@ -1159,6 +1178,7 @@ export default function Strategy() {
               opponents={opponents}
               textBoxes={textBoxes}
               arrows={arrows}
+              arrowsVisible={arrowsVisible}
               highlights={highlights}
               lines={lines}
               allowed={can.record}

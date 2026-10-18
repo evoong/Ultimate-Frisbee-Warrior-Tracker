@@ -149,6 +149,7 @@ export default function StrategyBoard({
   onCreateHighlight, onUpdateHighlightColor, onUpdateHighlightPoints, onUpdateHighlightLocked, onDeleteHighlight,
   onCreateLine, onUpdateLineColor, onUpdateLinePoints, onUpdateLineLocked, onDeleteLine,
   onGroupMove, onDeleteMany,
+  arrowsVisible = true,
   transitionMs = 700,
 }: {
   players: BoardPlayer[]
@@ -185,6 +186,9 @@ export default function StrategyBoard({
   onDeleteLine: (id: number) => void
   onGroupMove: (moves: EntityMove[], phase: 'start' | 'preview' | 'commit' | 'cancel') => void
   onDeleteMany: (items: SelectedItem[]) => void
+  // Fades arrows out when a step switch starts and back in once players have
+  // finished sliding to the new step (see Strategy.tsx).
+  arrowsVisible?: boolean
   // How long the slide between steps takes, in ms. Set from the Strategy
   // page's Settings menu (persisted in localStorage); the Tailwind duration
   // classes can't take a runtime value, so this drives an inline
@@ -1834,7 +1838,15 @@ export default function StrategyBoard({
             const midCanonical = onCurveMidpoint(a)
             const mid = toViewBox(midCanonical.x, midCanonical.y)
             return (
-              <g key={a.id}>
+              <g
+                key={a.id}
+                style={{
+                  opacity: arrowsVisible ? 1 : 0,
+                  transition: 'opacity 350ms',
+                  // Invisible arrows shouldn't be tappable mid-transition.
+                  pointerEvents: arrowsVisible ? undefined : 'none',
+                }}
+              >
                 {/* wide, invisible hit path so thin arrows stay easy to tap */}
                 <path d={d} stroke="transparent" strokeWidth={3} fill="none" style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
                   onPointerDown={(e) => {
