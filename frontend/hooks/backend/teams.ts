@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabase'
-import type { TeamRole } from '../../lib/authClient'
+import { sendInviteEmail, type TeamRole } from '../../lib/authClient'
 
 type HookResult<T, P = void> = {
   data: T | undefined
@@ -88,6 +88,10 @@ export function useInviteMember() {
       p_role: params.role,
     })
     if (error) throw new Error(error.message)
+    // The invite row is already saved; a mail failure is reported but does not undo it.
+    await sendInviteEmail(params.teamId, params.email).catch(err => {
+      throw new Error(`Invite saved, but the email could not be sent: ${err instanceof Error ? err.message : err}`)
+    })
     return true
   }, [])
   return useApiCall<boolean, { teamId: number; email: string; role: 'member' | 'editor' }>(fn)

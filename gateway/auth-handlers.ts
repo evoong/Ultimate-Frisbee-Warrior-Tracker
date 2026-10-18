@@ -456,6 +456,37 @@ export async function handleAuthRequest(
       return json({ ok: true })
     }
 
+    // Emails a pending invite through Supabase Auth's own mailer (the same one
+    // that sends signup-confirmation and recovery mail): a magic link for an
+    // existing account, a confirm-signup mail for a new one. Either way, signing
+    // in afterwards runs accept_invite() on /auth/session.
+    case 'POST /auth/invite-email': {
+      const { accessToken, setCookies } = await resolveAccessToken(config, request, url)
+      if (!accessToken) return json({ error: 'not authenticated' }, 401, setCookies)
+      const { teamId, email } = await readJsonBody(request)
+      if (typeof teamId !== 'number' || !Number.isInteger(teamId) || typeof email !== 'string') {
+        return json({ error: 'teamId and email are required' }, 400, setCookies)
+      }
+      const target = email.trim().toLowerCase()
+      // team_invites is readable only by the team's captains/editors (RLS), so
+      // finding the pending invite with the CALLER's token is the permission
+      // check -- this endpoint never mails an address nobody invited.
+      const lookup = await fetch(
+        `${config.supabaseUrl}/rest/v1/team_invites?select=id&team_id=eq.${teamId}&email=eq.${encodeURIComponent(target)}&accepted_at=is.null`,
+        { headers: { apikey: config.publishableKey, Authorization: `Bearer ${accessToken}` } }
+      )
+      if (!lookup.ok) return json({ error: 'Service Unavailable' }, 503, setCookies)
+      const rows: unknown = await lookup.json()
+      if (!Array.isArray(rows) || rows.length === 0) return json({ error: 'no such pending invite' }, 404, setCookies)
+      // /otp would otherwise recreate an account that was deliberately deleted.
+      const deleted = await checkEmailDeletedStatus(config, target)
+      if (deleted === 'deleted') return json({ error: 'That account was deleted and cannot be invited.' }, 403, setCookies)
+      if (deleted === 'error') return json({ error: 'Service Unavailable' }, 503, setCookies)
+      const { status, data } = await supabaseAuth(config, '/otp', { body: { email: target, create_user: true } })
+      if (status !== 200) return json({ error: authErrorMessage(data) }, status === 429 ? 429 : 400, setCookies)
+      return json({ ok: true }, 200, setCookies)
+    }
+
     case 'POST /auth/reset-password': {
       const { accessToken, setCookies } = await resolveAccessToken(config, request, url)
       if (!accessToken) return json({ error: 'not authenticated' }, 401)
