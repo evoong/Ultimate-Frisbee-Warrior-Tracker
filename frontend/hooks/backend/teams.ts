@@ -93,6 +93,39 @@ export function useInviteMember() {
   return useApiCall<boolean, { teamId: number; email: string; role: 'member' | 'editor' }>(fn)
 }
 
+export type JoinRequest = {
+  id: number
+  team_id: number
+  user_id: string
+  email: string
+}
+
+// RLS returns the caller's own requests plus, for managers, their teams'.
+export function useGetJoinRequests() {
+  const fn = useCallback(async (params: { teamId?: number } = {}) => {
+    let q = supabase.from('team_join_requests').select('id,team_id,user_id,email').order('created_at')
+    if (params.teamId != null) q = q.eq('team_id', params.teamId)
+    const { data, error } = await q
+    if (error) throw new Error(error.message)
+    return (data ?? []) as JoinRequest[]
+  }, [])
+  return useApiCall<JoinRequest[], { teamId?: number }>(fn)
+}
+
+function useJoinRequestRpc(rpc: string, arg: 'p_team_id' | 'p_request_id') {
+  const fn = useCallback(async (params: { id: number }) => {
+    const { error } = await supabase.rpc(rpc, { [arg]: params.id })
+    if (error) throw new Error(error.message)
+    return true
+  }, [rpc, arg])
+  return useApiCall<boolean, { id: number }>(fn)
+}
+
+export const useRequestToJoin = () => useJoinRequestRpc('request_to_join', 'p_team_id')
+export const useCancelJoinRequest = () => useJoinRequestRpc('cancel_join_request', 'p_request_id')
+export const useApproveJoinRequest = () => useJoinRequestRpc('approve_join_request', 'p_request_id')
+export const useDenyJoinRequest = () => useJoinRequestRpc('deny_join_request', 'p_request_id')
+
 export function useRevokeInvite() {
   const fn = useCallback(async (params: { inviteId: number }) => {
     const { error } = await supabase.rpc('revoke_invite', { p_invite_id: params.inviteId })
