@@ -361,6 +361,7 @@ export default function Schedule() {
   const [lineupName, setLineupName] = useState('Lineup 1')
   const [lineupPopoverOpen, setLineupPopoverOpen] = useState(false)
   const [lineupSearch, setLineupSearch] = useState('')
+  const [addingLineupSub, setAddingLineupSub] = useState(false)
   const [copyingLineup, setCopyingLineup] = useState(false)
   const [showCopyLineupDialog, setShowCopyLineupDialog] = useState(false)
   const [selectedCopyGameId, setSelectedCopyGameId] = useState<number | null>(null)
@@ -1178,19 +1179,24 @@ export default function Schedule() {
   const handleCreateSubForLineup = async (name: string) => {
     if (!selectedGame || !name.trim()) return
     const trimmed = name.trim()
-    const result = await createPlayerForGame({
-      display_name: trimmed,
-      gameId: selectedGame.id,
-      seasonId: selectedGameSeasonId,
-      organizationId: currentTeamId,
-      lineupName,
-    })
-    if (result) {
-      track('player_created', { game_id: selectedGame.id, source: 'lineup_sub' })
-      setLineupSearch('')
-      await refreshRoster()
-      fetchAttendance({ gameId: selectedGame.id })
-      fetchLineups({ gameId: selectedGame.id })
+    setAddingLineupSub(true)
+    try {
+      const result = await createPlayerForGame({
+        display_name: trimmed,
+        gameId: selectedGame.id,
+        seasonId: selectedGameSeasonId,
+        organizationId: currentTeamId,
+        lineupName,
+      })
+      if (result) {
+        track('player_created', { game_id: selectedGame.id, source: 'lineup_sub' })
+        setLineupSearch('')
+        await refreshRoster()
+        fetchAttendance({ gameId: selectedGame.id })
+        fetchLineups({ gameId: selectedGame.id })
+      }
+    } finally {
+      setAddingLineupSub(false)
     }
   }
 
@@ -2252,15 +2258,31 @@ export default function Schedule() {
                                   type="button"
                                   size="sm"
                                   variant="outline"
+                                  disabled={addingLineupSub}
                                   onClick={() => handleCreateSubForLineup(lineupSearch)}
                                   className="h-7 text-xs bg-primary/10 text-primary hover:bg-primary/20 border-primary/20"
                                 >
                                   <Plus className="w-3 h-3 mr-1" />
-                                  Add "{lineupSearch}" as sub
+                                  {addingLineupSub ? 'Adding...' : `Add "${lineupSearch}" as sub`}
                                 </Button>
                               )}
                             </div>
                           </CommandEmpty>
+                          {can.record && lineupSearch.trim() && !lineupCandidates.some(p => p.display_name.trim().toLowerCase() === lineupSearch.trim().toLowerCase()) && (
+                            <div className="p-1 border-b">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                disabled={addingLineupSub}
+                                onClick={() => handleCreateSubForLineup(lineupSearch)}
+                                className="w-full justify-start h-8 text-xs font-normal text-primary hover:text-primary hover:bg-primary/10"
+                              >
+                                <Plus className="w-3.5 h-3.5 mr-1.5" />
+                                {addingLineupSub ? 'Adding sub...' : `Add "${lineupSearch}" as sub`}
+                              </Button>
+                            </div>
+                          )}
                           <CommandGroup>
                             <div className="grid grid-cols-2 gap-x-1">
                               {lineupCandidates.map(p => {
