@@ -23,6 +23,9 @@ import {
   useGetTeamInvites,
   useInviteMember,
   useRevokeInvite,
+  useGetJoinRequests,
+  useApproveJoinRequest,
+  useDenyJoinRequest,
   useSetMemberRole,
   useRemoveMember,
   useUpdateTeam,
@@ -271,6 +274,9 @@ export default function OrganizationSettingsDialog({ open, onOpenChange, tier, i
   const invites = useGetTeamInvites()
   const invite = useInviteMember()
   const revoke = useRevokeInvite()
+  const joinRequests = useGetJoinRequests()
+  const approveJoin = useApproveJoinRequest()
+  const denyJoin = useDenyJoinRequest()
   const setRole = useSetMemberRole()
   const removeMember = useRemoveMember()
   const updateTeam = useUpdateTeam()
@@ -303,6 +309,7 @@ export default function OrganizationSettingsDialog({ open, onOpenChange, tier, i
       if (currentTeamId != null && can.manageTeam) {
         void members.trigger({ teamId: currentTeamId })
         void invites.trigger({ teamId: currentTeamId })
+        void joinRequests.trigger({ teamId: currentTeamId })
         void playerLinks.trigger({ teamId: currentTeamId })
       }
     }
@@ -718,6 +725,55 @@ export default function OrganizationSettingsDialog({ open, onOpenChange, tier, i
                     </ul>
                   )}
                 </div>
+              </section>
+
+              <section>
+                <SectionHeading count={joinRequests.data?.length}>Join requests</SectionHeading>
+                {(approveJoin.error || denyJoin.error) && (
+                  <div className="mb-3">
+                    <ErrorNote>{approveJoin.error || denyJoin.error}</ErrorNote>
+                  </div>
+                )}
+                {joinRequests.data?.length ? (
+                  <ul className="-mx-2 divide-y divide-border/60">
+                    {joinRequests.data.map(r => (
+                      <li key={r.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-2 py-2">
+                        <InitialDisc initials={r.email.slice(0, 1)} />
+                        <p className="min-w-0 flex-1 truncate text-sm">{r.email}</p>
+                        <Button
+                          size="sm"
+                          className="h-9 shrink-0 sm:h-8"
+                          onClick={async () => {
+                            const ok = await approveJoin.trigger({ id: r.id })
+                            if (ok) {
+                              track('team_join_request_approved', { request_id: r.id })
+                              if (currentTeamId != null) {
+                                await joinRequests.trigger({ teamId: currentTeamId })
+                                await members.trigger({ teamId: currentTeamId })
+                              }
+                            }
+                          }}
+                        >
+                          <Check className="mr-1.5 size-3.5" />
+                          Approve
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-9 shrink-0 px-2 text-xs text-muted-foreground hover:text-destructive sm:h-8"
+                          onClick={async () => {
+                            const ok = await denyJoin.trigger({ id: r.id })
+                            if (ok && currentTeamId != null) await joinRequests.trigger({ teamId: currentTeamId })
+                          }}
+                        >
+                          Deny
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <EmptyNote>No one has asked to join.</EmptyNote>
+                )}
               </section>
 
               {/* Player claims: a member picked which roster player is them
