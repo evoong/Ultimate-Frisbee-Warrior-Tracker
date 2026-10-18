@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { RankingMode } from './league'
 import { isTurnoverEvent } from '../../lib/eventUtils'
 import { isPastGame } from '../../lib/gameOrder'
+import { calculatePoints } from '../../lib/scoring'
 
 type HookResult<T, P = void> = {
   data: T | undefined
@@ -140,7 +141,7 @@ export function useGetPlayerStats() {
 
     let eventsQuery = supabase
       .from('game_events')
-      .select('player_id, related_player_id, event_type, game_id')
+      .select('player_id, related_player_id, secondary_assister_id, event_type, game_id')
     if (scopedGameIds) eventsQuery = eventsQuery.in('game_id', scopedGameIds)
     if (params.tier === 'free') {
       eventsQuery = eventsQuery.gte('event_timestamp', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
@@ -196,6 +197,8 @@ export function useGetPlayerStats() {
             player_name: playerData.display_name,
             goals: 0,
             assists: 0,
+            second_assists: 0,
+            blocks: 0,
             turnovers: 0,
             games_played: new Set<number>(),
           })
@@ -205,6 +208,7 @@ export function useGetPlayerStats() {
         stats.games_played.add(event.game_id)
 
         if (event.event_type === 'Goal') stats.goals++
+        else if (event.event_type === 'Block') stats.blocks++
         else if (isTurnoverEvent(event.event_type)) stats.turnovers++
       }
 
@@ -219,6 +223,8 @@ export function useGetPlayerStats() {
               player_name: assisterData.display_name,
               goals: 0,
               assists: 0,
+              second_assists: 0,
+              blocks: 0,
               turnovers: 0,
               games_played: new Set<number>(),
             })
@@ -228,26 +234,54 @@ export function useGetPlayerStats() {
           assisterStats.games_played.add(event.game_id)
         }
       }
+
+      // Credit 2nd assist to the secondary assister on a Goal (2ND, half value)
+      if (event.event_type === 'Goal' && event.secondary_assister_id) {
+        const secondAssisterId = event.secondary_assister_id
+        const secondAssisterData = playersMap.get(secondAssisterId)
+        if (secondAssisterData) {
+          if (!statsMap.has(secondAssisterId)) {
+            statsMap.set(secondAssisterId, {
+              player_id: secondAssisterId,
+              player_name: secondAssisterData.display_name,
+              goals: 0,
+              assists: 0,
+              second_assists: 0,
+              blocks: 0,
+              turnovers: 0,
+              games_played: new Set<number>(),
+            })
+          }
+          const secondAssisterStats = statsMap.get(secondAssisterId)!
+          secondAssisterStats.second_assists++
+          secondAssisterStats.games_played.add(event.game_id)
+        }
+      }
     })
 
     // Convert to array and calculate additional fields
     const result = Array.from(statsMap.values()).map((s: any) => {
       const attended = attendanceMap.get(s.player_id) ?? new Set<number>()
       const gamesPlayed = [...attended].filter(gid => playedGameIds.has(gid) && (!filteredGameIds || filteredGameIds.has(gid))).length
-      return { ...s, games_played: gamesPlayed, ga_rank: 0 }
+      // Warrior points: SC 500, AS 500, 2ND 250, DEF 500 (lib/scoring.ts is
+      // the single source of truth for the values).
+      const points = calculatePoints({
+        goals: s.goals, assists: s.assists,
+        secondAssists: s.second_assists, blocks: s.blocks,
+      })
+      return { ...s, points, games_played: gamesPlayed, ga_rank: 0 }
     })
 
-    // Rank by goals+assists first
+    // Rank by points descending
     result.sort((a: any, b: any) => {
-      const getGa = (p: any) => p.goals + p.assists
-      const gaDiff = getGa(b) - getGa(a)
-      if (gaDiff !== 0) return gaDiff
+      const pointsDiff = b.points - a.points
+      if (pointsDiff !== 0) return pointsDiff
       
       const goalsDiff = b.goals - a.goals
       if (goalsDiff !== 0) return goalsDiff
       
-      const aRate = a.games_played > 0 ? getGa(a) / a.games_played : 0
-      const bRate = b.games_played > 0 ? getGa(b) / b.games_played : 0
+      const aRate = a.games_played > 0 ? a.points / a.games_played : 0
+      const bRate = b.games_played > 0 ? b.points / b.games_played : 0
       return bRate - aRate
     })
 
@@ -255,18 +289,17 @@ export function useGetPlayerStats() {
     const mode = params.mode ?? 'standard'
     let rank = 0
     result.forEach((s: any, i: number) => {
-        const getGa = (p: any) => p.goals + p.assists
         if (mode === 'row') {
             s.ga_rank = i + 1
         } else if (mode === 'standard') {
-            if (i > 0 && getGa(s) === getGa(result[i-1]) && s.goals === result[i-1].goals) {
+            if (i > 0 && s.points === result[i-1].points && s.goals === result[i-1].goals) {
                 s.ga_rank = result[i-1].ga_rank
             } else {
                 s.ga_rank = i + 1
             }
         } else {
             if (i === 0) rank = 1
-            else if (getGa(s) !== getGa(result[i-1]) || s.goals !== result[i-1].goals) {
+            else if (s.points !== result[i-1].points || s.goals !== result[i-1].goals) {
                 rank++
             }
             s.ga_rank = rank
@@ -348,11 +381,15 @@ export function useGetAssistPairings() {
 }
 
 export function useGetCumulativeStats() {
-  const fn = useCallback(async (params: { organizationId: number | null; seasonId?: number }) => {
-    // Fetch the season's games first so events can be filtered server-side
+  const fn = useCallback(async (params: { organizationId: number | null; seasonIds?: number[]; gameIds?: number[] }) => {
+    // Fetch the games first so events can be filtered server-side
     // (supabase caps unfiltered fetches at 1000 rows)
     let gamesQuery = supabase.from('games').select('id, opponent, game_date, season_id').eq('organization_id', params.organizationId)
-    if (params?.seasonId != null) gamesQuery = gamesQuery.eq('season_id', params.seasonId)
+    if (params?.seasonIds != null && params.seasonIds.length > 0) {
+      gamesQuery = gamesQuery.in('season_id', params.seasonIds)
+    } else if (params?.gameIds != null && params.gameIds.length > 0) {
+      gamesQuery = gamesQuery.in('id', params.gameIds)
+    }
     const { data: games, error: gamesError } = await gamesQuery
     if (gamesError) throw new Error(gamesError.message)
 
@@ -361,9 +398,11 @@ export function useGetCumulativeStats() {
     let eventsQuery = supabase
       .from('game_events')
       .select('player_id, related_player_id, event_type, game_id')
-    if (params?.seasonId != null) {
+    
+    if ((games ?? []).length > 0) {
       eventsQuery = eventsQuery.in('game_id', (games ?? []).map((g: any) => g.id))
     }
+    
     const { data: events, error: eventsError } = await eventsQuery
     if (eventsError) throw new Error(eventsError.message)
     if (!events) return []
@@ -415,5 +454,5 @@ export function useGetCumulativeStats() {
     })
     return rows
   }, [])
-  return useApiCall<any[], { organizationId: number | null; seasonId?: number }>(fn)
+  return useApiCall<any[], { organizationId: number | null; seasonIds?: number[]; gameIds?: number[] }>(fn)
 }

@@ -34,7 +34,7 @@ import ChemistryHub from '../components/stats/ChemistryHub'
 import AssistMatrix from '../components/stats/AssistMatrix'
 import ProgressionChart from '../components/stats/ProgressionChart'
 import {
-  ALL_SEASONS, shortName,
+  shortName,
   type ChemistryPair, type FilterMode, type MatrixEdge, type PlayerLine,
   type ProgressionPoint, type ProgressionStat, type SeriesKey, type TeamLine,
 } from '../components/stats/types'
@@ -261,7 +261,6 @@ export default function Stats() {
           filterType={filterType}
           selectedSeasonIds={selectedSeasonIds}
           selectedGameIds={selectedGameIds}
-          defaultSeasonId={defaultSeasonId}
           tier={entitlement.tier}
         />
       )}
@@ -274,7 +273,7 @@ export default function Stats() {
 // duplicated the same filter UI and query); only the content below the
 // filters differs by tab.
 function PlayerStatsView({
-  tab, games, allSeasons, filterType, selectedSeasonIds, selectedGameIds, defaultSeasonId, tier,
+  tab, games, allSeasons, filterType, selectedSeasonIds, selectedGameIds, tier,
 }: {
   tab: 'me' | 'overview' | 'table'
   /** Hoisted to Stats() along with the filter below -- see the comment there. */
@@ -283,8 +282,6 @@ function PlayerStatsView({
   filterType: FilterMode
   selectedSeasonIds: number[]
   selectedGameIds: number[]
-  /** The season the page opened on; seeds the progression chart's own picker. */
-  defaultSeasonId: number | null
   tier: string | null
 }) {
   const { currentTeamId, user } = useAuth()
@@ -306,10 +303,6 @@ function PlayerStatsView({
   const [networkSelectedId, setNetworkSelectedId] = useState<number | null>(null)
   const [includeSubsInNetwork, setIncludeSubsInNetwork] = useState(true)
 
-  // ALL_SEASONS (-1) means "every game"; null means "not resolved yet", which
-  // is what keeps the fetch below from firing an all-time query on mount and
-  // then immediately refiring for the default season.
-  const [cumulativeSeasonId, setCumulativeSeasonId] = useState<number | null>(null)
   const [cumulativeStat, setCumulativeStat] = useState<ProgressionStat>('ga')
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<number[]>([])
 
@@ -317,12 +310,6 @@ function PlayerStatsView({
     if (currentTeamId == null) return
     fetchOrgPlayers({ organizationId: currentTeamId })
   }, [currentTeamId])
-
-  // The progression chart has its own season picker, independent of the page
-  // filter; it just opens on the same season the page did.
-  useEffect(() => {
-    if (defaultSeasonId != null && cumulativeSeasonId == null) setCumulativeSeasonId(defaultSeasonId)
-  }, [defaultSeasonId])
 
   const [playerRankingMode, setPlayerRankingMode] = useState<RankingMode>('standard')
   
@@ -349,17 +336,22 @@ function PlayerStatsView({
     }
   }, [filterType, selectedSeasonIds, selectedGameIds, currentTeamId, tier, playerRankingMode])
 
+  // The progression chart no longer has its own season picker — it follows
+  // the page filter above, exactly like the stats and pairings fetches do.
   useEffect(() => {
-    if (currentTeamId == null || cumulativeSeasonId == null) return
-    if (cumulativeSeasonId !== ALL_SEASONS) {
-      fetchCumulative({ seasonId: cumulativeSeasonId, organizationId: currentTeamId })
-      fetchProgressionRoster({ seasonIds: [cumulativeSeasonId], organizationId: currentTeamId })
+    if (currentTeamId == null) return
+    if (filterType === 'season' && selectedSeasonIds.length > 0) {
+      fetchCumulative({ seasonIds: selectedSeasonIds, organizationId: currentTeamId })
+      fetchProgressionRoster({ seasonIds: selectedSeasonIds, organizationId: currentTeamId })
+    } else if (filterType === 'games' && selectedGameIds.length > 0) {
+      fetchCumulative({ gameIds: selectedGameIds, organizationId: currentTeamId })
+      fetchProgressionRoster({ organizationId: currentTeamId })
     } else {
       fetchCumulative({ organizationId: currentTeamId })
       fetchProgressionRoster({ organizationId: currentTeamId })
     }
     setSelectedPlayerIds([])
-  }, [cumulativeSeasonId, currentTeamId])
+  }, [filterType, selectedSeasonIds, selectedGameIds, currentTeamId])
 
   // "Me" tab only: who am I on this roster, and which players are already
   // spoken for (pending or approved) so the claim picker doesn't offer a
@@ -461,10 +453,16 @@ function PlayerStatsView({
     const rows = cumulativeRaw as CumulativeRow[] | undefined
     if (!rows || rows.length === 0) return { lineData: [], allPlayersForSelection: [], topPlayers: [] }
 
-    // Build game order from ALL games in the season (not just games with events),
-    // so the chart shows a flat segment for games where a player had zero contributions.
+    // Build game order from ALL games the filter covers (not just games
+    // with events), so the chart shows a flat segment for games where a
+    // player had zero contributions.
     const allGamesForSeason = ((games as Game[] | undefined) ?? [])
-      .filter(g => cumulativeSeasonId === ALL_SEASONS || g.season_id === cumulativeSeasonId)
+      .filter(g => {
+        if (!isPastGame(g)) return false
+        if (filterType === 'season' && selectedSeasonIds.length > 0) return g.season_id != null && selectedSeasonIds.includes(g.season_id)
+        if (filterType === 'games' && selectedGameIds.length > 0) return selectedGameIds.includes(g.id)
+        return true
+      })
       .slice() // date-desc from hook, so reverse for chronological order
       .reverse()
     const gameOrder: { game_id: number; opponent: string; game_date: string }[] = allGamesForSeason.map(g => ({
@@ -531,7 +529,7 @@ function PlayerStatsView({
     })
 
     return { lineData, allPlayersForSelection, topPlayers: displayPlayers }
-  }, [cumulativeRaw, cumulativeStat, selectedPlayerIds, games, cumulativeSeasonId, progressionRoster])
+  }, [cumulativeRaw, cumulativeStat, selectedPlayerIds, games, filterType, selectedSeasonIds, selectedGameIds, progressionRoster])
 
   // ── Team line ───────────────────────────────────────────────────────────
   // The games the current filter actually covers. This is the denominator for
@@ -799,18 +797,14 @@ function PlayerStatsView({
             emptyLabel={filterType === 'games' && selectedGameIds.length === 0 ? 'Select games to view stats' : 'No assisted goals in this range yet'}
           />
 
-          {/* Cumulative output, focus + dim. The season and player pickers
-              live inside the panel because they scope this chart alone, not
-              the page -- the page's own scope is the header's FilterBar. */}
+          {/* Cumulative output, focus + dim. The chart follows the page
+              filter — the header's FilterBar — so no season picker here. */}
           <ProgressionChart
             data={lineData as ProgressionPoint[]}
             players={topPlayers}
             roster={allPlayersForSelection}
             selectedPlayerIds={selectedPlayerIds}
             onSelectedPlayerIdsChange={setSelectedPlayerIds}
-            seasons={(allSeasons as Season[] | undefined) ?? []}
-            seasonId={cumulativeSeasonId ?? ALL_SEASONS}
-            onSeasonChange={setCumulativeSeasonId}
             stat={cumulativeStat}
             onStatChange={setCumulativeStat}
             loading={cumulativeLoading || cumulativeRaw === undefined}

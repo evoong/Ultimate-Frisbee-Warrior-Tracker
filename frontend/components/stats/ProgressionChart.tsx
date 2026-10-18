@@ -5,10 +5,10 @@ import { useFlags } from '../../lib/features'
 import { Skeleton } from '../../lib/shadcn/skeleton'
 import Swap from '../Swap'
 import Segmented from './Segmented'
-import { MultiPicker, SinglePicker } from './Picker'
+import { MultiPicker } from './Picker'
 import {
-  ALL_SEASONS, seasonLabel, shortName,
-  type ProgressionPlayer, type ProgressionPoint, type ProgressionStat, type SeasonOption,
+  shortName,
+  type ProgressionPlayer, type ProgressionPoint, type ProgressionStat,
 } from './types'
 import './stats-theme.css'
 
@@ -76,7 +76,7 @@ function ProgressionTooltip({ active, payload, label, players, focusId }: any) {
 
 export default function ProgressionChart({
   data, players, roster, selectedPlayerIds, onSelectedPlayerIdsChange,
-  seasons, seasonId, onSeasonChange, stat, onStatChange, loading,
+  stat, onStatChange, loading,
 }: {
   data: ProgressionPoint[]
   /** The lines actually drawn — the explicit selection, or the top 8. */
@@ -85,9 +85,6 @@ export default function ProgressionChart({
   roster: { id: number; name: string; total: number }[]
   selectedPlayerIds: number[]
   onSelectedPlayerIdsChange: (ids: number[]) => void
-  seasons: SeasonOption[]
-  seasonId: number
-  onSeasonChange: (id: number) => void
   stat: ProgressionStat
   onStatChange: (stat: ProgressionStat) => void
   loading: boolean
@@ -119,10 +116,6 @@ export default function ProgressionChart({
   const drawable = data.length > 0 && players.length > 0
   const cold = loading && !drawable
   const busy = loading && drawable
-  const seasonItems = [
-    { id: ALL_SEASONS, label: 'All games' },
-    ...seasons.map(s => ({ id: s.id, label: seasonLabel(s) })),
-  ]
 
   return (
     <section className="st-panel">
@@ -131,13 +124,6 @@ export default function ProgressionChart({
           <ChartLine className="h-3.5 w-3.5" weight="bold" />
           Season progression
         </span>
-        <SinglePicker
-          items={seasonItems}
-          selectedId={seasonId}
-          onChange={onSeasonChange}
-          placeholder="All games"
-          emptyLabel="No seasons yet"
-        />
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[hsl(var(--st-rule))] px-3 py-2.5 sm:px-4">
