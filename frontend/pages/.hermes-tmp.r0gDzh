@@ -1,0 +1,2421 @@
+import { useEffect, useState, useRef } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import { useGetGames, useGetGame, useCreateGame, useUpdateGame, useDeleteGame, useGetLineups, useAddToLineup, useRemoveFromLineup, useMoveLineupEntry, useUpdateLineupSortOrder, useUpdateLineupRole, useGetLineupGroups, useCreateLineupGroup, useRenameLineupGroup, useReorderLineupGroups, useDeleteLineupGroup, useGetRecentLineupGames, useGetLineupTemplates, useGetLineupTemplateDetail, useSaveLineupTemplate, useDeleteLineupTemplate, type LineupGroup, type LineupTemplate, type RecentLineupGame } from '../hooks/backend/games'
+import { useGetGameEvents, useCreateGoalEvent, useCreateOpponentGoalEvent, useDeleteEvent, useUpdateEvent, useUpdateEventTimestamp, useGetEventTypes, useCreateEventType } from '../hooks/backend/events'
+import { useGetSeasonRoster, useGetPlayersNotInSeason, useCreatePlayerForGame, useDeleteSubPlayer, useAddPlayerToGame } from '../hooks/backend/players'
+import { useGetAllSeasons, useGetSeasons, useCreateSeason, useUpdateSeason, useGetSeasonsMeta, useGetPlayerStats } from '../hooks/backend/stats'
+import { useGetGameAttendance } from '../hooks/backend/attendance'
+import { useGetJamSyncConflicts, useSyncJamNow, useCreateGameFromConflict, useLinkConflictToGame, useDismissConflict, type JamSyncConflict } from '../hooks/backend/jamSync'
+import { useGetLeagueTeams } from '../hooks/backend/league'
+import { getDefaultJamSeasonId, getDefaultSeasonForPlayer } from '../lib/seasonUtils'
+import { useMyPlayerLink, useMyPlayerSeasonIds } from '../hooks/backend/playerLink'
+import { useGameEventPolling } from '../hooks/useGameEventPolling'
+import { track } from '../lib/analytics'
+import { POSITIONS } from '../lib/positions'
+import { isTurnoverEvent } from '../lib/eventUtils'
+import { shouldShowEventsLoading } from '../lib/eventLoading'
+import { useFlags } from '../lib/features'
+import { sortGamesUpcomingFirst, isPastGame, isWithinLivePollWindow, isActualGame } from '../lib/gameOrder'
+import { todayLocalStr } from '../lib/seasonUtils'
+import { Card, CardContent, CardHeader, CardTitle } from '../lib/shadcn/card'
+import { Button } from '../lib/shadcn/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../lib/shadcn/dialog'
+import { Input } from '../lib/shadcn/input'
+import { Label } from '../lib/shadcn/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectSeparator } from '../lib/shadcn/select'
+import { Badge } from '../lib/shadcn/badge'
+import { Popover, PopoverContent, PopoverTrigger } from '../lib/shadcn/popover'
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '../lib/shadcn/command'
+import PlayerCombobox from '../components/PlayerCombobox'
+import PlayerAvatar from '../components/PlayerAvatar'
+import { initials } from '../components/nav/identity'
+import GenderTag, { GenderRatio } from '../components/GenderTag'
+import { Skeleton } from '../lib/shadcn/skeleton'
+import FadeIn from '../components/FadeIn'
+import GameRow from '../components/schedule/GameRow'
+import GameLedger from '../components/schedule/GameLedger'
+import SeasonPicker from '../components/schedule/SeasonPicker'
+import IconButton, { SCHEDULE_ICON_PROPS } from '../components/schedule/IconButton'
+import LiveBadge from '../components/schedule/LiveBadge'
+import type { MatchData, MatchDetail, MatchOutcome } from '../components/schedule/types'
+import { useAuth } from '../contexts/AuthContext'
+import { useEffectiveTier } from '../hooks/useEffectiveTier'
+import { ArchivedBoxScoreNotice, isArchivedGameDate } from '../components/TierNotices'
+import { ArrowClockwise, ArrowCounterClockwise, ArrowsLeftRight, CalendarBlank, CalendarDots, CaretDown, CaretLeft, CaretRight, CaretUp, CaretUpDown, Check, DotsSixVertical, FloppyDisk, ListBullets, Minus, NoteBlank, PencilSimple, Plus, PlusCircle, Table, Target, Trash, TrendUp, Trophy, Users, Warning, X } from '@phosphor-icons/react'
+
+// A game counts as "imminent" from 30 minutes before its start time to 30
+// minutes after, the window where you're about to score it or already are.
+const IMMINENT_WINDOW_MS = 30 * 60 * 1000
+
+// A game's detail view opens on a different default tab depending on how
+// close it is to game time: still-warming-up games open on Lineups (so
+// you're setting the lines, not scoring an empty board), the live-scoring
+// window (10 min before kickoff through 1h10m after, roughly a game's
+// length plus a warm-up/cooldown buffer) opens on Events, and anything
+// later than that opens on Box Score since scoring is long over.
+const PRE_GAME_EVENTS_WINDOW_MS = 10 * 60 * 1000
+const POST_GAME_EVENTS_WINDOW_MS = 70 * 60 * 1000
+
+function defaultTabForGame(g: { game_date: string; game_time: string | null }): 'events' | 'boxscore' | 'lineups' {
+  const start = gameStartsAt(g).getTime()
+  const now = Date.now()
+  if (now < start - PRE_GAME_EVENTS_WINDOW_MS) return 'lineups'
+  if (now <= start + POST_GAME_EVENTS_WINDOW_MS) return 'events'
+  return 'boxscore'
+}
+
+function jamConflictReasonLabel(reason: string): string {
+  switch (reason) {
+    case 'possible_duplicate': return 'possible duplicate of an existing game'
+    case 'multiple_candidates': return 'possible duplicate of multiple existing games'
+    case 'no_season_match': return 'no season covers this date'
+    case 'multiple_season_match': return 'multiple seasons cover this date'
+    case 'unparseable': return "couldn't read this calendar event"
+    default: return reason
+  }
+}
+
+type Game = {
+  id: number; opponent: string; game_date: string; game_time: string; game_type: string
+  our_score: number; their_score: number; result: string; outcome_override: string | null; notes: string | null; season_id: number | null
+}
+type GameEvent = { id: number; event_type: string; event_timestamp: string; player_id: number | null; related_player_id: number | null; secondary_assister_id?: number | null; notes: string | null }
+type Player = { id: number; display_name: string; position: string | null; gender_match: string | null; is_sub: boolean | null; photo_url: string | null }
+type Season = { id: number; name: string; year: number; organizer: string | null; location: string | null; league_name: string | null; default_game_time: string | null; start_date: string | null; end_date: string | null }
+type SeasonMeta = { organizers: string[]; names: string[]; years: number[]; locations: string[] }
+type LineupEntry = { id: number; player_id: number; lineup_name: string; sort_order: number; role: string | null; display_name: string; position: string | null; gender_match: string | null; photo_url: string | null }
+
+function seasonLabel(s: { name: string; year: number; organizer: string | null }) {
+  return [s.organizer, s.name, s.year].filter(Boolean).join(' ')
+}
+
+// Compact quick-select strip for Buttons mode: a roster of 15-20 players as
+// full-width pills, wrapped across several rows per field, is the thing
+// that made this cluttered. One scrollable row per field keeps a field's
+// footprint constant no matter the roster size -- options are pre-sorted
+// (season goals for Scorer, season assists for Assist/2nd) so the player
+// you're about to tap is usually already in view, with the rest a swipe
+// away rather than hidden. 'Opponent' and other non-roster sentinel ids
+// (anything non-numeric) get a plain dashed-outline chip, no avatar.
+function PlayerChipGrid({ options, value, onChange, photoMap, wrap }: {
+  options: { id: string; label: string }[]
+  value: string
+  onChange: (id: string) => void
+  photoMap?: Map<number, { photo_url: string | null; gender_match: string | null }>
+  // Default: one horizontally-scrolling row (the Add Event chain rows, which
+  // sit three deep already and can't each afford more height). Pass wrap
+  // for a field that's alone on its row (the standalone "Player" selector
+  // for non-goal events) -- wraps to as many rows as the roster needs
+  // instead of a single scrolling strip; no inner scroll, it just grows.
+  wrap?: boolean
+}) {
+  if (wrap) {
+    return (
+      <div className="flex flex-wrap gap-x-2 gap-y-1 -mx-1 px-1">
+        {options.map(opt => (
+          <PlayerChip key={opt.id} opt={opt} selected={value === opt.id} onChange={onChange} photoMap={photoMap} />
+        ))}
+      </div>
+    )
+  }
+  return (
+    <div
+      className="flex gap-2 overflow-x-auto overscroll-x-contain pb-1 -mx-1 px-1"
+      style={{
+        maskImage: 'linear-gradient(to right, transparent, black 12px, black calc(100% - 20px), transparent)',
+        WebkitMaskImage: 'linear-gradient(to right, transparent, black 12px, black calc(100% - 20px), transparent)',
+      }}
+    >
+      {options.map(opt => (
+        <PlayerChip key={opt.id} opt={opt} selected={value === opt.id} onChange={onChange} photoMap={photoMap} />
+      ))}
+    </div>
+  )
+}
+
+function PlayerChip({ opt, selected, onChange, photoMap }: {
+  opt: { id: string; label: string }
+  selected: boolean
+  onChange: (id: string) => void
+  photoMap?: Map<number, { photo_url: string | null; gender_match: string | null }>
+}) {
+  const pid = parseInt(opt.id)
+  const info = !isNaN(pid) ? photoMap?.get(pid) : undefined
+  const isSentinel = isNaN(pid)
+  const genderBorder = info?.gender_match === 'Man' ? 'border-gender-man' : info?.gender_match === 'Woman' ? 'border-gender-woman' : 'border-border'
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(opt.id)}
+      title={opt.label}
+      className={`flex flex-col items-center gap-1 w-14 shrink-0 rounded-md py-1.5 transition-colors ${selected ? 'bg-accent' : 'hover:bg-accent/50'}`}
+    >
+      {isSentinel ? (
+        <div className={`w-9 h-9 rounded-full border-2 border-dashed flex items-center justify-center ${selected ? 'border-primary text-primary' : 'border-muted-foreground/40 text-muted-foreground'}`}>
+          <Minus className="w-3.5 h-3.5" />
+        </div>
+      ) : info?.photo_url ? (
+        <img
+          src={info.photo_url}
+          alt={opt.label}
+          draggable={false}
+          className={`w-9 h-9 rounded-full object-cover select-none border-2 ${genderBorder} ${selected ? 'ring-2 ring-primary ring-offset-2 ring-offset-card' : ''}`}
+        />
+      ) : (
+        <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-semibold select-none border-2 ${genderBorder} ${selected ? 'bg-primary/15 text-primary ring-2 ring-primary ring-offset-2 ring-offset-card' : 'bg-muted text-muted-foreground'}`}>
+          {initials(opt.label)}
+        </div>
+      )}
+      <span className={`text-[10px] leading-tight text-center truncate w-full ${selected ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
+        {opt.label.split(' ')[0]}
+      </span>
+    </button>
+  )
+}
+
+
+// A game counts as "upcoming" until its actual start time passes, not just
+// its calendar date, so a game later today still shows as upcoming.
+function gameStartsAt(g: { game_date: string; game_time: string | null }): Date {
+  return new Date(`${g.game_date}T${g.game_time || '00:00:00'}`)
+}
+
+const OUTCOME_OPTIONS = ['Win', 'Loss', 'Tie', 'Default Win', 'Default Loss', 'Forfeit']
+
+export default function Schedule() {
+  const { can, currentTeamId, isGuest, user } = useAuth()
+  const { flags } = useFlags()
+  const showTurnovers = flags?.show_turnovers ?? false
+  const entitlement = useEffectiveTier(currentTeamId)
+  const navigate = useNavigate()
+  // The selected game mirrors this URL segment (see the effect near
+  // handleSelectGame below), so a reload, browser back/forward, or a
+  // bookmarked/shared link lands on that game's detail view directly.
+  const { gameId: gameIdParam } = useParams<{ gameId: string }>()
+  const { data: games, loading, error, trigger: fetchGames } = useGetGames()
+  const { trigger: fetchGameById } = useGetGame()
+  const { data: events, loading: eventsLoading, trigger: fetchEvents } = useGetGameEvents()
+  const { data: players, trigger: fetchPlayers } = useGetSeasonRoster()
+  const { data: otherPlayers, trigger: fetchOtherPlayers } = useGetPlayersNotInSeason()
+  const { trigger: createPlayerForGame } = useCreatePlayerForGame()
+  const { trigger: deleteSubPlayer } = useDeleteSubPlayer()
+  const { trigger: addPlayerToGame } = useAddPlayerToGame()
+  const { trigger: createGame } = useCreateGame()
+  const { trigger: updateGame } = useUpdateGame()
+  const { trigger: deleteGame } = useDeleteGame()
+  const { data: seasons, trigger: fetchSeasons } = useGetAllSeasons()
+  const { trigger: createSeason } = useCreateSeason()
+  const { trigger: updateSeason } = useUpdateSeason()
+  const { data: seasonsMeta, trigger: fetchSeasonsMeta } = useGetSeasonsMeta()
+  const { data: seasonsWithGames, trigger: fetchSeasonsWithGames } = useGetSeasons()
+  const { data: lineups, trigger: fetchLineups } = useGetLineups()
+  const { trigger: addToLineup } = useAddToLineup()
+  const { trigger: removeFromLineup } = useRemoveFromLineup()
+  const { trigger: moveLineupEntry } = useMoveLineupEntry()
+  const { trigger: updateLineupSortOrder } = useUpdateLineupSortOrder()
+  const { trigger: updateLineupRole } = useUpdateLineupRole()
+  const { data: lineupGroups, trigger: fetchLineupGroups } = useGetLineupGroups()
+  const { trigger: createLineupGroup } = useCreateLineupGroup()
+  const { trigger: renameLineupGroup } = useRenameLineupGroup()
+  const { trigger: reorderLineupGroups } = useReorderLineupGroups()
+  const { trigger: deleteLineupGroup } = useDeleteLineupGroup()
+  const { data: recentLineupGames, trigger: fetchRecentLineupGames } = useGetRecentLineupGames()
+  const { data: lineupTemplates, trigger: fetchLineupTemplates } = useGetLineupTemplates()
+  const { trigger: fetchLineupTemplateDetail } = useGetLineupTemplateDetail()
+  const { trigger: saveLineupTemplate } = useSaveLineupTemplate()
+  const { trigger: deleteLineupTemplate } = useDeleteLineupTemplate()
+  const { data: lineupSeasonStats, trigger: fetchLineupSeasonStats } = useGetPlayerStats()
+  const { trigger: createGoal } = useCreateGoalEvent()
+  const { trigger: createOpponentGoal } = useCreateOpponentGoalEvent()
+  const { trigger: deleteEvent } = useDeleteEvent()
+  const { trigger: updateEvent } = useUpdateEvent()
+  const { trigger: updateEventTimestamp } = useUpdateEventTimestamp()
+  const { data: eventTypes, trigger: fetchEventTypes } = useGetEventTypes()
+  const { trigger: createEventType } = useCreateEventType()
+  // These event types still exist (Opponent Goal backs the "They Score"
+  // button, the others are historical data other games may reference) but
+  // are hidden from the main Event picker -- the 3 buttons shown by default
+  // are the ones a captain logs on nearly every point. Everything else is
+  // one tap away behind the "More" control below, not gone.
+  const HIDDEN_EVENT_TYPES = new Set(['Assist', 'Caught OB', 'Drop', 'Throwaway', 'Pull', 'Opponent Goal'])
+  const EVENT_TYPE_ORDER: Record<string, number> = { Goal: 1, Pass: 2, Block: 3, Fouls: 4, Foul: 4 }
+  const rawSelectable = (eventTypes as { id: number; name: string }[] | undefined)
+    ?.filter(et => !HIDDEN_EVENT_TYPES.has(et.name))
+  const selectableEventTypes = rawSelectable
+    ?.filter((et, index, self) => index === self.findIndex(t => t.name === et.name))
+    ?.sort((a, b) => {
+      const orderA = EVENT_TYPE_ORDER[a.name] ?? 99
+      const orderB = EVENT_TYPE_ORDER[b.name] ?? 99
+      if (orderA !== orderB) return orderA - orderB
+      return a.name.localeCompare(b.name)
+    })
+  const REMOVED_FROM_MORE = new Set(['Assist', 'Drop', 'Opponent Goal'])
+  const hiddenEventTypes = (eventTypes as { id: number; name: string }[] | undefined)
+    ?.filter(et => HIDDEN_EVENT_TYPES.has(et.name) && !REMOVED_FROM_MORE.has(et.name))
+    ?.filter((et, index, self) => index === self.findIndex(t => t.name === et.name))
+  const [moreEventTypesOpen, setMoreEventTypesOpen] = useState(false)
+  const [customEventTypeInput, setCustomEventTypeInput] = useState('')
+  const [customEventTypeSaving, setCustomEventTypeSaving] = useState(false)
+  const { data: leagueTeams, trigger: fetchLeagueTeams } = useGetLeagueTeams()
+  const playerLink = useMyPlayerLink()
+  const playerSeasonIds = useMyPlayerSeasonIds()
+
+  const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const { data: attendanceRows, trigger: fetchAttendance } = useGetGameAttendance()
+
+  const { data: jamConflicts, trigger: fetchJamConflicts } = useGetJamSyncConflicts()
+  const { trigger: syncJamNow, loading: syncingJam } = useSyncJamNow()
+  const { trigger: createGameFromConflict } = useCreateGameFromConflict()
+  const { trigger: linkConflictToGame } = useLinkConflictToGame()
+  const { trigger: dismissConflict } = useDismissConflict()
+  const [jamCreateSeasonChoice, setJamCreateSeasonChoice] = useState<Record<number, string>>({})
+  const [selectedGame, setSelectedGame] = useState<Game | null>(null)
+  const [activeTab, setActiveTab] = useState<'events' | 'boxscore' | 'lineups' | 'notes'>('events')
+  const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list')
+  const [calendarDate, setCalendarDate] = useState(() => new Date())
+
+  // New game form
+  const [formData, setFormData] = useState({ opponent: '', game_date: '', game_time: '', game_type: 'Regular', season_id: '' })
+  const [showNewSeason, setShowNewSeason] = useState(false)
+  const [newSeasonData, setNewSeasonData] = useState({
+    name: '', year: new Date().getFullYear().toString(), organizer: '', location: '', default_game_time: ''
+  })
+  const [newSeasonOrganizerMode, setNewSeasonOrganizerMode] = useState<'select' | 'new'>('select')
+  const [newSeasonNameMode, setNewSeasonNameMode] = useState<'select' | 'new'>('select')
+  const [newSeasonYearMode, setNewSeasonYearMode] = useState<'select' | 'new'>('select')
+  const [newSeasonLocationMode, setNewSeasonLocationMode] = useState<'select' | 'new'>('select')
+  const [creatingSeasonLoading, setCreatingSeasonLoading] = useState(false)
+  const [scheduleSeasonIds, setScheduleSeasonIds] = useState<number[]>([])
+  const scheduleSeasonDefaultApplied = useRef(false)
+  const scheduleSeasonManual = useRef(false)
+  const [showUpcoming, setShowUpcoming] = useState(true)
+  const [showPlayed, setShowPlayed] = useState(true)
+
+  // Delete game
+  const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null)
+
+  // Edit game details (opponent, season, date/time, type) — a separate
+  // dialog from the outcome-override and notes inline editors below, since
+  // those are quick single-field edits while this covers everything set at
+  // creation time.
+  const [showEditGame, setShowEditGame] = useState(false)
+  const [editGameData, setEditGameData] = useState({ opponent: '', game_date: '', game_time: '', game_type: 'Regular', season_id: '' })
+  const [savingGame, setSavingGame] = useState(false)
+
+  // Edit season details. A season to edit is picked from a Select rather
+  // than needing its own entry point per season, mirroring Roster's "Manage
+  // Roster" pattern of one dialog that operates on whichever season is
+  // chosen inside it.
+  const [showEditSeason, setShowEditSeason] = useState(false)
+  const [editSeasonId, setEditSeasonId] = useState<number | null>(null)
+  const [editSeasonData, setEditSeasonData] = useState({
+    name: '', year: '', organizer: '', location: '', league_name: '', default_game_time: '', start_date: '', end_date: '',
+  })
+  const [savingSeason, setSavingSeason] = useState(false)
+
+  // Edit event
+  const [editingEventId, setEditingEventId] = useState<number | null>(null)
+  const [editScorerId, setEditScorerId] = useState<string>('')
+  const [editAssisterId, setEditAssisterId] = useState<string>('')
+  const [editSecondaryAssisterId, setEditSecondaryAssisterId] = useState<string>('')
+
+  // Drag-to-reorder Recent Activity. dragOrder mirrors the list with the
+  // dragged row moved to its live position as the pointer crosses each
+  // neighbor's row; null when no drag is in progress, so the render just
+  // falls back to the DB-fetched order. dragOffsetY is the sub-row-height
+  // remainder of pointer movement not yet consumed by a swap, applied as a
+  // translateY on the dragged row only, so it visually follows the pointer
+  // smoothly between swaps instead of jumping a full row height at a time.
+  const [dragEventId, setDragEventId] = useState<number | null>(null)
+  const [dragOrder, setDragOrder] = useState<GameEvent[] | null>(null)
+  const [dragOffsetY, setDragOffsetY] = useState(0)
+  const eventDragRef = useRef<{ pointerId: number; startY: number; rowHeight: number; originalIndex: number; order: GameEvent[] } | null>(null)
+
+  // Add event. Scorer/assister persist across successive adds (rather than
+  // clearing after each one) so scoring several points in a row for the same
+  // player doesn't require re-picking them every time.
+  const [showAddEvent, setShowAddEvent] = useState(true)
+  const [newEventType, setNewEventType] = useState<string>('Goal')
+  const [newScorerId, setNewScorerId] = useState<string>('')
+  const [newAssisterId, setNewAssisterId] = useState<string>('')
+  const [newSecondaryAssisterId, setNewSecondaryAssisterId] = useState<string>('')
+  const [selectionMode, setSelectionMode] = useState<'combobox' | 'buttons'>('buttons')
+  const autoOpenedRef = useRef(false)
+
+  // Game notes editing
+  const [editingNotes, setEditingNotes] = useState(false)
+  const [notesValue, setNotesValue] = useState('')
+
+  // Outcome override
+  const [editingOutcome, setEditingOutcome] = useState(false)
+  const [outcomeValue, setOutcomeValue] = useState<string>('')
+
+  // Lineup
+  const [lineupName, setLineupName] = useState('Lineup 1')
+  const [lineupPopoverOpen, setLineupPopoverOpen] = useState(false)
+  const [copyingLineup, setCopyingLineup] = useState(false)
+  const [showCopyLineupDialog, setShowCopyLineupDialog] = useState(false)
+  const [selectedCopyGameId, setSelectedCopyGameId] = useState<number | null>(null)
+  const [savingTemplateOpen, setSavingTemplateOpen] = useState(false)
+  const [templateNameInput, setTemplateNameInput] = useState('')
+  const [savingTemplate, setSavingTemplate] = useState(false)
+  const [selectedTemplateId, setSelectedTemplateId] = useState('')
+  const [applyingTemplate, setApplyingTemplate] = useState(false)
+  const [addingLineupName, setAddingLineupName] = useState(false)
+  const [newLineupNameInput, setNewLineupNameInput] = useState('')
+  // Drag-to-reorder a lineup group. dragLineupGroup identifies which group
+  // is being dragged (a player id is only unique within a group, since the
+  // same player can appear in multiple lineups); dragLineupOrder mirrors
+  // that group's entries in their live in-progress order.
+  const [dragLineupEntryId, setDragLineupEntryId] = useState<number | null>(null)
+  const [dragLineupGroup, setDragLineupGroup] = useState<string | null>(null)
+  const [dragLineupOrder, setDragLineupOrder] = useState<LineupEntry[] | null>(null)
+  const [dragLineupOffsetY, setDragLineupOffsetY] = useState(0)
+  // Horizontal offset so the dragged row keeps following the pointer left/right
+  // once it's dragged outside its own lineup card (e.g. toward a neighboring
+  // column), instead of only tracking vertically.
+  const [dragLineupOffsetX, setDragLineupOffsetX] = useState(0)
+  // Which OTHER group's card the dragged row is currently hovering over, so
+  // it can be highlighted as a drop target; null while still within its own
+  // group (which just reorders, handled above) or hovering nothing dropzone-like.
+  const [dragLineupHoverGroup, setDragLineupHoverGroup] = useState<string | null>(null)
+  // True once the drag has left both lineup cards entirely (no data-lineup-group
+  // ancestor under the pointer at all): releasing here removes the player from
+  // the lineup (and, if that was their only one, clears their attendance).
+  const [dragLineupWillRemove, setDragLineupWillRemove] = useState(false)
+  const lineupDragRef = useRef<{ pointerId: number; startX: number; startY: number; rowHeight: number; originalIndex: number; order: LineupEntry[]; hoverGroup: string | null; willRemove: boolean } | null>(null)
+  // Drag-to-reorder the lineup GROUPS themselves (e.g. move "Handlers" above
+  // "Lineup 2"), separate from reordering players within one group above.
+  const [dragGroupId, setDragGroupId] = useState<number | null>(null)
+  const [dragGroupOrder, setDragGroupOrder] = useState<LineupGroup[] | null>(null)
+  const [dragGroupOffsetY, setDragGroupOffsetY] = useState(0)
+  const groupDragRef = useRef<{ pointerId: number; startY: number; rowHeight: number; originalIndex: number; order: LineupGroup[] } | null>(null)
+  const [deleteGroupConfirm, setDeleteGroupConfirm] = useState<LineupGroup | null>(null)
+  // Inline-editing a lineup group's name.
+  const [editingGroupId, setEditingGroupId] = useState<number | null>(null)
+  const [editingGroupNameValue, setEditingGroupNameValue] = useState('')
+
+  useEffect(() => {
+    scheduleSeasonDefaultApplied.current = false
+    scheduleSeasonManual.current = false
+    setScheduleSeasonIds([])
+    if (currentTeamId == null || isGuest || !user) return
+    playerLink.trigger({ teamId: currentTeamId, userId: user.id })
+  }, [currentTeamId, isGuest, user])
+
+  useEffect(() => {
+    if (playerLink.data?.team_id === currentTeamId && playerLink.data.status === 'approved') playerSeasonIds.trigger({ playerId: playerLink.data.player_id })
+  }, [playerLink.data])
+
+  useEffect(() => {
+    // fetchGames happens in the scheduleSeasonIds effect below (fires on mount too).
+    // Player roster fetches happen in handleSelectGame, scoped to that game's season.
+    if (currentTeamId == null) return
+    fetchSeasons({ organizationId: currentTeamId })
+    fetchSeasonsMeta({ organizationId: currentTeamId })
+    fetchEventTypes()
+    fetchSeasonsWithGames({ organizationId: currentTeamId })
+    fetchJamConflicts({ organizationId: currentTeamId })
+  }, [currentTeamId])
+
+  const handleSyncJamNow = async () => {
+    await syncJamNow()
+    fetchJamConflicts({ organizationId: currentTeamId })
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentTeamId })
+  }
+
+  const handleCreateGameFromConflict = async (conflict: JamSyncConflict) => {
+    const chosen = jamCreateSeasonChoice[conflict.id]
+    await createGameFromConflict({ conflict, seasonId: chosen ? parseInt(chosen) : null })
+    track('game_created', { source: 'jam_sync', season_id: chosen ? parseInt(chosen) : null, conflict_id: conflict.id })
+    fetchJamConflicts({ organizationId: currentTeamId })
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentTeamId })
+  }
+
+  const handleLinkJamConflict = async (conflict: JamSyncConflict) => {
+    if (!conflict.existing_game_id) return
+    await linkConflictToGame({ conflict, gameId: conflict.existing_game_id })
+    track('jam_sync_conflict_linked', { conflict_id: conflict.id, game_id: conflict.existing_game_id })
+    fetchJamConflicts({ organizationId: currentTeamId })
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentTeamId })
+  }
+
+  const handleDismissJamConflict = async (conflictId: number) => {
+    await dismissConflict({ conflictId })
+    track('jam_sync_conflict_dismissed', { conflict_id: conflictId })
+    fetchJamConflicts({ organizationId: currentTeamId })
+  }
+
+  useEffect(() => {
+    const s = seasonsWithGames as { id: number }[] | undefined
+    const allS = seasons as Season[] | undefined
+    if (!s || s.length === 0 || !allS || allS.length === 0 || scheduleSeasonManual.current) return
+    const today = todayLocalStr()
+    const activeSeasons = allS.filter(s => s.start_date && s.start_date <= today && (s.end_date == null || today <= s.end_date))
+    const fallbackId = activeSeasons.length > 0 ? activeSeasons[0]!.id : getDefaultJamSeasonId(allS, s[0]!.id)
+    const ids = playerLink.data?.team_id === currentTeamId && playerLink.data.status === 'approved' ? playerSeasonIds.data : undefined
+    if (scheduleSeasonDefaultApplied.current && ids === undefined) return
+    scheduleSeasonDefaultApplied.current = true
+    setScheduleSeasonIds([getDefaultSeasonForPlayer(allS, ids, fallbackId)])
+  }, [seasonsWithGames, seasons, playerLink.data, playerSeasonIds.data])
+
+  // Reload games when season filter changes
+  useEffect(() => {
+    if (currentTeamId == null) return
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentTeamId })
+  }, [scheduleSeasonIds, currentTeamId])
+
+  // Keep the "Add Players" target valid against the loaded groups: if the
+  // currently selected name was just deleted (or hasn't loaded yet), fall
+  // back to the first group rather than pointing at a group that no longer
+  // exists.
+  useEffect(() => {
+    const groups = (lineupGroups as LineupGroup[] | undefined) ?? []
+    if (groups.length > 0 && !groups.some(g => g.lineup_name === lineupName)) {
+      setLineupName(groups[0]!.lineup_name)
+    }
+  }, [lineupGroups])
+
+  // If a game is imminent (starting within 30 minutes, or already underway
+  // and less than 30 minutes in), jump straight into it ready to score
+  // instead of making you find it in the list. Only does this once per page
+  // load so navigating back to the list afterward doesn't re-trigger it.
+  useEffect(() => {
+    if (autoOpenedRef.current || gameIdParam) return
+    const g = (games as Game[] | undefined) ?? []
+    if (g.length === 0) return
+    const now = Date.now()
+    const imminent = g.find(gm => Math.abs(gameStartsAt(gm).getTime() - now) <= IMMINENT_WINDOW_MS)
+    if (imminent) {
+      autoOpenedRef.current = true
+      navigate(`/schedule/${imminent.id}`)
+    }
+  }, [games, gameIdParam])
+
+  // Filling a game's lineups is explicit now, via buttons shown while the
+  // game has no one placed yet — it used to auto-copy the previous game on
+  // open, which surprised people who wanted to build a lineup from scratch.
+  // Two paths: pick a recent game to copy from a preview-first dialog (see
+  // "Copy Recent Lineup" below), or start from a fresh gender-balanced
+  // split. Either way, subs are never auto-placed — they're always added to
+  // a specific game by hand — and placing a player also marks them
+  // attending (see useAddToLineup), since attendance is derived from
+  // lineup membership rather than tracked separately.
+  //
+  // Both paths are guarded on zero *placed players* (game_lineups), not
+  // zero *groups* (game_lineup_groups): a game can have empty group shells
+  // with nobody in them yet (e.g. a group created by hand and never
+  // filled), and those still count as fair game — checking only "do groups
+  // exist" would treat the game as already set up and refuse to fill it.
+  const applyLineupGroupsAndAssignment = async (game: Game, groupNames: string[], assignment: Map<number, string>) => {
+    await Promise.all(groupNames.map((name, i) =>
+      createLineupGroup({ gameId: game.id, lineupName: name, sortOrder: i, organizationId: currentTeamId })
+    ))
+    const sortCounters = new Map<string, number>()
+    await Promise.all([...assignment.entries()].map(([playerId, targetGroup]) => {
+      const sortOrder = sortCounters.get(targetGroup) ?? 0
+      sortCounters.set(targetGroup, sortOrder + 1)
+      return addToLineup({ gameId: game.id, player_id: playerId, lineup_name: targetGroup, seasonId: game.season_id, sortOrder, organizationId: currentTeamId })
+    }))
+    fetchLineupGroups({ gameId: game.id })
+    fetchLineups({ gameId: game.id })
+    fetchAttendance({ gameId: game.id })
+  }
+
+  // Opens the "Copy Recent Lineup" picker: fetches the season's recent
+  // lineup'd games so each can be previewed before committing to one,
+  // instead of blindly copying whichever game happened to be last.
+  const handleOpenCopyLineupDialog = async () => {
+    const game = selectedGame
+    if (!game) return
+    const existingEntries = (lineups as LineupEntry[] | undefined) ?? []
+    if (existingEntries.length > 0) return
+    if (!game.season_id) {
+      // No season context to draw prior lineups (or a roster) from: seed
+      // two empty groups, same as this button's original fallback.
+      setCopyingLineup(true)
+      try {
+        await Promise.all([
+          createLineupGroup({ gameId: game.id, lineupName: 'Lineup 1', sortOrder: 0, organizationId: currentTeamId }),
+          createLineupGroup({ gameId: game.id, lineupName: 'Lineup 2', sortOrder: 1, organizationId: currentTeamId }),
+        ])
+        fetchLineupGroups({ gameId: game.id })
+        track('lineup_reset', { game_id: game.id })
+      } finally {
+        setCopyingLineup(false)
+      }
+      return
+    }
+    setSelectedCopyGameId(null)
+    setShowCopyLineupDialog(true)
+    await fetchRecentLineupGames({ organizationId: currentTeamId, seasonId: game.season_id, gameId: game.id })
+  }
+
+  // Applies the picked game's groups: returning non-sub players keep the
+  // group they were in last time, newcomers fill whichever copied group is
+  // currently smallest.
+  const handleCopySelectedLineup = async () => {
+    const game = selectedGame
+    const source = (recentLineupGames as RecentLineupGame[] | undefined)?.find(g => g.game_id === selectedCopyGameId)
+    if (!game?.season_id || !source) return
+    const existingEntries = (lineups as LineupEntry[] | undefined) ?? []
+    if (existingEntries.length > 0) return
+    const roster = (players as Player[] | undefined) ?? []
+    const nonSubRoster = roster.filter(p => !p.is_sub)
+    setCopyingLineup(true)
+    try {
+      const groupNames = source.groups.map(g => g.lineup_name)
+      const counts = new Map(groupNames.map(n => [n, 0]))
+      const assignment = new Map<number, string>() // player_id -> lineup_name
+      const prevByPlayer = new Map(source.entries.map(e => [e.player_id, e.lineup_name]))
+      for (const p of nonSubRoster) {
+        const prevGroup = prevByPlayer.get(p.id)
+        if (prevGroup && groupNames.includes(prevGroup)) {
+          assignment.set(p.id, prevGroup)
+          counts.set(prevGroup, (counts.get(prevGroup) ?? 0) + 1)
+        }
+      }
+      for (const p of nonSubRoster) {
+        if (assignment.has(p.id)) continue
+        let smallest = groupNames[0]!
+        for (const name of groupNames) if ((counts.get(name) ?? 0) < (counts.get(smallest) ?? 0)) smallest = name
+        assignment.set(p.id, smallest)
+        counts.set(smallest, (counts.get(smallest) ?? 0) + 1)
+      }
+      await applyLineupGroupsAndAssignment(game, groupNames, assignment)
+      track('lineup_copied', { game_id: game.id })
+      setShowCopyLineupDialog(false)
+      setSelectedCopyGameId(null)
+    } finally {
+      setCopyingLineup(false)
+    }
+  }
+
+  // Fallback with no history to copy from: two groups, "Lineup 1"/"Lineup
+  // 2", with the season's non-sub roster split evenly and gender-balanced
+  // between them (alternating within each gender bucket keeps both the
+  // head count and the mix even).
+  const handleStartFreshLineup = async () => {
+    const game = selectedGame
+    if (!game) return
+    const existingEntries = (lineups as LineupEntry[] | undefined) ?? []
+    if (existingEntries.length > 0) return
+    const roster = (players as Player[] | undefined) ?? []
+    const nonSubRoster = roster.filter(p => !p.is_sub)
+    setCopyingLineup(true)
+    try {
+      const groupNames = ['Lineup 1', 'Lineup 2']
+      const assignment = new Map<number, string>()
+      const byGender = new Map<string, Player[]>()
+      for (const p of nonSubRoster) {
+        const key = p.gender_match ?? 'unknown'
+        if (!byGender.has(key)) byGender.set(key, [])
+        byGender.get(key)!.push(p)
+      }
+      for (const bucket of byGender.values()) {
+        bucket.forEach((p, i) => assignment.set(p.id, groupNames[i % 2]!))
+      }
+      await applyLineupGroupsAndAssignment(game, groupNames, assignment)
+      track('lineup_reset', { game_id: game.id })
+      setShowCopyLineupDialog(false)
+    } finally {
+      setCopyingLineup(false)
+    }
+  }
+
+  // Saves the current game's lineup (group names + player assignments) as a
+  // named template scoped to the season, independent of game order — unlike
+  // "Copy Last Game's Lineup" this can be loaded into any future game, not
+  // just the one right after it. Saving under a name that already exists
+  // for the season overwrites that template rather than erroring.
+  const handleSaveLineupTemplate = async () => {
+    const game = selectedGame
+    const name = templateNameInput.trim()
+    if (!game?.season_id || !name) return
+    setSavingTemplate(true)
+    try {
+      const groups = ((lineupGroups as LineupGroup[] | undefined) ?? []).map(g => ({ lineup_name: g.lineup_name, sort_order: g.sort_order }))
+      const players = ((lineups as LineupEntry[] | undefined) ?? []).map(e => ({ lineup_name: e.lineup_name, player_id: e.player_id, sort_order: e.sort_order, role: e.role }))
+      await saveLineupTemplate({ organizationId: currentTeamId, seasonId: game.season_id, name, groups, players })
+      track('lineup_template_saved', { game_id: game.id, season_id: game.season_id })
+      setTemplateNameInput('')
+      setSavingTemplateOpen(false)
+      fetchLineupTemplates({ organizationId: currentTeamId, seasonId: game.season_id })
+    } finally {
+      setSavingTemplate(false)
+    }
+  }
+
+  // Loading a template is gated the same way as "Copy Last Game's Lineup":
+  // only offered while the game has no one placed yet, so it can't create
+  // duplicate placements alongside an existing lineup.
+  const handleApplyLineupTemplate = async () => {
+    const game = selectedGame
+    if (!game || !selectedTemplateId) return
+    const existingEntries = (lineups as LineupEntry[] | undefined) ?? []
+    if (existingEntries.length > 0) return
+    setApplyingTemplate(true)
+    try {
+      const detail = await fetchLineupTemplateDetail({ templateId: parseInt(selectedTemplateId) })
+      if (!detail) return
+      await Promise.all(detail.groups.map((g, i) =>
+        createLineupGroup({ gameId: game.id, lineupName: g.lineup_name, sortOrder: i, organizationId: currentTeamId })
+      ))
+      await Promise.all(detail.players.map(p =>
+        addToLineup({ gameId: game.id, player_id: p.player_id, lineup_name: p.lineup_name, seasonId: game.season_id, sortOrder: p.sort_order, role: p.role, organizationId: currentTeamId })
+      ))
+      track('lineup_template_applied', { game_id: game.id, template_id: parseInt(selectedTemplateId) })
+      setSelectedTemplateId('')
+      fetchLineupGroups({ gameId: game.id })
+      fetchLineups({ gameId: game.id })
+      fetchAttendance({ gameId: game.id })
+    } finally {
+      setApplyingTemplate(false)
+    }
+  }
+
+  const handleDeleteLineupTemplate = async (templateId: number) => {
+    await deleteLineupTemplate({ templateId })
+    track('lineup_template_deleted', { template_id: templateId })
+    if (selectedTemplateId === templateId.toString()) setSelectedTemplateId('')
+    if (selectedGame?.season_id) fetchLineupTemplates({ organizationId: currentTeamId, seasonId: selectedGame.season_id })
+  }
+
+  const handleSelectGame = async (game: Game) => {
+    setSelectedGame(game)
+    fetchEvents({ gameId: game.id, tier: entitlement.tier })
+    fetchAttendance({ gameId: game.id })
+    if (game.season_id) {
+      fetchPlayers({ seasonId: game.season_id })
+      fetchOtherPlayers({ seasonId: game.season_id, organizationId: currentTeamId })
+      fetchLineupSeasonStats({ seasonIds: [game.season_id], organizationId: currentTeamId, tier: entitlement.tier })
+      fetchLineupTemplates({ organizationId: currentTeamId, seasonId: game.season_id })
+    } else {
+      fetchOtherPlayers({ organizationId: currentTeamId })
+    }
+    fetchLineupGroups({ gameId: game.id })
+    fetchLineups({ gameId: game.id })
+    setActiveTab(defaultTabForGame(game))
+    setEditingNotes(false)
+    setEditingOutcome(false)
+    setNotesValue(game.notes ?? '')
+    setOutcomeValue(game.outcome_override ?? '')
+    // Add Event starts expanded regardless of how the game was opened, so
+    // it's ready to score without an extra click.
+    setShowAddEvent(true)
+    setNewEventType('Goal')
+    setNewScorerId('')
+    setNewAssisterId('')
+    setNewSecondaryAssisterId('')
+    setAddingLineupName(false)
+    setNewLineupNameInput('')
+    setSavingTemplateOpen(false)
+    setTemplateNameInput('')
+    setSelectedTemplateId('')
+  }
+
+  // Season roster refetch needs the game's season id, not the game id.
+  const selectedGameSeasonId = selectedGame?.season_id ?? null
+  const refreshRoster = async () => {
+    if (selectedGameSeasonId) {
+      await fetchPlayers({ seasonId: selectedGameSeasonId })
+      await fetchOtherPlayers({ seasonId: selectedGameSeasonId, organizationId: currentTeamId })
+    } else {
+      await fetchOtherPlayers({ organizationId: currentTeamId })
+    }
+  }
+
+  const handleBack = () => { navigate('/schedule'); setEditingEventId(null) }
+
+  // Resolve selectedGame from the URL rather than only from click handlers,
+  // so a reload/back-forward/shared link opens the right game directly.
+  // `games` is scoped to the current season filter and may not include the
+  // linked game (a different season, or not loaded yet), so fall back to a
+  // direct by-id fetch that ignores that filter.
+  useEffect(() => {
+    if (!gameIdParam) { setSelectedGame(null); return }
+    const id = parseInt(gameIdParam, 10)
+    if (isNaN(id)) { navigate('/schedule', { replace: true }); return }
+    if (selectedGame?.id === id) return
+    const fromList = (games as Game[] | undefined)?.find(g => g.id === id)
+    if (fromList) { handleSelectGame(fromList); return }
+    if (currentTeamId == null) return
+    fetchGameById({ gameId: id, organizationId: currentTeamId }).then(g => {
+      if (g) handleSelectGame(g as Game)
+      else navigate('/schedule', { replace: true })
+    })
+  }, [gameIdParam, games, currentTeamId])
+
+  useGameEventPolling(selectedGame && isWithinLivePollWindow(selectedGame) ? selectedGame.id : null, fetchEvents)
+
+  const handleSeasonSelect = (value: string) => {
+    if (value === '__new__') { setShowNewSeason(true); setFormData(f => ({ ...f, season_id: '' })) }
+    else { setShowNewSeason(false); setFormData(f => ({ ...f, season_id: value })) }
+  }
+
+  const handleCreateNewSeason = async () => {
+    if (!newSeasonData.name || !newSeasonData.year) return
+    setCreatingSeasonLoading(true)
+    const created = await createSeason({
+      name: newSeasonData.name,
+      year: parseInt(newSeasonData.year),
+      organizer: newSeasonData.organizer || undefined,
+      location: newSeasonData.location || undefined,
+      default_game_time: newSeasonData.default_game_time || undefined,
+      organizationId: currentTeamId,
+    }) as Season | undefined
+    if (created) {
+      track('season_created', { season_id: created.id })
+      await fetchSeasons({ organizationId: currentTeamId })
+      await fetchSeasonsMeta({ organizationId: currentTeamId })
+      setFormData(f => ({
+        ...f,
+        season_id: String(created.id),
+        game_time: created.default_game_time ?? f.game_time
+      }))
+      setShowNewSeason(false)
+      setNewSeasonData({ name: '', year: new Date().getFullYear().toString(), organizer: '', location: '', default_game_time: '' })
+    }
+    setCreatingSeasonLoading(false)
+  }
+
+  // When season selected for new game, auto-fill default time
+  const handleSeasonSelectForGame = (value: string) => {
+    handleSeasonSelect(value)
+    const s = (seasons as Season[] | undefined)?.find(s => String(s.id) === value)
+    if (s?.default_game_time) setFormData(f => ({ ...f, game_time: s.default_game_time! }))
+  }
+
+  // Known league teams for the selected season feed the opponent field's
+  // suggestions, so repeat opponents keep one consistent spelling (the DB
+  // trigger resolves the text to a league_teams row on save).
+  useEffect(() => {
+    const id = parseInt(formData.season_id)
+    if (!isNaN(id)) fetchLeagueTeams({ seasonId: id })
+  }, [formData.season_id])
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    await createGame({
+      opponent: formData.opponent,
+      game_date: formData.game_date,
+      game_time: formData.game_time,
+      game_type: formData.game_type,
+      season_id: formData.season_id ? parseInt(formData.season_id) : null,
+      organizationId: currentTeamId,
+    })
+    track('game_created', { season_id: formData.season_id ? parseInt(formData.season_id) : null })
+    setIsDialogOpen(false)
+    setFormData({ opponent: '', game_date: '', game_time: '', game_type: 'Regular', season_id: '' })
+    setShowNewSeason(false)
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentTeamId })
+  }
+
+  const handleDeleteGame = async (gameId: number) => {
+    await deleteGame({ gameId })
+    track('game_deleted', { game_id: gameId })
+    setDeleteConfirmId(null)
+    navigate('/schedule')
+    fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentTeamId })
+  }
+
+  const handleOpenEditGame = () => {
+    if (!selectedGame) return
+    setEditGameData({
+      opponent: selectedGame.opponent,
+      game_date: selectedGame.game_date,
+      game_time: (selectedGame.game_time ?? '').slice(0, 5),
+      game_type: selectedGame.game_type || 'Regular',
+      season_id: selectedGame.season_id ? String(selectedGame.season_id) : '',
+    })
+    setShowEditGame(true)
+  }
+
+  const handleSaveEditGame = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedGame) return
+    setSavingGame(true)
+    try {
+      const updated = await updateGame({
+        gameId: selectedGame.id,
+        opponent: editGameData.opponent,
+        game_date: editGameData.game_date,
+        game_time: editGameData.game_time,
+        game_type: editGameData.game_type,
+        season_id: editGameData.season_id ? parseInt(editGameData.season_id) : null,
+      }) as Game | undefined
+      if (updated) {
+        setSelectedGame(updated)
+        setActiveTab(defaultTabForGame(updated))
+        track('game_updated', { game_id: selectedGame.id })
+      }
+      setShowEditGame(false)
+      fetchGames({ seasonIds: scheduleSeasonIds.length > 0 ? scheduleSeasonIds : undefined, organizationId: currentTeamId })
+    } finally {
+      setSavingGame(false)
+    }
+  }
+
+  const handleOpenEditSeason = (seasonId?: number) => {
+    const allS = (seasons as Season[] | undefined) ?? []
+    const id = seasonId ?? (scheduleSeasonIds.length === 1 ? scheduleSeasonIds[0] : allS[0]?.id)
+    const s = allS.find(s => s.id === id)
+    if (!s) return
+    setEditSeasonId(s.id)
+    setEditSeasonData({
+      name: s.name, year: String(s.year), organizer: s.organizer ?? '', location: s.location ?? '',
+      league_name: s.league_name ?? '', default_game_time: (s.default_game_time ?? '').slice(0, 5),
+      start_date: s.start_date ?? '', end_date: s.end_date ?? '',
+    })
+    setShowEditSeason(true)
+  }
+
+  const handleEditSeasonSelect = (value: string) => {
+    handleOpenEditSeason(parseInt(value))
+  }
+
+  const handleSaveEditSeason = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (editSeasonId == null) return
+    setSavingSeason(true)
+    try {
+      await updateSeason({
+        seasonId: editSeasonId,
+        name: editSeasonData.name,
+        year: parseInt(editSeasonData.year),
+        organizer: editSeasonData.organizer || null,
+        location: editSeasonData.location || null,
+        league_name: editSeasonData.league_name || null,
+        default_game_time: editSeasonData.default_game_time || null,
+        start_date: editSeasonData.start_date || null,
+        end_date: editSeasonData.end_date || null,
+      })
+      track('season_updated', { season_id: editSeasonId })
+      setShowEditSeason(false)
+      fetchSeasons({ organizationId: currentTeamId })
+      fetchSeasonsMeta({ organizationId: currentTeamId })
+    } finally {
+      setSavingSeason(false)
+    }
+  }
+
+  const handleSaveNotes = async () => {
+    if (!selectedGame) return
+    const updated = await updateGame({ gameId: selectedGame.id, notes: notesValue }) as Game | undefined
+    if (updated) { setSelectedGame(updated); track('game_notes_updated', { game_id: selectedGame.id }) }
+    setEditingNotes(false)
+  }
+
+  const handleSaveOutcome = async () => {
+    if (!selectedGame) return
+    const override = outcomeValue === '__auto__' ? null : outcomeValue
+    const updated = await updateGame({ gameId: selectedGame.id, outcome_override: override }) as Game | undefined
+    if (updated) { setSelectedGame(updated); track('game_outcome_updated', { game_id: selectedGame.id }) }
+    setEditingOutcome(false)
+  }
+
+  const handleDeleteEvent = async (eventId: number) => {
+    if (!selectedGame) return
+    await deleteEvent({ eventId })
+    track('game_event_deleted', { game_id: selectedGame.id, event_id: eventId })
+    fetchEvents({ gameId: selectedGame.id, tier: entitlement.tier })
+  }
+
+  // Drag a Recent Activity row to reorder it. There's no ordinal column on
+  // game_events; order is purely event_timestamp (descending), so
+  // reordering reassigns the same set of timestamps the list already had
+  // to events in their new positions rather than renumbering a position.
+  const handleEventDragStart = (list: GameEvent[], event: GameEvent, rowEl: HTMLElement, e: React.PointerEvent) => {
+    if (!can.record) return
+    e.preventDefault()
+    e.stopPropagation()
+    const pointerId = e.pointerId
+    const originalIndex = list.findIndex(ev => ev.id === event.id)
+    if (originalIndex === -1) return
+    const rowHeight = rowEl.getBoundingClientRect().height
+    const drag = { pointerId, startY: e.clientY, rowHeight, originalIndex, order: [...list] }
+    eventDragRef.current = drag
+    setDragEventId(event.id)
+    setDragOffsetY(0)
+    setDragOrder(drag.order)
+
+    const onMove = (ev: PointerEvent) => {
+      const d = eventDragRef.current
+      if (!d || ev.pointerId !== d.pointerId) return
+      const rawDelta = ev.clientY - d.startY
+      const targetIndex = Math.min(d.order.length - 1, Math.max(0, d.originalIndex + Math.round(rawDelta / d.rowHeight)))
+      const currentIndex = d.order.findIndex(ev2 => ev2.id === event.id)
+      if (targetIndex !== currentIndex) {
+        const next = [...d.order]
+        const [moved] = next.splice(currentIndex, 1)
+        next.splice(targetIndex, 0, moved)
+        d.order = next
+        setDragOrder(next)
+      }
+      setDragOffsetY(rawDelta - (targetIndex - d.originalIndex) * d.rowHeight)
+    }
+    const onUp = async (ev: PointerEvent) => {
+      const d = eventDragRef.current
+      if (!d || ev.pointerId !== d.pointerId) return
+      teardown()
+      eventDragRef.current = null
+      setDragEventId(null)
+      setDragOrder(null)
+      setDragOffsetY(0)
+      const originalTimestamps = list.map(ev2 => ev2.event_timestamp)
+      const changes = d.order
+        .map((ev2, i) => ({ id: ev2.id, timestamp: originalTimestamps[i]! }))
+        .filter(c => list.find(ev2 => ev2.id === c.id)?.event_timestamp !== c.timestamp)
+      if (changes.length > 0 && selectedGame) {
+        await Promise.all(changes.map(c => updateEventTimestamp({ eventId: c.id, timestamp: c.timestamp })))
+        track('game_event_reordered', { game_id: selectedGame.id })
+        fetchEvents({ gameId: selectedGame.id, tier: entitlement.tier })
+      }
+    }
+    const onCancel = (ev: PointerEvent) => {
+      if (eventDragRef.current?.pointerId !== ev.pointerId) return
+      teardown()
+      eventDragRef.current = null
+      setDragEventId(null)
+      setDragOrder(null)
+      setDragOffsetY(0)
+    }
+    const teardown = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
+  }
+
+  const handleEditEvent = (event: GameEvent) => {
+    setEditingEventId(event.id)
+    setEditScorerId(event.player_id ? String(event.player_id) : '__none__')
+    setEditAssisterId(event.related_player_id ? String(event.related_player_id) : '__none__')
+    setEditSecondaryAssisterId(event.secondary_assister_id ? String(event.secondary_assister_id) : '__none__')
+  }
+
+  const handleSaveEventEdit = async () => {
+    if (!editingEventId || !selectedGame) return
+    await updateEvent({
+      eventId: editingEventId,
+      playerId: editScorerId && editScorerId !== '__none__' ? parseInt(editScorerId) : null,
+      relatedPlayerId: editAssisterId && editAssisterId !== '__none__' ? parseInt(editAssisterId) : null,
+      secondaryAssisterId: editSecondaryAssisterId && editSecondaryAssisterId !== '__none__' ? parseInt(editSecondaryAssisterId) : null,
+    })
+    track('game_event_updated', { game_id: selectedGame.id, event_id: editingEventId })
+    setEditingEventId(null)
+    fetchEvents({ gameId: selectedGame.id, tier: entitlement.tier })
+  }
+
+  const resolveNewPlayerId = (id: string) => (id && id !== '__none__' && id !== '__opponent__') ? parseInt(id) : null
+
+  const handleCreateCustomEventType = async () => {
+    const name = customEventTypeInput.trim()
+    if (!name) return
+    // Reuse an existing type (case-insensitive) instead of creating a
+    // near-duplicate if the captain typed something that already exists,
+    // e.g. typing "fouls" when "Fouls" is already a row.
+    const existing = (eventTypes as { id: number; name: string }[] | undefined)?.find(
+      et => et.name.toLowerCase() === name.toLowerCase()
+    )
+    if (existing) {
+      setNewEventType(existing.name)
+    } else {
+      setCustomEventTypeSaving(true)
+      try {
+        await createEventType(name)
+        await fetchEventTypes()
+        setNewEventType(name)
+      } finally {
+        setCustomEventTypeSaving(false)
+      }
+    }
+    setCustomEventTypeInput('')
+    setMoreEventTypesOpen(false)
+  }
+
+  const handleAddEvent = async () => {
+    if (!selectedGame) return
+    // Picking "— Opponent —" as scorer on a goal means the other team scored
+    const isOpponentGoal = newEventType === 'Goal' && newScorerId === '__opponent__'
+    if (isOpponentGoal) {
+      await createOpponentGoal({ gameId: selectedGame.id, organizationId: currentTeamId })
+    } else {
+      await createGoal({
+        gameId: selectedGame.id,
+        playerId: resolveNewPlayerId(newScorerId),
+        relatedPlayerId: resolveNewPlayerId(newAssisterId),
+        secondaryAssisterId: resolveNewPlayerId(newSecondaryAssisterId),
+        eventType: newEventType,
+        organizationId: currentTeamId,
+      })
+    }
+    track('game_event_added', { game_id: selectedGame.id, event_type: isOpponentGoal ? 'opponent_goal' : newEventType, is_opponent: isOpponentGoal })
+    fetchEvents({ gameId: selectedGame.id, tier: entitlement.tier })
+  }
+
+  const handleAddOpponentGoal = async () => {
+    if (!selectedGame) return
+    await createOpponentGoal({ gameId: selectedGame.id, organizationId: currentTeamId })
+    track('game_event_added', { game_id: selectedGame.id, event_type: 'opponent_goal', is_opponent: true })
+    fetchEvents({ gameId: selectedGame.id, tier: entitlement.tier })
+  }
+
+  const handleUndo = async () => {
+    const gameEvents = events as GameEvent[] | undefined
+    if (!selectedGame || !gameEvents || gameEvents.length === 0) return
+    await deleteEvent({ eventId: gameEvents[0]!.id })
+    track('game_event_deleted', { game_id: selectedGame.id, event_id: gameEvents[0]!.id, via: 'undo' })
+    fetchEvents({ gameId: selectedGame.id, tier: entitlement.tier })
+  }
+
+  // A player added mid-game from the Scorer/Assister quick-pick has no
+  // "currently selected lineup" context to draw on (that only exists in the
+  // Lineups tab), so it falls back to the game's first lineup group —
+  // placing them somewhere real rather than a nonexistent group is what
+  // marks them attending, since attendance is derived from lineup membership.
+  const defaultLineupName = (lineupGroups as LineupGroup[] | undefined)?.[0]?.lineup_name ?? 'Lineup 1'
+
+  const handleAddPlayer = async (name: string) => {
+    if (!selectedGame) return
+    const result = await createPlayerForGame({ display_name: name, gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentTeamId, lineupName: defaultLineupName })
+    if (result) {
+      track('player_created', { game_id: selectedGame.id, source: 'quick_add' })
+      await refreshRoster()
+      fetchAttendance({ gameId: selectedGame.id })
+      fetchLineups({ gameId: selectedGame.id })
+      setNewScorerId((result as { id: number }).id.toString())
+    }
+  }
+
+  const handleAddAssister = async (name: string) => {
+    if (!selectedGame) return
+    const result = await createPlayerForGame({ display_name: name, gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentTeamId, lineupName: defaultLineupName })
+    if (result) {
+      track('player_created', { game_id: selectedGame.id, source: 'quick_add' })
+      await refreshRoster()
+      fetchAttendance({ gameId: selectedGame.id })
+      fetchLineups({ gameId: selectedGame.id })
+      setNewAssisterId((result as { id: number }).id.toString())
+    }
+  }
+
+  const handleAddExistingScorer = async (playerId: string) => {
+    if (!selectedGame) return
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentTeamId, lineupName: defaultLineupName })
+    await refreshRoster()
+    fetchAttendance({ gameId: selectedGame.id })
+    fetchLineups({ gameId: selectedGame.id })
+    setNewScorerId(playerId)
+  }
+
+  const handleAddExistingAssister = async (playerId: string) => {
+    if (!selectedGame) return
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentTeamId, lineupName: defaultLineupName })
+    await refreshRoster()
+    fetchAttendance({ gameId: selectedGame.id })
+    fetchLineups({ gameId: selectedGame.id })
+    setNewAssisterId(playerId)
+  }
+
+  const handleAddSecondaryAssister = async (name: string) => {
+    if (!selectedGame) return
+    const result = await createPlayerForGame({ display_name: name, gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentTeamId, lineupName: defaultLineupName })
+    if (result) {
+      track('player_created', { game_id: selectedGame.id, source: 'quick_add' })
+      await refreshRoster()
+      fetchAttendance({ gameId: selectedGame.id })
+      fetchLineups({ gameId: selectedGame.id })
+      setNewSecondaryAssisterId((result as { id: number }).id.toString())
+    }
+  }
+
+  const handleAddExistingSecondaryAssister = async (playerId: string) => {
+    if (!selectedGame) return
+    await addPlayerToGame({ playerId: parseInt(playerId), gameId: selectedGame.id, seasonId: selectedGameSeasonId, organizationId: currentTeamId, lineupName: defaultLineupName })
+    await refreshRoster()
+    fetchAttendance({ gameId: selectedGame.id })
+    fetchLineups({ gameId: selectedGame.id })
+    setNewSecondaryAssisterId(playerId)
+  }
+
+  const handleDeleteSub = async (playerId: string) => {
+    if (!selectedGame) return
+    await deleteSubPlayer({ playerId: parseInt(playerId), gameId: selectedGame.id, seasonId: selectedGameSeasonId })
+    await refreshRoster()
+    if (newScorerId === playerId) setNewScorerId('')
+    if (newAssisterId === playerId) setNewAssisterId('')
+    if (newSecondaryAssisterId === playerId) setNewSecondaryAssisterId('')
+    if (editScorerId === playerId) setEditScorerId('')
+    if (editAssisterId === playerId) setEditAssisterId('')
+    if (editSecondaryAssisterId === playerId) setEditSecondaryAssisterId('')
+  }
+
+  // Clicking a candidate in "Select players..." adds them immediately —
+  // no separate multi-select + confirm step. The popover stays open so
+  // adding several people in a row is just a sequence of clicks; each
+  // added player drops out of the candidate list on its own since
+  // lineupCandidates already excludes anyone placed anywhere in the game.
+  const handleAddPlayerToLineup = async (playerId: number) => {
+    if (!selectedGame) return
+    const currentGroupEntries = ((lineups as LineupEntry[] | undefined) ?? []).filter(e => e.lineup_name === lineupName)
+    const nextSortOrder = currentGroupEntries.reduce((max, e) => Math.max(max, e.sort_order), -1) + 1
+    await addToLineup({ gameId: selectedGame.id, player_id: playerId, lineup_name: lineupName, seasonId: selectedGame.season_id, sortOrder: nextSortOrder, organizationId: currentTeamId })
+    fetchLineups({ gameId: selectedGame.id })
+  }
+
+  const handleUpdateLineupRole = async (entryId: number, role: string) => {
+    await updateLineupRole({ id: entryId, role: role.trim() || null })
+    if (selectedGame) fetchLineups({ gameId: selectedGame.id })
+  }
+
+  // Creating a lineup group both persists it (so it appears as its own
+  // card immediately, even with zero players) and makes it the active
+  // target for "Add Players".
+  const handleAddLineupGroup = async (name: string) => {
+    if (!selectedGame || !name.trim()) return
+    const groups = (lineupGroups as LineupGroup[] | undefined) ?? []
+    const nextSortOrder = groups.reduce((max, g) => Math.max(max, g.sort_order), -1) + 1
+    await createLineupGroup({ gameId: selectedGame.id, lineupName: name.trim(), sortOrder: nextSortOrder, organizationId: currentTeamId })
+    setLineupName(name.trim())
+    setAddingLineupName(false)
+    fetchLineupGroups({ gameId: selectedGame.id })
+  }
+
+  const handleDeleteLineupGroup = async (group: LineupGroup) => {
+    if (!selectedGame) return
+    // Deleting a group drops every player placed in it (see
+    // useDeleteLineupGroup). Attendance has no separate write side anymore
+    // (see useGetGameAttendance) — it's just re-read from game_lineups.
+    await deleteLineupGroup({ gameId: selectedGame.id, lineupName: group.lineup_name, groupId: group.id })
+    fetchLineupGroups({ gameId: selectedGame.id })
+    fetchLineups({ gameId: selectedGame.id })
+    fetchAttendance({ gameId: selectedGame.id })
+  }
+
+  const handleRenameLineupGroup = async (group: LineupGroup, newName: string, existingNames: string[]) => {
+    const trimmed = newName.trim()
+    setEditingGroupId(null)
+    if (!selectedGame || !trimmed || trimmed === group.lineup_name || existingNames.includes(trimmed)) return
+    await renameLineupGroup({ gameId: selectedGame.id, groupId: group.id, oldName: group.lineup_name, newName: trimmed })
+    if (lineupName === group.lineup_name) setLineupName(trimmed)
+    fetchLineupGroups({ gameId: selectedGame.id })
+    fetchLineups({ gameId: selectedGame.id })
+  }
+
+
+  // Attendance has no separate write side (see useGetGameAttendance) — it's
+  // just re-read from game_lineups, so removing someone from their last
+  // lineup entry here is all that's needed for them to read as not attending.
+  const handleRemoveFromLineup = async (playerId: number, lineupGroup: string) => {
+    if (!selectedGame) return
+    await removeFromLineup({ gameId: selectedGame.id, playerId, lineup_name: lineupGroup })
+    fetchLineups({ gameId: selectedGame.id })
+    fetchAttendance({ gameId: selectedGame.id })
+  }
+
+  // Drag a lineup row to reorder players within their group, or drop it onto
+  // a different group's card to move the player there. Mirrors the Recent
+  // Activity event-drag pattern (window pointer listeners, splice the
+  // working order on each crossed threshold) for in-group reordering, and
+  // reassigns the group's sort_order values instead of timestamps since
+  // game_lineups has an explicit ordering column. Cross-group detection uses
+  // elementFromPoint against each group card's data-lineup-group attribute
+  // rather than a full DnD library, consistent with this page's other
+  // lightweight pointer-based drags.
+  const handleLineupDragStart = (group: string, list: LineupEntry[], entry: LineupEntry, rowEl: HTMLElement, e: React.PointerEvent) => {
+    if (!can.record) return
+    e.preventDefault()
+    e.stopPropagation()
+    const pointerId = e.pointerId
+    const originalIndex = list.findIndex(en => en.id === entry.id)
+    if (originalIndex === -1) return
+    const rowHeight = rowEl.getBoundingClientRect().height
+    const drag = { pointerId, startX: e.clientX, startY: e.clientY, rowHeight, originalIndex, order: [...list], hoverGroup: null as string | null, willRemove: false }
+    lineupDragRef.current = drag
+    setDragLineupEntryId(entry.id)
+    setDragLineupGroup(group)
+    setDragLineupOffsetX(0)
+    setDragLineupOffsetY(0)
+    setDragLineupOrder(drag.order)
+    setDragLineupHoverGroup(null)
+    setDragLineupWillRemove(false)
+
+    const onMove = (ev: PointerEvent) => {
+      const d = lineupDragRef.current
+      if (!d || ev.pointerId !== d.pointerId) return
+      const rawDeltaX = ev.clientX - d.startX
+      const hoverEl = (document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null)?.closest('[data-lineup-group]') as HTMLElement | null
+      const hoverGroup = hoverEl?.dataset.lineupGroup ?? null
+      if (hoverGroup && hoverGroup !== group) {
+        // Hovering a different group's card: freeze in-group order and just
+        // let the row float toward the pointer (both axes) as a drop-here indicator.
+        d.hoverGroup = hoverGroup
+        d.willRemove = false
+        setDragLineupHoverGroup(hoverGroup)
+        setDragLineupWillRemove(false)
+        setDragLineupOffsetX(rawDeltaX)
+        setDragLineupOffsetY(ev.clientY - d.startY)
+        return
+      }
+      if (!hoverGroup) {
+        // Outside both lineup cards entirely: releasing here removes them
+        // from the game instead of reordering or moving groups.
+        d.hoverGroup = null
+        d.willRemove = true
+        setDragLineupHoverGroup(null)
+        setDragLineupWillRemove(true)
+        setDragLineupOffsetX(rawDeltaX)
+        setDragLineupOffsetY(ev.clientY - d.startY)
+        return
+      }
+      d.hoverGroup = null
+      d.willRemove = false
+      setDragLineupHoverGroup(null)
+      setDragLineupWillRemove(false)
+      setDragLineupOffsetX(rawDeltaX)
+      const rawDelta = ev.clientY - d.startY
+      const targetIndex = Math.min(d.order.length - 1, Math.max(0, d.originalIndex + Math.round(rawDelta / d.rowHeight)))
+      const currentIndex = d.order.findIndex(en => en.id === entry.id)
+      if (targetIndex !== currentIndex) {
+        const next = [...d.order]
+        const [moved] = next.splice(currentIndex, 1)
+        next.splice(targetIndex, 0, moved)
+        d.order = next
+        setDragLineupOrder(next)
+      }
+      setDragLineupOffsetY(rawDelta - (targetIndex - d.originalIndex) * d.rowHeight)
+    }
+    const onUp = async (ev: PointerEvent) => {
+      const d = lineupDragRef.current
+      if (!d || ev.pointerId !== d.pointerId) return
+      teardown()
+      lineupDragRef.current = null
+      const targetGroup = d.hoverGroup
+      const willRemove = d.willRemove
+      setDragLineupEntryId(null)
+      setDragLineupGroup(null)
+      setDragLineupOrder(null)
+      setDragLineupOffsetX(0)
+      setDragLineupOffsetY(0)
+      setDragLineupHoverGroup(null)
+      setDragLineupWillRemove(false)
+      if (willRemove) {
+        await handleRemoveFromLineup(entry.player_id, group)
+        return
+      }
+      if (targetGroup && targetGroup !== group) {
+        if (selectedGame) {
+          const targetEntries = ((lineups as LineupEntry[] | undefined) ?? []).filter(en => en.lineup_name === targetGroup)
+          const nextSortOrder = targetEntries.length > 0 ? Math.max(...targetEntries.map(en => en.sort_order)) + 1 : 0
+          await moveLineupEntry({ id: entry.id, lineupName: targetGroup, sortOrder: nextSortOrder })
+          fetchLineups({ gameId: selectedGame.id })
+        }
+        return
+      }
+      const originalSortOrders = list.map(en => en.sort_order)
+      const changes = d.order
+        .map((en, i) => ({ id: en.id, sortOrder: originalSortOrders[i]! }))
+        .filter(c => list.find(en => en.id === c.id)?.sort_order !== c.sortOrder)
+      if (changes.length > 0 && selectedGame) {
+        await Promise.all(changes.map(c => updateLineupSortOrder({ id: c.id, sortOrder: c.sortOrder })))
+        fetchLineups({ gameId: selectedGame.id })
+      }
+    }
+    const onCancel = (ev: PointerEvent) => {
+      if (lineupDragRef.current?.pointerId !== ev.pointerId) return
+      teardown()
+      lineupDragRef.current = null
+      setDragLineupEntryId(null)
+      setDragLineupGroup(null)
+      setDragLineupOrder(null)
+      setDragLineupOffsetX(0)
+      setDragLineupOffsetY(0)
+      setDragLineupHoverGroup(null)
+      setDragLineupWillRemove(false)
+    }
+    const teardown = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
+  }
+
+  // Drag a lineup group's header to reorder the groups themselves. Same
+  // pattern as handleLineupDragStart above, but reassigns
+  // game_lineup_groups.sort_order instead of game_lineups.sort_order.
+  const handleGroupDragStart = (list: LineupGroup[], group: LineupGroup, rowEl: HTMLElement, e: React.PointerEvent) => {
+    if (!can.record) return
+    e.preventDefault()
+    e.stopPropagation()
+    const pointerId = e.pointerId
+    const originalIndex = list.findIndex(g => g.id === group.id)
+    if (originalIndex === -1) return
+    const rowHeight = rowEl.getBoundingClientRect().height
+    const drag = { pointerId, startY: e.clientY, rowHeight, originalIndex, order: [...list] }
+    groupDragRef.current = drag
+    setDragGroupId(group.id)
+    setDragGroupOffsetY(0)
+    setDragGroupOrder(drag.order)
+
+    const onMove = (ev: PointerEvent) => {
+      const d = groupDragRef.current
+      if (!d || ev.pointerId !== d.pointerId) return
+      const rawDelta = ev.clientY - d.startY
+      const targetIndex = Math.min(d.order.length - 1, Math.max(0, d.originalIndex + Math.round(rawDelta / d.rowHeight)))
+      const currentIndex = d.order.findIndex(g => g.id === group.id)
+      if (targetIndex !== currentIndex) {
+        const next = [...d.order]
+        const [moved] = next.splice(currentIndex, 1)
+        next.splice(targetIndex, 0, moved)
+        d.order = next
+        setDragGroupOrder(next)
+      }
+      setDragGroupOffsetY(rawDelta - (targetIndex - d.originalIndex) * d.rowHeight)
+    }
+    const onUp = async (ev: PointerEvent) => {
+      const d = groupDragRef.current
+      if (!d || ev.pointerId !== d.pointerId) return
+      teardown()
+      groupDragRef.current = null
+      setDragGroupId(null)
+      setDragGroupOrder(null)
+      setDragGroupOffsetY(0)
+      const originalSortOrders = list.map(g => g.sort_order)
+      const changes = d.order
+        .map((g, i) => ({ id: g.id, sortOrder: originalSortOrders[i]! }))
+        .filter(c => list.find(g => g.id === c.id)?.sort_order !== c.sortOrder)
+      if (changes.length > 0 && selectedGame) {
+        await reorderLineupGroups({ updates: changes })
+        fetchLineupGroups({ gameId: selectedGame.id })
+      }
+    }
+    const onCancel = (ev: PointerEvent) => {
+      if (groupDragRef.current?.pointerId !== ev.pointerId) return
+      teardown()
+      groupDragRef.current = null
+      setDragGroupId(null)
+      setDragGroupOrder(null)
+      setDragGroupOffsetY(0)
+    }
+    const teardown = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
+  }
+
+  const formatDate = (dateStr: string) => new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+  const formatTime = (timeStr: string) => {
+    if (!timeStr) return ''
+    const [hours, minutes] = timeStr.split(':')
+    const hour = parseInt(hours || '0')
+    return `${hour % 12 || 12}:${minutes || '00'} ${hour >= 12 ? 'PM' : 'AM'}`
+  }
+  const formatTimestamp = (ts: string) => new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+
+  const getPlayerName = (id: number | null | undefined) =>
+    id ? (players as Player[] | undefined)?.find(p => p.id === id)?.display_name ?? null : null
+
+  const getSeasonLabel = (seasonId: number | null) => {
+    if (!seasonId || !seasons) return null
+    const s = (seasons as Season[]).find(s => s.id === seasonId)
+    return s ? seasonLabel(s) : null
+  }
+
+  const meta = seasonsMeta as SeasonMeta | undefined
+
+  const playerOptions = ((players as Player[] | undefined) ?? []).map(p => ({ id: p.id.toString(), label: p.display_name, isSub: !!p.is_sub }))
+  const newEventPlayerOptions = [{ id: '__opponent__', label: 'Opponent' }, ...playerOptions]
+  const isNewEventGoalLike = ['Goal', 'Caught OB'].includes(newEventType)
+
+  // Scorer/assister quick-select is scoped to players actually placed in a
+  // lineup for this specific game (attendance is a pure read of lineup
+  // membership -- see useGetGameAttendance). No row at all means they were
+  // never put in a line for this game, so they're excluded -- a player who
+  // didn't play this game (e.g. on the roster but not in this matchup's
+  // lineups) must not be selectable here, even though they're a full
+  // roster member. The Edit Event dialog still uses the full roster so
+  // past events referencing a player who's since been removed from the
+  // lineup stay editable.
+  const attendingPlayerIds = new Set(
+    ((players as Player[] | undefined) ?? [])
+      .filter(p => {
+        const row = (attendanceRows as { player_id: number; in: boolean }[] | undefined)?.find(r => r.player_id === p.id)
+        return row ? row.in : false
+      })
+      .map(p => p.id)
+  )
+  const attendingPlayerOptions = [
+    ...playerOptions.filter(p => attendingPlayerIds.has(parseInt(p.id))),
+    { id: '__opponent__', label: 'Opponent' },
+  ]
+
+  const otherPlayerOptions = ((otherPlayers as { id: number; display_name: string }[] | undefined) ?? [])
+    .map(p => ({ id: p.id.toString(), label: p.display_name }))
+
+  // Buttons-mode quick-select grid: ordered to match this game's actual
+  // lines (lineup group, then each player's position within it) instead of
+  // roster order, and carrying each player's real photo/gender so the grid
+  // reads as the lineup board the captain already knows, not an alphabetical
+  // wall of names. Players never placed in a lineup (attending by default,
+  // see attendingPlayerIds above) sort after everyone who has a line.
+  const lineupGroupOrder = new Map(
+    ((lineupGroups as LineupGroup[] | undefined) ?? []).map(g => [g.lineup_name, g.sort_order])
+  )
+  const lineupOrderByPlayerId = new Map<number, number>()
+  const lineupPhotoByPlayerId = new Map<number, { photo_url: string | null; gender_match: string | null }>()
+  for (const entry of (lineups as LineupEntry[] | undefined) ?? []) {
+    const groupRank = lineupGroupOrder.get(entry.lineup_name) ?? 999
+    lineupOrderByPlayerId.set(entry.player_id, groupRank * 1000 + entry.sort_order)
+    lineupPhotoByPlayerId.set(entry.player_id, { photo_url: entry.photo_url, gender_match: entry.gender_match })
+  }
+  // Ensure roster players without game-specific lineup entries also have gender/photo info
+  players?.forEach(p => {
+    if (!lineupPhotoByPlayerId.has(p.id)) {
+      lineupPhotoByPlayerId.set(p.id, { photo_url: p.photo_url, gender_match: p.gender_match })
+    }
+  })
+  otherPlayers?.forEach(p => {
+    if (!lineupPhotoByPlayerId.has(p.id)) {
+      lineupPhotoByPlayerId.set(p.id, { photo_url: p.photo_url, gender_match: p.gender_match })
+    }
+  })
+  const lineupOrderedPlayerOptions = [...attendingPlayerOptions].sort((a, b) => {
+    const rankA = lineupOrderByPlayerId.get(parseInt(a.id)) ?? Infinity
+    const rankB = lineupOrderByPlayerId.get(parseInt(b.id)) ?? Infinity
+    if (rankA !== rankB) return rankA - rankB
+    return 0 // stable: keeps Opponent last, unlineupped players in roster order
+  })
+
+  // This season's goals/assists per player (already fetched for the lineup
+  // editor's balance tool, see lineupSeasonStats above) double as a
+  // relevance ranking here: the Scorer row leads with top scorers, the
+  // Assist/2nd rows lead with top assisters, so the player you're most
+  // likely tapping is already on screen before any scrolling. Everyone
+  // else still follows in lineup order, nobody is hidden.
+  const seasonGoalsByPlayerId = new Map<number, number>()
+  const seasonAssistsByPlayerId = new Map<number, number>()
+  const seasonPointsByPlayerId = new Map<number, number>()
+  for (const s of (lineupSeasonStats as { player_id: number; goals: number; assists: number }[] | undefined) ?? []) {
+    seasonGoalsByPlayerId.set(s.player_id, s.goals)
+    seasonAssistsByPlayerId.set(s.player_id, s.assists)
+    seasonPointsByPlayerId.set(s.player_id, (s.goals || 0) + (s.assists || 0))
+  }
+  const rankByStat = (options: typeof attendingPlayerOptions, statByPlayerId: Map<number, number>) =>
+    [...options].sort((a, b) => {
+      if (a.id === '__opponent__') return 1
+      if (b.id === '__opponent__') return -1
+      const statA = statByPlayerId.get(parseInt(a.id)) ?? 0
+      const statB = statByPlayerId.get(parseInt(b.id)) ?? 0
+      if (statA !== statB) return statB - statA
+      const ptsA = seasonPointsByPlayerId.get(parseInt(a.id)) ?? 0
+      const ptsB = seasonPointsByPlayerId.get(parseInt(b.id)) ?? 0
+      if (ptsA !== ptsB) return ptsB - ptsA
+      const rankA = lineupOrderByPlayerId.get(parseInt(a.id)) ?? Infinity
+      const rankB = lineupOrderByPlayerId.get(parseInt(b.id)) ?? Infinity
+      return rankA - rankB
+    })
+  const scorerOrderedPlayerOptions = rankByStat(attendingPlayerOptions, seasonGoalsByPlayerId)
+  const assisterOrderedPlayerOptions = rankByStat(attendingPlayerOptions, seasonAssistsByPlayerId)
+
+  // Calendar helpers
+  const calYear = calendarDate.getFullYear()
+  const calMonth = calendarDate.getMonth()
+  const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate()
+  const firstDay = new Date(calYear, calMonth, 1).getDay()
+  const monthGames = (games as Game[] | undefined)?.filter(g => {
+    const d = new Date(g.game_date + 'T00:00:00')
+    return d.getFullYear() === calYear && d.getMonth() === calMonth
+  }) ?? []
+  const gamesByDay: Record<number, Game[]> = {}
+  for (const g of monthGames) {
+    const day = parseInt(g.game_date.split('-')[2]!)
+    if (!gamesByDay[day]) gamesByDay[day] = []
+    gamesByDay[day]!.push(g)
+  }
+
+  // ── Game Detail ──────────────────────────────────────────────────────────────
+  if (selectedGame) {
+    const gameEvents = (events as GameEvent[] | undefined) ?? []
+    const ourGoals = gameEvents.filter(e => e.event_type === 'Goal').length
+    const theirGoals = gameEvents.filter(e => e.event_type === 'Opponent Goal').length
+    const displayResult = selectedGame.outcome_override ?? selectedGame.result
+
+    const playerMap: Record<number, { name: string; points: number; goals: number; assists: number; secondAssists: number; blocks: number }> = {}
+    const ensurePlayer = (id: number, name: string) => {
+      if (!playerMap[id]) playerMap[id] = { name, points: 0, goals: 0, assists: 0, secondAssists: 0, blocks: 0 }
+    }
+    gameEvents.forEach(e => {
+      const sn = getPlayerName(e.player_id), an = getPlayerName(e.related_player_id), s2n = getPlayerName(e.secondary_assister_id)
+      if (e.event_type === 'Goal') {
+        if (e.player_id && sn) { ensurePlayer(e.player_id, sn); playerMap[e.player_id]!.goals++ }
+        if (e.related_player_id && an) { ensurePlayer(e.related_player_id, an); playerMap[e.related_player_id]!.assists++ }
+        if (e.secondary_assister_id && s2n) { ensurePlayer(e.secondary_assister_id, s2n); playerMap[e.secondary_assister_id]!.secondAssists++ }
+      } else if (e.event_type === 'Block') {
+        if (e.player_id && sn) { ensurePlayer(e.player_id, sn); playerMap[e.player_id]!.blocks++ }
+      }
+    })
+    Object.values(playerMap).forEach(p => {
+      p.points = p.goals * 500 + p.assists * 500 + p.secondAssists * 250 + p.blocks * 500
+    })
+    // Ranked by Warrior points desc, ties broken by goals desc
+    const playerStats = Object.values(playerMap).sort((a, b) =>
+      b.points - a.points || b.goals - a.goals || b.assists - a.assists
+    )
+    const lineupEntries = (lineups as LineupEntry[] | undefined) ?? []
+    const lineupByGroup = lineupEntries.reduce((acc, e) => {
+      if (!acc[e.lineup_name]) acc[e.lineup_name] = []
+      acc[e.lineup_name]!.push(e)
+      return acc
+    }, {} as Record<string, LineupEntry[]>)
+    // Lineup groups (name + display order) are their own table now, not
+    // inferred from game_lineups: a group exists, is orderable, and is
+    // deletable independent of whether it currently has any players in it.
+    const groups = ((lineupGroups as LineupGroup[] | undefined) ?? [])
+    const orderedGroups = dragGroupOrder ?? groups
+    const lineupNames = groups.map(g => g.lineup_name)
+
+    // This season's per-player goals/assists (scoped to the selected game's
+    // season, fetched in handleSelectGame), used to help pick balanced
+    // lineups and to total each lineup's combined production.
+    const seasonStatsByPlayerId = new Map<number, { goals: number; assists: number }>()
+    ;((lineupSeasonStats as { player_id: number; goals: number; assists: number }[] | undefined) ?? [])
+      .forEach(s => seasonStatsByPlayerId.set(s.player_id, { goals: s.goals, assists: s.assists }))
+    // Anyone already placed in ANY lineup group for this game is excluded,
+    // not just the currently-targeted group: a player only needs one line,
+    // so once they're placed anywhere they should drop out of the "add"
+    // list entirely rather than staying pickable for every other group.
+    const placedAnywherePlayerIds = new Set(lineupEntries.map(e => e.player_id))
+    const lineupCandidates = ((players as Player[] | undefined) ?? [])
+      .filter(p => !placedAnywherePlayerIds.has(p.id))
+      .sort((a, b) =>
+        Number(!!a.is_sub) - Number(!!b.is_sub)
+        || (a.gender_match ?? '').localeCompare(b.gender_match ?? '')
+        || a.display_name.localeCompare(b.display_name)
+      )
+
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <button onClick={handleBack} className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors">
+            <CaretLeft className="w-5 h-5" />
+            <span className="text-sm font-medium">Back to Schedule</span>
+          </button>
+          {can.record && (
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleOpenEditGame}
+                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <PencilSimple className="w-4 h-4" />
+                Edit
+              </button>
+              <button
+                onClick={() => setDeleteConfirmId(selectedGame.id)}
+                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-destructive transition-colors"
+              >
+                <Trash className="w-4 h-4" />
+                Delete
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Game header */}
+        <FadeIn>
+        <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
+          <CardContent className="p-5">
+<div className="text-center">
+                <div className="text-lg font-bold text-foreground leading-snug break-words">vs {selectedGame.opponent}</div>
+                <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground mt-1">
+                  <CalendarBlank className="w-3 h-3 flex-shrink-0" />
+                  <span>
+                    {formatDate(selectedGame.game_date)} · {formatTime(selectedGame.game_time)}
+                    {selectedGame.season_id && getSeasonLabel(selectedGame.season_id) ? ` · ${getSeasonLabel(selectedGame.season_id)}` : ''}
+                  </span>
+                </div>
+                <LiveBadge active={isActualGame(selectedGame)} />
+              </div>
+
+            <div className="flex items-center justify-center gap-3 mt-4">
+              <div className="text-center">
+                <div className="text-8xl sm:text-[10rem] font-bold text-primary tabular-nums leading-none">{ourGoals}</div>
+                <div className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground mt-2">Us</div>
+              </div>
+              <div className="text-5xl sm:text-6xl font-light text-muted-foreground/50">-</div>
+              <div className="text-center">
+                <div className="text-8xl sm:text-[10rem] font-bold text-muted-foreground tabular-nums leading-none">{theirGoals}</div>
+                <div className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground mt-2">Them</div>
+              </div>
+            </div>
+
+            {/* Outcome */}
+            <div className="text-center mt-4">
+              {editingOutcome ? (
+                <div className="flex items-center justify-center gap-2">
+                  <Select value={outcomeValue || '__auto__'} onValueChange={setOutcomeValue}>
+                    <SelectTrigger className="bg-background text-foreground border-border w-40 h-8 text-sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__auto__">Auto (from score)</SelectItem>
+                      {OUTCOME_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <button onClick={handleSaveOutcome} className="text-green-600 hover:text-green-700"><FloppyDisk className="w-4 h-4" /></button>
+                  <button onClick={() => setEditingOutcome(false)} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
+                </div>
+              ) : (
+                <div className="flex items-center justify-center gap-2">
+                  {displayResult && (
+                    <span className={`text-sm font-semibold ${displayResult.startsWith('Win') || displayResult === 'Default Win' ? 'text-green-600 dark:text-green-400' : displayResult === 'Tie' ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-600 dark:text-red-400'}`}>
+                      {displayResult}
+                      {selectedGame.outcome_override && <span className="text-xs font-normal ml-1 opacity-70">(override)</span>}
+                    </span>
+                  )}
+                  {can.record && (
+                    <button onClick={() => { setEditingOutcome(true); setOutcomeValue(selectedGame.outcome_override ?? '') }} className="text-muted-foreground hover:text-foreground">
+                      <PencilSimple className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+        </FadeIn>
+
+        {/* Tab bar */}
+        <div className="flex gap-1 bg-muted rounded-lg p-1">
+          {[
+            { key: 'events' as const, icon: ListBullets, label: 'Events' },
+            { key: 'boxscore' as const, icon: Table, label: 'Box Score' },
+            { key: 'lineups' as const, icon: Users, label: 'Lineups' },
+            { key: 'notes' as const, icon: NoteBlank, label: 'Notes' },
+          ].map(({ key, icon: Icon, label }) => (
+            <button key={key} onClick={() => setActiveTab(key)}
+              className={`flex-1 flex items-center justify-center gap-1.5 text-xs py-2 px-2 rounded-md font-medium transition-colors ${activeTab === key ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              <Icon className="w-3.5 h-3.5" />{label}
+            </button>
+          ))}
+        </div>
+
+        {/* Add Event */}
+        {activeTab === 'events' && can.record && (
+          <Card className="bg-card text-card-foreground border-border">
+            <button
+              className="w-full flex items-center justify-between px-6 py-4"
+              onClick={() => setShowAddEvent(v => !v)}
+            >
+              <span className="text-base font-semibold flex items-center gap-2"><PlusCircle className="w-4 h-4" />Add Event</span>
+              {showAddEvent ? <CaretUp className="w-4 h-4 text-muted-foreground" /> : <CaretDown className="w-4 h-4 text-muted-foreground" />}
+            </button>
+            {showAddEvent && (
+              <CardContent className="pt-0 space-y-3">
+                <div className="flex items-center bg-muted p-1 rounded-lg w-fit mb-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectionMode('combobox')}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${selectionMode === 'combobox' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    Dropdown
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectionMode('buttons')}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${selectionMode === 'buttons' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    Buttons
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-[60px_1fr] items-center gap-2">
+                  <span className="text-xs font-medium text-muted-foreground text-right">Event</span>
+                  {selectionMode === 'combobox' ? (
+                    <Select value={newEventType} onValueChange={setNewEventType}>
+                      <SelectTrigger className="h-9 text-sm bg-background text-foreground border-border"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {selectableEventTypes?.map(et => (
+                          <SelectItem key={et.id} value={et.name}>{et.name}</SelectItem>
+                        ))}
+                        {hiddenEventTypes && hiddenEventTypes.length > 0 && (
+                          <>
+                            <SelectSeparator />
+                            {hiddenEventTypes.map(et => (
+                              <SelectItem key={et.id} value={et.name}>{et.name}</SelectItem>
+                            ))}
+                          </>
+                        )}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <div className="flex flex-wrap items-center gap-1">
+                      {selectableEventTypes?.map(et => (
+                        <Button key={et.id} variant={newEventType === et.name ? 'default' : 'secondary'} size="sm" className="h-7 text-xs" onClick={() => setNewEventType(et.name)}>{et.name}</Button>
+                      ))}
+                      {/* The currently active type stays visible even when it's one of
+                          the hidden ones, so picking something from "More" doesn't make
+                          the selection disappear from view. */}
+                      {hiddenEventTypes?.find(et => et.name === newEventType) && (
+                        <Button variant="default" size="sm" className="h-7 text-xs" onClick={() => setMoreEventTypesOpen(true)}>{newEventType}</Button>
+                      )}
+                      <Popover open={moreEventTypesOpen} onOpenChange={setMoreEventTypesOpen}>
+                        <PopoverTrigger asChild>
+                          <Button variant="outline" size="sm" className="h-7 text-xs gap-1 border-dashed">
+                            <Plus className="w-3 h-3" />
+                            More
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-52 p-1" align="start">
+                          <div className="flex flex-col">
+                            {hiddenEventTypes?.map(et => (
+                              <button
+                                key={et.id}
+                                type="button"
+                                onClick={() => { setNewEventType(et.name); setMoreEventTypesOpen(false) }}
+                                className={`text-left text-sm px-2 py-1.5 rounded ${newEventType === et.name ? 'bg-accent text-accent-foreground' : 'hover:bg-accent hover:text-accent-foreground'}`}
+                              >
+                                {et.name}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="border-t border-border mt-1 pt-1 px-1 flex items-center gap-1">
+                            <Input
+                              value={customEventTypeInput}
+                              onChange={e => setCustomEventTypeInput(e.target.value)}
+                              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleCreateCustomEventType() } }}
+                              placeholder="Custom..."
+                              className="h-7 text-xs bg-background border-border"
+                            />
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              className="h-7 w-7 p-0 shrink-0"
+                              disabled={!customEventTypeInput.trim() || customEventTypeSaving}
+                              onClick={handleCreateCustomEventType}
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+                  )}
+                </div>
+
+                {isNewEventGoalLike && newScorerId !== '__opponent__' ? (
+                  // Possession chain: disc moves 2nd assist -> assist -> scorer, top to bottom,
+                  // in the order it was actually thrown. The dots and connecting line are
+                  // real sequence information (who touched it, in order), not decoration.
+                  <div className="relative pl-3 space-y-3">
+                    <div className="absolute left-[4px] top-[14px] bottom-[18px] w-px bg-border" aria-hidden="true" />
+
+                    <div className="relative grid grid-cols-[44px_1fr] items-center gap-2">
+                      <span className="absolute -left-3 top-1/2 -translate-y-1/2 w-[9px] h-[9px] rounded-full border-2 border-border bg-card" aria-hidden="true" />
+                      <span className="text-xs font-medium text-muted-foreground text-right">2nd</span>
+                      {selectionMode === 'combobox' ? (
+                        <PlayerCombobox
+                          players={attendingPlayerOptions}
+                          otherPlayers={otherPlayerOptions}
+                          value={newSecondaryAssisterId || '__none__'}
+                          onValueChange={setNewSecondaryAssisterId}
+                          onAddPlayer={handleAddSecondaryAssister}
+                          onAddExistingPlayer={handleAddExistingSecondaryAssister}
+                          onDeletePlayer={handleDeleteSub}
+                          placeholder="None"
+                          className="w-full h-9 text-sm bg-background border-border"
+                        />
+                      ) : (
+                        <PlayerChipGrid
+                          options={assisterOrderedPlayerOptions}
+                          value={newSecondaryAssisterId || '__none__'}
+                          onChange={setNewSecondaryAssisterId}
+                          photoMap={lineupPhotoByPlayerId}
+                        />
+                      )}
+                    </div>
+
+                    <div className="relative grid grid-cols-[44px_1fr] items-center gap-2">
+                      <span className="absolute -left-3 top-1/2 -translate-y-1/2 w-[9px] h-[9px] rounded-full border-2 border-border bg-card" aria-hidden="true" />
+                      <div className="flex flex-col items-end gap-0.5">
+                        <span className="text-xs font-medium text-muted-foreground text-right">Assist</span>
+                        <button
+                          onClick={() => { const tmp = newScorerId; setNewScorerId(newAssisterId); setNewAssisterId(tmp) }}
+                          title="Swap Scorer and Assister"
+                          aria-label="Swap scorer and assister"
+                          className="w-6 h-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                        >
+                          <ArrowsLeftRight className="w-3 h-3" />
+                        </button>
+                      </div>
+                      {selectionMode === 'combobox' ? (
+                        <PlayerCombobox
+                          players={attendingPlayerOptions}
+                          otherPlayers={otherPlayerOptions}
+                          value={newAssisterId || '__none__'}
+                          onValueChange={setNewAssisterId}
+                          onAddPlayer={handleAddAssister}
+                          onAddExistingPlayer={handleAddExistingAssister}
+                          onDeletePlayer={handleDeleteSub}
+                          placeholder="None"
+                          className="w-full h-9 text-sm bg-background border-border"
+                        />
+                      ) : (
+                        <PlayerChipGrid
+                          options={assisterOrderedPlayerOptions}
+                          value={newAssisterId || '__none__'}
+                          onChange={setNewAssisterId}
+                          photoMap={lineupPhotoByPlayerId}
+                        />
+                      )}
+                    </div>
+
+                    <div className="relative grid grid-cols-[44px_1fr] items-center gap-2">
+                      <span className="absolute -left-3 top-1/2 -translate-y-1/2 w-[9px] h-[9px] rounded-full bg-green-600 dark:bg-green-500" aria-hidden="true" />
+                      <span className="text-xs font-medium text-foreground text-right">Scorer</span>
+                      {selectionMode === 'combobox' ? (
+                        <PlayerCombobox
+                          players={attendingPlayerOptions}
+                          otherPlayers={otherPlayerOptions}
+                          value={newScorerId || '__none__'}
+                          onValueChange={setNewScorerId}
+                          onAddPlayer={handleAddPlayer}
+                          onAddExistingPlayer={handleAddExistingScorer}
+                          onDeletePlayer={handleDeleteSub}
+                          placeholder="None"
+                          className="w-full h-9 text-sm bg-background border-border"
+                        />
+                      ) : (
+                        <PlayerChipGrid
+                          options={scorerOrderedPlayerOptions}
+                          value={newScorerId || '__none__'}
+                          onChange={setNewScorerId}
+                          photoMap={lineupPhotoByPlayerId}
+                        />
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-[60px_1fr] items-center gap-2">
+                    <span className="text-xs font-medium text-muted-foreground text-right">Player</span>
+                    {selectionMode === 'combobox' ? (
+                      <PlayerCombobox
+                        players={attendingPlayerOptions}
+                        otherPlayers={otherPlayerOptions}
+                        value={newScorerId || '__none__'}
+                        onValueChange={setNewScorerId}
+                        onAddPlayer={handleAddPlayer}
+                        onAddExistingPlayer={handleAddExistingScorer}
+                        onDeletePlayer={handleDeleteSub}
+                        placeholder="None"
+                        className="w-full h-9 text-sm bg-background border-border"
+                      />
+                    ) : (
+                      <PlayerChipGrid
+                        options={lineupOrderedPlayerOptions}
+                        value={newScorerId || '__none__'}
+                        onChange={setNewScorerId}
+                        photoMap={lineupPhotoByPlayerId}
+                        wrap
+                      />
+                    )}
+                  </div>
+                )}
+
+                <div className="border-t border-border" />
+
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    onClick={handleAddEvent}
+                    className="h-14 font-bold bg-green-600 hover:bg-green-700 text-white dark:bg-green-700 dark:hover:bg-green-600 flex flex-col items-center justify-center gap-0.5"
+                  >
+                    <div className="flex items-center gap-1">
+                      <Plus className="w-4 h-4" />
+                      <span className="text-sm">{newEventType}</span>
+                    </div>
+                    {newScorerId && newScorerId !== '__none__' && (
+                      <span className="text-xs font-normal opacity-90 truncate max-w-full px-2">
+                        {newEventPlayerOptions.find(p => p.id === newScorerId)?.label ?? 'Opponent'}
+                      </span>
+                    )}
+                  </Button>
+
+                  <Button
+                    onClick={handleAddOpponentGoal}
+                    className="h-14 font-bold bg-red-600 hover:bg-red-700 text-white dark:bg-red-700 dark:hover:bg-red-600 flex flex-col items-center justify-center gap-0.5"
+                  >
+                    <div className="flex items-center gap-1">
+                      <Minus className="w-4 h-4" />
+                      <span className="text-sm">They Score</span>
+                    </div>
+                  </Button>
+                </div>
+
+                <Button
+                  onClick={handleUndo}
+                  disabled={!events || (events as GameEvent[]).length === 0}
+                  variant="outline"
+                  className="w-full h-8 text-xs font-medium text-muted-foreground hover:text-foreground flex items-center justify-center gap-1.5 disabled:opacity-40"
+                >
+                  <ArrowCounterClockwise className="w-3.5 h-3.5" />
+                  Undo last event
+                </Button>
+              </CardContent>
+            )}
+          </Card>
+        )}
+
+        {/* Recent Activity */}
+        {activeTab === 'events' && (
+          <Card className="bg-card text-card-foreground border-border">
+            <CardHeader>
+              <CardTitle className="text-base flex items-center justify-between">
+                <span>Recent Activity</span>
+                <span className="text-sm font-normal text-muted-foreground">{gameEvents.length} events</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {shouldShowEventsLoading(eventsLoading, events) ? (
+                <div className="text-center py-8 text-muted-foreground text-sm">Loading events...</div>
+              ) : gameEvents.length ? (
+                <div className="space-y-2">
+                  {(dragOrder ?? gameEvents).map((event, i) => {
+                    const scorer = getPlayerName(event.player_id)
+                    const assister = getPlayerName(event.related_player_id)
+                    const secondaryAssister = getPlayerName(event.secondary_assister_id ?? null)
+                    const isGoal = event.event_type === 'Goal'
+                    const isOpponentGoal = event.event_type === 'Opponent Goal'
+                    const isTurnover = isTurnoverEvent(event.event_type)
+                    const isEditing = editingEventId === event.id
+                    const isDragging = dragEventId === event.id
+
+                    if (isEditing) {
+                      return (
+                        <div key={event.id} className="py-2.5 border-b border-border last:border-0">
+                          <div className="space-y-2 bg-background rounded-lg p-3">
+                            <div className="space-y-1">
+                              <Label className="text-xs">Scorer / Player</Label>
+                              <PlayerCombobox players={playerOptions} value={editScorerId || '__none__'} onValueChange={setEditScorerId} placeholder="Select player..." className="w-full bg-card border-border" />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Assister / Related</Label>
+                              <PlayerCombobox players={playerOptions} value={editAssisterId || '__none__'} onValueChange={setEditAssisterId} placeholder="Select player..." className="w-full bg-card border-border" />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">2nd Assister</Label>
+                              <PlayerCombobox players={playerOptions} value={editSecondaryAssisterId || '__none__'} onValueChange={setEditSecondaryAssisterId} placeholder="Select player..." className="w-full bg-card border-border" />
+                            </div>
+                            <div className="flex gap-2">
+                              <Button size="sm" onClick={handleSaveEventEdit} className="flex-1 bg-primary text-primary-foreground h-8 text-xs"><FloppyDisk className="w-3 h-3 mr-1" />Save</Button>
+                              <Button size="sm" variant="outline" onClick={() => setEditingEventId(null)} className="h-8 text-xs"><X className="w-3 h-3" /></Button>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    }
+                    // The dragged row skips FadeIn: its animate-in classes
+                    // persist a CSS-animation-driven transform (fill-mode:
+                    // both) that would fight the inline translateY below.
+                    // Every other row keeps a stable key across a reorder
+                    // (keyed by event.id, not index), so FadeIn's mount
+                    // animation never re-triggers just from shuffling.
+                    const RowTag = isDragging ? 'div' : FadeIn
+                    return (
+                      <RowTag
+                        key={event.id}
+                        data-event-row
+                        {...(isDragging ? {} : { delay: i * 40 })}
+                        className={`flex items-center gap-3 py-2 border-b border-border last:border-0 ${isDragging ? 'relative z-10 bg-card shadow-lg rounded-lg' : ''}`}
+                        style={isDragging ? { transform: `translateY(${dragOffsetY}px)` } : undefined}
+                      >
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${isGoal ? 'bg-green-100 dark:bg-green-950' : isOpponentGoal ? 'bg-red-100 dark:bg-red-950' : 'bg-orange-100 dark:bg-orange-950'}`}>
+                          {isGoal && <Target className="w-5 h-5 text-green-600 dark:text-green-400" />}
+                          {isOpponentGoal && <Target className="w-5 h-5 text-red-600 dark:text-red-400" />}
+                          {isTurnover && <TrendUp className="w-5 h-5 text-orange-600 dark:text-orange-400" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-foreground text-sm">
+                            {isGoal && (
+                              <>
+                                {scorer ?? 'Our Goal'}
+                                {assister && <span className="text-xs text-muted-foreground ml-1">(from {assister}{secondaryAssister && `, 2nd: ${secondaryAssister}`})</span>}
+                                {!assister && secondaryAssister && <span className="text-xs text-muted-foreground ml-1">(2nd: {secondaryAssister})</span>}
+                              </>
+                            )}
+                            {isOpponentGoal && 'Opponent Goal'}
+                            {isTurnover && <>{scorer ?? 'Unknown'} turned it over</>}
+                            {!isGoal && !isOpponentGoal && !isTurnover && event.event_type}
+                          </div>
+                          <div className="text-xs text-muted-foreground">{formatTimestamp(event.event_timestamp)}</div>
+                        </div>
+                        {can.record && (
+                          <div className="flex items-center gap-0.5 shrink-0">
+                            <button
+                              onPointerDown={e => handleEventDragStart(gameEvents, event, e.currentTarget.closest('[data-event-row]') as HTMLElement, e)}
+                              className="p-1.5 rounded hover:bg-accent transition-colors cursor-grab touch-none"
+                              aria-label="Drag to reorder event"
+                            >
+                              <DotsSixVertical className="w-4 h-4 text-muted-foreground hover:text-foreground" />
+                            </button>
+                            <button onClick={() => handleEditEvent(event)} className="p-1.5 rounded hover:bg-accent transition-colors" aria-label="Edit event">
+                              <PencilSimple className="w-4 h-4 text-muted-foreground hover:text-foreground" />
+                            </button>
+                            <button onClick={() => handleDeleteEvent(event.id)} className="p-1.5 rounded hover:bg-destructive/10 transition-colors" aria-label="Delete event">
+                              <Trash className="w-4 h-4 text-muted-foreground hover:text-destructive" />
+                            </button>
+                          </div>
+                        )}
+                        {(isGoal || isOpponentGoal) && (
+                          <div className={`text-lg font-bold tabular-nums ml-1 ${isGoal ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>+1</div>
+                        )}
+                      </RowTag>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-10">
+                  <Target className="w-12 h-12 text-muted-foreground mx-auto mb-3 opacity-40" />
+                  <p className="text-muted-foreground text-sm">No events recorded for this game</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Lineups */}
+        {activeTab === 'lineups' && (
+          <Card className="bg-card text-card-foreground border-border">
+            <CardHeader>
+              <div className="flex items-center justify-between gap-2">
+                <CardTitle className="text-base flex items-center gap-2"><Users className="w-4 h-4" />Lineups</CardTitle>
+                {can.record && orderedGroups.length > 0 && !savingTemplateOpen && (
+                  <Button type="button" size="sm" variant="outline" onClick={() => setSavingTemplateOpen(true)} className="h-7 text-xs bg-card border-border">
+                    Save as Template
+                  </Button>
+                )}
+              </div>
+              {savingTemplateOpen && (
+                <div className="flex gap-2 mt-2">
+                  <Input
+                    autoFocus
+                    placeholder="Template name..."
+                    value={templateNameInput}
+                    onChange={e => setTemplateNameInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleSaveLineupTemplate(); if (e.key === 'Escape') setSavingTemplateOpen(false) }}
+                    className="h-8 text-sm bg-card border-border"
+                  />
+                  <Button type="button" size="sm" onClick={handleSaveLineupTemplate} disabled={!templateNameInput.trim() || savingTemplate} className="h-8 bg-primary text-primary-foreground hover:bg-primary/90 shrink-0">
+                    {savingTemplate ? 'Saving...' : 'Save'}
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onClick={() => { setSavingTemplateOpen(false); setTemplateNameInput('') }} className="h-8 bg-card border-border shrink-0">
+                    <X className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              )}
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Add to lineup */}
+              {can.record && (
+                <div className="space-y-2 bg-background rounded-lg p-3">
+                  <Label className="text-xs text-muted-foreground">Add Players</Label>
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <Select value={lineupName} onValueChange={setLineupName}>
+                        <SelectTrigger className="h-8 text-sm bg-card border-border text-foreground"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {lineupNames.map(n => <SelectItem key={n} value={n}>{n}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => { setAddingLineupName(true); setNewLineupNameInput('') }}
+                      className="h-8 bg-card border-border"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                  {addingLineupName && (
+                    <div className="flex gap-2">
+                      <Input
+                        autoFocus
+                        value={newLineupNameInput}
+                        onChange={e => setNewLineupNameInput(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            handleAddLineupGroup(newLineupNameInput)
+                          } else if (e.key === 'Escape') {
+                            e.preventDefault()
+                            setAddingLineupName(false)
+                          }
+                        }}
+                        placeholder="New lineup name..."
+                        className="h-8 text-sm bg-card border-border text-foreground"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => handleAddLineupGroup(newLineupNameInput)}
+                        disabled={!newLineupNameInput.trim()}
+                        className="h-8 bg-primary text-primary-foreground hover:bg-primary/90"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" onClick={() => setAddingLineupName(false)} className="h-8 bg-card border-border">
+                        <X className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  )}
+                  <Popover open={lineupPopoverOpen} onOpenChange={setLineupPopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={lineupPopoverOpen}
+                        className="w-full h-8 justify-between font-normal text-sm bg-card border-border"
+                      >
+                        <span className="truncate">Select players...</span>
+                        <CaretUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    {/* Matches the trigger's own width via Radix's exposed
+                        CSS var, instead of a fixed px width, so the search
+                        input lines up with the "Select players..." button
+                        rather than overhanging it. */}
+                    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0">
+                      <Command>
+                        <CommandInput placeholder="Search players..." />
+                        <CommandList>
+                          <CommandEmpty>No player found.</CommandEmpty>
+                          <CommandGroup>
+                            <div className="grid grid-cols-2 gap-x-1">
+                              {lineupCandidates.map(p => {
+                                const s = seasonStatsByPlayerId.get(p.id)
+                                return (
+                                  <CommandItem
+                                    key={p.id}
+                                    value={p.display_name}
+                                    onSelect={() => handleAddPlayerToLineup(p.id)}
+                                    className="flex items-center justify-between"
+                                  >
+                                    <div className="flex items-center min-w-0 gap-1.5">
+                                      <GenderTag value={p.gender_match} />
+                                      <span className="truncate">{p.display_name}</span>
+                                      {p.is_sub && (
+                                        <span className="shrink-0 text-[9px] font-semibold uppercase tracking-wide px-1 rounded bg-amber-500/15 text-amber-500">Sub</span>
+                                      )}
+                                    </div>
+                                    <span className="text-xs text-muted-foreground shrink-0 ml-2">
+                                      {s ? s.goals : 0}G {s ? s.assists : 0}A
+                                    </span>
+                                  </CommandItem>
+                                )
+                              })}
+                            </div>
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              )}
+
+              {/* Shown until someone's actually been placed in a lineup for
+                  this game — copying is an explicit choice, not automatic,
+                  so starting from scratch is just as easy as copying. */}
+              {lineupEntries.length === 0 && (
+                <div className="text-center py-6 text-muted-foreground text-sm space-y-3">
+                  <div>
+                    <Users className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                    No one's been placed in a lineup for this game yet.
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={handleOpenCopyLineupDialog}
+                    disabled={copyingLineup}
+                    className="bg-card border-border"
+                  >
+                    {copyingLineup ? 'Copying...' : 'Copy Recent Lineup'}
+                  </Button>
+                  {((lineupTemplates as LineupTemplate[] | undefined) ?? []).length > 0 && (
+                    <div className="flex items-center justify-center gap-2 max-w-xs mx-auto">
+                      <Select value={selectedTemplateId} onValueChange={setSelectedTemplateId}>
+                        <SelectTrigger className="h-8 text-sm bg-card border-border"><SelectValue placeholder="Load saved lineup..." /></SelectTrigger>
+                        <SelectContent>
+                          {(lineupTemplates as LineupTemplate[]).map(t => (
+                            <SelectItem key={t.id} value={t.id.toString()}>{t.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={handleApplyLineupTemplate}
+                        disabled={!selectedTemplateId || applyingTemplate}
+                        className="h-8 bg-card border-border shrink-0"
+                      >
+                        {applyingTemplate ? 'Loading...' : 'Load'}
+                      </Button>
+                      {selectedTemplateId && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteLineupTemplate(parseInt(selectedTemplateId))}
+                          title="Delete this saved lineup"
+                          aria-label="Delete this saved lineup"
+                          className="text-muted-foreground hover:text-destructive transition-colors shrink-0"
+                        >
+                          <Trash className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Copy Recent Lineup picker: preview each candidate game's
+                  groups/players before committing, rather than silently
+                  guessing "the last game". */}
+              <Dialog open={showCopyLineupDialog} onOpenChange={setShowCopyLineupDialog}>
+                <DialogContent className="bg-card text-card-foreground max-w-md max-h-[85vh] flex flex-col overflow-hidden">
+                  <DialogHeader>
+                    <DialogTitle>Copy a recent lineup</DialogTitle>
+                    <DialogDescription>Pick a past game to see who was on each line, then copy it into this one.</DialogDescription>
+                  </DialogHeader>
+                  {((recentLineupGames as RecentLineupGame[] | undefined) ?? []).length === 0 ? (
+                    <div className="text-center py-6 text-muted-foreground text-sm space-y-3">
+                      <p>No earlier games in this season have a lineup to copy from yet.</p>
+                      <Button type="button" size="sm" variant="outline" onClick={handleStartFreshLineup} disabled={copyingLineup} className="bg-card border-border">
+                        {copyingLineup ? 'Creating...' : 'Start With an Even Split'}
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex-1 min-h-0 overflow-y-auto -mx-6 px-6 space-y-2.5">
+                        {(recentLineupGames as RecentLineupGame[]).map(g => {
+                          const isSelected = selectedCopyGameId === g.game_id
+                          return (
+                            <button
+                              key={g.game_id}
+                              type="button"
+                              onClick={() => setSelectedCopyGameId(id => id === g.game_id ? null : g.game_id)}
+                              className={`w-full text-left rounded-xl border p-3.5 transition-colors ${
+                                isSelected ? 'border-primary ring-1 ring-primary bg-primary/5' : 'border-border bg-background hover:border-primary/40 hover:bg-accent/50'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-semibold text-sm truncate">vs {g.opponent ?? 'TBD'}</span>
+                                <span className="flex items-center gap-1.5 shrink-0">
+                                  <span className="text-xs text-muted-foreground">{g.game_date ? formatDate(g.game_date) : 'TBD'}</span>
+                                  <span className={`w-4 h-4 rounded-full border flex items-center justify-center transition-colors ${isSelected ? 'bg-primary border-primary' : 'border-border'}`}>
+                                    {isSelected && <Check className="w-2.5 h-2.5 text-primary-foreground" />}
+                                  </span>
+                                </span>
+                              </div>
+                              <div className="mt-2.5 space-y-2">
+                                {g.groups.map(group => {
+                                  const groupEntries = g.entries.filter(e => e.lineup_name === group.lineup_name)
+                                  return (
+                                    <div key={group.lineup_name}>
+                                      <div className="flex items-center gap-1.5 mb-1">
+                                        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                          {group.lineup_name} <span className="font-normal normal-case">· {groupEntries.length} players</span>
+                                        </p>
+                                        <GenderRatio entries={groupEntries} />
+                                      </div>
+                                      <div className="flex flex-wrap gap-1">
+                                        {groupEntries.length === 0 ? (
+                                          <span className="text-xs text-muted-foreground">—</span>
+                                        ) : (
+                                          groupEntries.map(e => (
+                                            <span key={e.player_id} className="inline-flex items-center gap-1 text-[11px] leading-none px-1.5 py-1 rounded-md bg-accent text-foreground/90">
+                                              <GenderTag value={e.gender_match} />
+                                              {e.display_name ?? 'Unknown'}
+                                            </span>
+                                          ))
+                                        )}
+                                      </div>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            </button>
+                          )
+                        })}
+                      </div>
+                      <div className="flex items-center justify-between gap-2 pt-3 border-t border-border">
+                        <Button type="button" size="sm" variant="ghost" onClick={handleStartFreshLineup} disabled={copyingLineup}>
+                          Start fresh instead
+                        </Button>
+                        <Button type="button" size="sm" onClick={handleCopySelectedLineup} disabled={!selectedCopyGameId || copyingLineup}>
+                          {copyingLineup ? 'Copying...' : 'Copy This Lineup'}
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                </DialogContent>
+              </Dialog>
+
+              {/* Lineup groups */}
+              {orderedGroups.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {orderedGroups.map(g => {
+                  const entries = lineupByGroup[g.lineup_name] ?? []
+                  const isGroupDragging = dragGroupId === g.id
+                  const isDropTarget = dragLineupHoverGroup === g.lineup_name
+                  const totals = entries.reduce((acc, e) => {
+                    const s = seasonStatsByPlayerId.get(e.player_id)
+                    acc.goals += s?.goals ?? 0
+                    acc.assists += s?.assists ?? 0
+                    return acc
+                  }, { goals: 0, assists: 0 })
+                  return (
+                    <div
+                      key={g.id}
+                      data-lineup-group-row
+                      data-lineup-group={g.lineup_name}
+                      className={`rounded-lg border p-3 transition-colors ${isDropTarget ? 'border-primary ring-2 ring-primary bg-primary/5' : 'border-border bg-background'}`}
+                      style={isGroupDragging ? { transform: `translateY(${dragGroupOffsetY}px)`, position: 'relative', zIndex: 20 } : undefined}
+                    >
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
+                        {can.record && (
+                          <button
+                            onPointerDown={ev => handleGroupDragStart(groups, g, ev.currentTarget.closest('[data-lineup-group-row]') as HTMLElement, ev)}
+                            className="p-1 -ml-1 shrink-0 cursor-grab active:cursor-grabbing touch-none"
+                            aria-label={`Drag to reorder ${g.lineup_name}`}
+                          >
+                            <DotsSixVertical className="w-3.5 h-3.5 text-muted-foreground" />
+                          </button>
+                        )}
+                        {editingGroupId === g.id ? (
+                          <Input
+                            autoFocus
+                            value={editingGroupNameValue}
+                            onChange={ev => setEditingGroupNameValue(ev.target.value)}
+                            onBlur={() => handleRenameLineupGroup(g, editingGroupNameValue, lineupNames)}
+                            onKeyDown={ev => {
+                              if (ev.key === 'Enter') { ev.preventDefault(); handleRenameLineupGroup(g, editingGroupNameValue, lineupNames) }
+                              else if (ev.key === 'Escape') { ev.preventDefault(); setEditingGroupId(null) }
+                            }}
+                            className="h-6 w-32 text-xs bg-card border-border text-foreground"
+                          />
+                        ) : (
+                          <Badge variant="secondary" className="text-xs"

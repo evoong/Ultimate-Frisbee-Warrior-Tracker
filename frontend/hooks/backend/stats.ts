@@ -179,6 +179,17 @@ export function useGetPlayerStats() {
 
     const filteredGameIds = scopedGameIds ? new Set(scopedGameIds) : null
 
+    // Per-player counts of every event type (not just Goal/Block), so callers
+    // can rank player pickers by "who does this event most" for any type.
+    const eventCountsByPlayer = new Map<number, Record<string, number>>()
+    filtered.forEach((event: any) => {
+      if (!event.player_id) return
+      const counts = eventCountsByPlayer.get(event.player_id) ?? {}
+      const type = String(event.event_type)
+      counts[type] = (counts[type] ?? 0) + 1
+      eventCountsByPlayer.set(event.player_id, counts)
+    })
+
     // Aggregate stats by player
     const statsMap = new Map<number, any>()
     filtered.forEach((event: any) => {
@@ -273,6 +284,7 @@ export function useGetPlayerStats() {
         points,
         games_played: gamesPlayed,
         ga_rank: 0,
+        event_counts: eventCountsByPlayer.get(s.player_id) ?? {},
       }
     })
 

@@ -1174,6 +1174,25 @@ export default function Schedule() {
     fetchLineups({ gameId: selectedGame.id })
   }
 
+  const handleCreateSubForLineup = async (name: string) => {
+    if (!selectedGame || !name.trim()) return
+    const trimmed = name.trim()
+    const result = await createPlayerForGame({
+      display_name: trimmed,
+      gameId: selectedGame.id,
+      seasonId: selectedGameSeasonId,
+      organizationId: currentTeamId,
+      lineupName,
+    })
+    if (result) {
+      track('player_created', { game_id: selectedGame.id, source: 'lineup_sub' })
+      setLineupSearch('')
+      await refreshRoster()
+      fetchAttendance({ gameId: selectedGame.id })
+      fetchLineups({ gameId: selectedGame.id })
+    }
+  }
+
   const handleUpdateLineupRole = async (entryId: number, role: string) => {
     await updateLineupRole({ id: entryId, role: role.trim() || null })
     if (selectedGame) fetchLineups({ gameId: selectedGame.id })
@@ -1513,27 +1532,38 @@ export default function Schedule() {
   const seasonGoalsByPlayerId = new Map<number, number>()
   const seasonAssistsByPlayerId = new Map<number, number>()
   const seasonPointsByPlayerId = new Map<number, number>()
-  for (const s of (lineupSeasonStats as { player_id: number; goals: number; assists: number }[] | undefined) ?? []) {
+  const seasonEventCountsByPlayerId = new Map<number, Record<string, number>>()
+  for (const s of (lineupSeasonStats as { player_id: number; goals: number; assists: number; event_counts?: Record<string, number> }[] | undefined) ?? []) {
     seasonGoalsByPlayerId.set(s.player_id, s.goals)
     seasonAssistsByPlayerId.set(s.player_id, s.assists)
     seasonPointsByPlayerId.set(s.player_id, (s.goals || 0) + (s.assists || 0))
+    if (s.event_counts) {
+      seasonEventCountsByPlayerId.set(s.player_id, s.event_counts)
+    }
   }
-  const rankByStat = (options: typeof attendingPlayerOptions, statByPlayerId: Map<number, number>) =>
+  const rankByStat = (options: typeof attendingPlayerOptions, statByPlayerId: Map<number, number>, eventTypeOverride?: string) =>
     [...options].sort((a, b) => {
       if (a.id === '__opponent__') return 1
       if (b.id === '__opponent__') return -1
-      const statA = statByPlayerId.get(parseInt(a.id)) ?? 0
-      const statB = statByPlayerId.get(parseInt(b.id)) ?? 0
-      if (statA !== statB) return statB - statA
-      const ptsA = seasonPointsByPlayerId.get(parseInt(a.id)) ?? 0
-      const ptsB = seasonPointsByPlayerId.get(parseInt(b.id)) ?? 0
+      const idA = parseInt(a.id)
+      const idB = parseInt(b.id)
+      let countA = statByPlayerId.get(idA) ?? 0
+      let countB = statByPlayerId.get(idB) ?? 0
+      if (eventTypeOverride) {
+        countA = seasonEventCountsByPlayerId.get(idA)?.[eventTypeOverride] ?? 0
+        countB = seasonEventCountsByPlayerId.get(idB)?.[eventTypeOverride] ?? 0
+      }
+      if (countA !== countB) return countB - countA
+      const ptsA = seasonPointsByPlayerId.get(idA) ?? 0
+      const ptsB = seasonPointsByPlayerId.get(idB) ?? 0
       if (ptsA !== ptsB) return ptsB - ptsA
-      const rankA = lineupOrderByPlayerId.get(parseInt(a.id)) ?? Infinity
-      const rankB = lineupOrderByPlayerId.get(parseInt(b.id)) ?? Infinity
+      const rankA = lineupOrderByPlayerId.get(idA) ?? Infinity
+      const rankB = lineupOrderByPlayerId.get(idB) ?? Infinity
       return rankA - rankB
     })
   const scorerOrderedPlayerOptions = rankByStat(attendingPlayerOptions, seasonGoalsByPlayerId)
   const assisterOrderedPlayerOptions = rankByStat(attendingPlayerOptions, seasonAssistsByPlayerId)
+  const currentEventTypeOrderedPlayerOptions = rankByStat(attendingPlayerOptions, new Map(), newEventType)
 
   // Calendar helpers
   const calYear = calendarDate.getFullYear()
@@ -1931,7 +1961,7 @@ export default function Schedule() {
                       />
                     ) : (
                       <PlayerChipGrid
-                        options={lineupOrderedPlayerOptions}
+                        options={currentEventTypeOrderedPlayerOptions}
                         value={newScorerId || '__none__'}
                         onChange={setNewScorerId}
                         photoMap={lineupPhotoByPlayerId}
