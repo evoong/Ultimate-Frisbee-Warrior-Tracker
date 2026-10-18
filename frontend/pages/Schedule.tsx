@@ -1701,8 +1701,8 @@ export default function Schedule() {
                     <div className="relative grid grid-cols-[52px_1fr] items-center gap-2">
                       <span className="absolute -left-6 top-1/2 -translate-y-1/2 w-[9px] h-[9px] rounded-full border-2 border-border bg-card" aria-hidden="true" />
                       <span className="text-xs font-medium text-muted-foreground text-right">Assist</span>
-                      <div className="flex items-center gap-1">
-                        <div className="flex-1">
+                      <div className="flex items-center gap-1 min-w-0">
+                        <div className="flex-1 min-w-0">
                           {selectionMode === 'combobox' ? (
                             <PlayerCombobox
                               players={attendingPlayerOptions}
