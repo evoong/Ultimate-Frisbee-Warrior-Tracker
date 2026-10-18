@@ -16,7 +16,7 @@ import type { StrategyArrow, StrategyOpponentMarker, StrategyTextBox, StrategyHi
 // in portrait) for every play — this is a diagramming tool, not a live
 // scoreboard, so there's no per-play side-flip.
 
-type BoardPlayer = { id: number; display_name: string; photo_url: string | null }
+type BoardPlayer = { id: number; display_name: string; photo_url: string | null; gender_match?: string | null }
 
 // "Danny Nguyen" -> "Danny N." — keeps player labels short enough to fit
 // on the field without truncating into an unreadable ellipsis.
@@ -108,7 +108,7 @@ function PlayerMarker({
       style={{ left: `${left}%`, top: `${top}%`, zIndex: onTop ? 20 : 10, transitionDuration: `${transitionMs}ms` }}
     >
       <div className={`rounded-full ${isSelected ? 'ring-2 ring-primary ring-offset-2 ring-offset-background' : ''}`}>
-        <PlayerAvatar photoUrl={player.photo_url} name={player.display_name} size="sm" />
+        <PlayerAvatar photoUrl={player.photo_url} name={player.display_name} genderMatch={player.gender_match} size="sm" />
       </div>
       <span className="text-[9px] font-medium text-foreground bg-background/70 rounded px-1 mt-0.5 max-w-16 truncate">
         {shortName(player.display_name)}
@@ -2166,7 +2166,7 @@ export default function StrategyBoard({
                 isDragSource ? 'opacity-40' : ''
               }`}
             >
-              <PlayerAvatar photoUrl={player.photo_url} name={player.display_name} size="sm" />
+              <PlayerAvatar photoUrl={player.photo_url} name={player.display_name} genderMatch={player.gender_match} size="sm" />
               <span className="text-[9px] text-muted-foreground mt-0.5 max-w-full truncate">
                 {shortName(player.display_name)}
               </span>
@@ -2186,7 +2186,7 @@ export default function StrategyBoard({
           className="fixed z-50 -translate-x-1/2 -translate-y-1/2 pointer-events-none scale-110 drop-shadow-lg"
           style={{ left: pointerPosRef.current.x, top: pointerPosRef.current.y }}
         >
-          <PlayerAvatar photoUrl={dragPlayer.photo_url} name={dragPlayer.display_name} size="sm" />
+          <PlayerAvatar photoUrl={dragPlayer.photo_url} name={dragPlayer.display_name} genderMatch={dragPlayer.gender_match} size="sm" />
         </div>,
         document.body
       )}

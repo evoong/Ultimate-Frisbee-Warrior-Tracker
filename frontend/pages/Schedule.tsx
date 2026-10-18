@@ -142,6 +142,7 @@ function PlayerChip({ opt, selected, onChange, photoMap }: {
   const pid = parseInt(opt.id)
   const info = !isNaN(pid) ? photoMap?.get(pid) : undefined
   const isSentinel = isNaN(pid)
+  const genderBorder = info?.gender_match === 'Man' ? 'border-gender-man' : info?.gender_match === 'Woman' ? 'border-gender-woman' : 'border-border'
   return (
     <button
       type="button"
@@ -158,10 +159,10 @@ function PlayerChip({ opt, selected, onChange, photoMap }: {
           src={info.photo_url}
           alt={opt.label}
           draggable={false}
-          className={`w-9 h-9 rounded-full object-cover select-none border-2 ${selected ? 'border-primary' : 'border-transparent'}`}
+          className={`w-9 h-9 rounded-full object-cover select-none border-2 ${genderBorder} ${selected ? 'ring-2 ring-primary ring-offset-2 ring-offset-card' : ''}`}
         />
       ) : (
-        <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-semibold select-none border-2 ${selected ? 'bg-primary/15 border-primary text-primary' : 'bg-muted border-transparent text-muted-foreground'}`}>
+        <div className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-semibold select-none border-2 ${genderBorder} ${selected ? 'bg-primary/15 text-primary ring-2 ring-primary ring-offset-2 ring-offset-card' : 'bg-muted text-muted-foreground'}`}>
           {initials(opt.label)}
         </div>
       )}
@@ -237,7 +238,15 @@ export default function Schedule() {
   // are the ones a captain logs on nearly every point. Everything else is
   // one tap away behind the "More" control below, not gone.
   const HIDDEN_EVENT_TYPES = new Set(['Assist', 'Caught OB', 'Drop', 'Throwaway', 'Pull', 'Opponent Goal'])
-  const selectableEventTypes = (eventTypes as { id: number; name: string }[] | undefined)?.filter(et => !HIDDEN_EVENT_TYPES.has(et.name))
+  const EVENT_TYPE_ORDER: Record<string, number> = { Goal: 1, Pass: 2, Block: 3, Fouls: 4, Foul: 4 }
+  const selectableEventTypes = (eventTypes as { id: number; name: string }[] | undefined)
+    ?.filter(et => !HIDDEN_EVENT_TYPES.has(et.name))
+    ?.sort((a, b) => {
+      const orderA = EVENT_TYPE_ORDER[a.name] ?? 99
+      const orderB = EVENT_TYPE_ORDER[b.name] ?? 99
+      if (orderA !== orderB) return orderA - orderB
+      return a.name.localeCompare(b.name)
+    })
   const hiddenEventTypes = (eventTypes as { id: number; name: string }[] | undefined)?.filter(et => HIDDEN_EVENT_TYPES.has(et.name))
   const [moreEventTypesOpen, setMoreEventTypesOpen] = useState(false)
   const [customEventTypeInput, setCustomEventTypeInput] = useState('')
@@ -1465,6 +1474,17 @@ export default function Schedule() {
     lineupOrderByPlayerId.set(entry.player_id, groupRank * 1000 + entry.sort_order)
     lineupPhotoByPlayerId.set(entry.player_id, { photo_url: entry.photo_url, gender_match: entry.gender_match })
   }
+  // Ensure roster players without game-specific lineup entries also have gender/photo info
+  players?.forEach(p => {
+    if (!lineupPhotoByPlayerId.has(p.id)) {
+      lineupPhotoByPlayerId.set(p.id, { photo_url: p.photo_url, gender_match: p.gender_match })
+    }
+  })
+  otherPlayers?.forEach(p => {
+    if (!lineupPhotoByPlayerId.has(p.id)) {
+      lineupPhotoByPlayerId.set(p.id, { photo_url: p.photo_url, gender_match: p.gender_match })
+    }
+  })
   const lineupOrderedPlayerOptions = [...attendingPlayerOptions].sort((a, b) => {
     const rankA = lineupOrderByPlayerId.get(parseInt(a.id)) ?? Infinity
     const rankB = lineupOrderByPlayerId.get(parseInt(b.id)) ?? Infinity
@@ -1480,9 +1500,11 @@ export default function Schedule() {
   // else still follows in lineup order, nobody is hidden.
   const seasonGoalsByPlayerId = new Map<number, number>()
   const seasonAssistsByPlayerId = new Map<number, number>()
+  const seasonPointsByPlayerId = new Map<number, number>()
   for (const s of (lineupSeasonStats as { player_id: number; goals: number; assists: number }[] | undefined) ?? []) {
     seasonGoalsByPlayerId.set(s.player_id, s.goals)
     seasonAssistsByPlayerId.set(s.player_id, s.assists)
+    seasonPointsByPlayerId.set(s.player_id, (s.goals || 0) + (s.assists || 0))
   }
   const rankByStat = (options: typeof attendingPlayerOptions, statByPlayerId: Map<number, number>) =>
     [...options].sort((a, b) => {
@@ -1491,6 +1513,9 @@ export default function Schedule() {
       const statA = statByPlayerId.get(parseInt(a.id)) ?? 0
       const statB = statByPlayerId.get(parseInt(b.id)) ?? 0
       if (statA !== statB) return statB - statA
+      const ptsA = seasonPointsByPlayerId.get(parseInt(a.id)) ?? 0
+      const ptsB = seasonPointsByPlayerId.get(parseInt(b.id)) ?? 0
+      if (ptsA !== ptsB) return ptsB - ptsA
       const rankA = lineupOrderByPlayerId.get(parseInt(a.id)) ?? Infinity
       const rankB = lineupOrderByPlayerId.get(parseInt(b.id)) ?? Infinity
       return rankA - rankB
