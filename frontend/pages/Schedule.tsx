@@ -105,7 +105,7 @@ function PlayerChipGrid({ options, value, onChange, photoMap }: {
 }) {
   return (
     <div
-      className="flex gap-2 overflow-x-auto overscroll-x-contain pb-1 -mx-1 px-1 [scrollbar-width:thin]"
+      className="flex gap-2 overflow-x-auto overscroll-x-contain pb-1 -mx-1 px-1"
       style={{
         maskImage: 'linear-gradient(to right, transparent, black 12px, black calc(100% - 20px), transparent)',
         WebkitMaskImage: 'linear-gradient(to right, transparent, black 12px, black calc(100% - 20px), transparent)',

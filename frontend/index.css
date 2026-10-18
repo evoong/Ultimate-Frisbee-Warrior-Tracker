@@ -245,3 +245,20 @@
     animation-duration: 1ms;
   }
 }
+
+/* Thin scrollbars matching the neutral palette, applied globally (not just
+   the chip-grid rows) so a horizontal swipe strip and a tall overflow list
+   use the same hairline look instead of the browser's default thick
+   scrollbar, which reads as a foreign widget against this design. Firefox
+   gets the same treatment via scrollbar-color/-width; both are harmless
+   no-ops on engines that don't support them. */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+::-webkit-scrollbar-corner { background: transparent; }
+
+* {
+  scrollbar-color: hsl(var(--border)) transparent;
+  scrollbar-width: thin;
+}
