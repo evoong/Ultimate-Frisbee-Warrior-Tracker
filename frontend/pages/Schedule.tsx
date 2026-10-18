@@ -207,6 +207,12 @@ export default function Schedule() {
   const { trigger: updateEvent } = useUpdateEvent()
   const { trigger: updateEventTimestamp } = useUpdateEventTimestamp()
   const { data: eventTypes, trigger: fetchEventTypes } = useGetEventTypes()
+  // These event types still exist (Opponent Goal backs the "They Score"
+  // button, the others are historical data other games may reference) but
+  // are hidden from manual selection here per request -- the Event picker
+  // only needs to offer the ones a captain actually logs mid-game.
+  const RETIRED_EVENT_TYPES = new Set(['Caught OB', 'Drop', 'Throwaway', 'Pull', 'Opponent Goal'])
+  const selectableEventTypes = (eventTypes as { id: number; name: string }[] | undefined)?.filter(et => !RETIRED_EVENT_TYPES.has(et.name))
   const { data: leagueTeams, trigger: fetchLeagueTeams } = useGetLeagueTeams()
   const playerLink = useMyPlayerLink()
   const playerSeasonIds = useMyPlayerSeasonIds()
@@ -1652,14 +1658,14 @@ export default function Schedule() {
                     <Select value={newEventType} onValueChange={setNewEventType}>
                       <SelectTrigger className="h-9 text-sm bg-background text-foreground border-border"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {(eventTypes as { id: number; name: string }[] | undefined)?.map(et => (
+                        {selectableEventTypes?.map(et => (
                           <SelectItem key={et.id} value={et.name}>{et.name}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   ) : (
                     <div className="flex flex-wrap gap-1">
-                      {(eventTypes as { id: number; name: string }[] | undefined)?.map(et => (
+                      {selectableEventTypes?.map(et => (
                         <Button key={et.id} variant={newEventType === et.name ? 'default' : 'secondary'} size="sm" className="h-7 text-xs" onClick={() => setNewEventType(et.name)}>{et.name}</Button>
                       ))}
                     </div>
