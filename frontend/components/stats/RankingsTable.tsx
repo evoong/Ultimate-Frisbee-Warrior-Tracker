@@ -5,7 +5,6 @@ import { Skeleton } from '../../lib/shadcn/skeleton'
 import { SinglePicker } from './Picker'
 import Swap from '../Swap'
 import Segmented, { type SegmentOption } from './Segmented'
-import { useFlags } from '../../lib/features'
 import {
   COLUMN_WIDTHS_KEY, CUSTOM_COLUMNS_KEY, HIDDEN_COLUMNS_KEY,
   MIN_PLAYER_COLUMN_WIDTH, MIN_STAT_COLUMN_WIDTH, STAT_LABELS,
@@ -47,11 +46,7 @@ export default function RankingsTable({ players, loading, rankingMode = 'dense',
   rankingMode?: RankingMode
   onRankingModeChange?: (mode: RankingMode) => void
 }) {
-  const { flags } = useFlags()
-  // ...
-
-  const showTurnovers = flags?.show_turnovers ?? false
-  const visibleStatKeys = useMemo(() => getVisibleStatKeys(showTurnovers), [showTurnovers])
+  const visibleStatKeys = useMemo(() => getVisibleStatKeys(), [])
   const statSegments: SegmentOption<StatKey>[] = useMemo(
     () => visibleStatKeys.map(k => ({ key: k, label: STAT_LABELS[k] })),
     [visibleStatKeys],
@@ -92,8 +87,8 @@ export default function RankingsTable({ players, loading, rankingMode = 'dense',
   // currently gated off drops out of the table and out of the manage list,
   // and comes back untouched the day the stat does.
   const allColumns = useMemo(
-    () => [...getDefaultColumns(showTurnovers), ...customColumns.filter(c => isColumnAvailable(c, showTurnovers))],
-    [customColumns, showTurnovers],
+    () => [...getDefaultColumns(), ...customColumns.filter(c => isColumnAvailable(c))],
+    [customColumns],
   )
   const visibleColumns = allColumns.filter(c => !hiddenColumnIds.has(c.id))
 

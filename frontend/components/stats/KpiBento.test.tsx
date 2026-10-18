@@ -5,7 +5,7 @@ import { KpiRowSkeleton, MetricCardSkeleton } from './KpiBento'
 describe('KpiRowSkeleton', () => {
   it('renders one card per real card', () => {
     const { container } = render(<KpiRowSkeleton />)
-    expect(container.querySelectorAll('.st-panel.st-kpi')).toHaveLength(3)
+    expect(container.querySelectorAll('.st-panel.st-kpi')).toHaveLength(5)
   })
 
   it('reuses the real card classes rather than approximating them', () => {
@@ -25,13 +25,15 @@ describe('KpiRowSkeleton', () => {
     // remove.
     const { container } = render(<KpiRowSkeleton />)
     const cards = container.querySelectorAll('.st-panel.st-kpi')
-    expect(cards).toHaveLength(3)
+    expect(cards).toHaveLength(5)
 
-    const [first, second, third] = Array.from(cards)
+    const [first, second, third, fourth, fifth] = Array.from(cards)
     expect(first.querySelector('.st-meter')).not.toBeNull()
     expect(second.querySelector('.st-meter')).not.toBeNull()
-    expect(third.querySelector('.st-meter')).toBeNull()
-    expect(third.querySelectorAll('.st-strip-cell')).toHaveLength(4)
+    expect(third.querySelector('.st-meter')).not.toBeNull()
+    expect(fourth.querySelector('.st-meter')).not.toBeNull()
+    expect(fifth.querySelector('.st-meter')).toBeNull()
+    expect(fifth.querySelectorAll('.st-strip-cell')).toHaveLength(4)
   })
 })
 

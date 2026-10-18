@@ -3,7 +3,6 @@ import {
   Bar, BarChart, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { ChartBar, TrendUp } from '@phosphor-icons/react'
-import { useFlags } from '../../lib/features'
 import { Skeleton } from '../../lib/shadcn/skeleton'
 import Swap from '../Swap'
 import { useMediaQuery } from '../../lib/shadcn/use-media-query'
@@ -22,9 +21,11 @@ import './stats-theme.css'
 // legend stops being a second, redundant thing beside the tabs.
 
 const ALL_SERIES: { key: SeriesKey; label: string; dataKey: string; token: string; cls: string }[] = [
+  { key: 'points', label: 'PTS', dataKey: 'points', token: '--st-points', cls: 'st-points' },
   { key: 'goals', label: 'Goals', dataKey: 'goals', token: '--st-goals', cls: 'st-goals' },
   { key: 'assists', label: 'Assists', dataKey: 'assists', token: '--st-assists', cls: 'st-assists' },
-  { key: 'turnovers', label: 'Turnovers', dataKey: 'turnovers', token: '--st-turnovers', cls: 'st-turnovers' },
+  { key: 'secondAssists', label: '2ND', dataKey: 'secondAssists', token: '--st-second', cls: 'st-second' },
+  { key: 'blocks', label: 'BLK', dataKey: 'blocks', token: '--st-blocks', cls: 'st-blocks' },
 ]
 
 // The legend, the bars and the tooltip all walk this one list, so a gated
@@ -126,8 +127,7 @@ export default function PerformanceChart({ players, loading, error, emptyLabel }
   const wide = useMediaQuery('(min-width: 640px)')
   const axisWidth = wide ? AXIS_WIDE : AXIS_NARROW
 
-  const { flags } = useFlags()
-  const series = useMemo(() => ALL_SERIES.filter(s => s.key !== 'turnovers' || flags?.show_turnovers), [flags])
+  const series = ALL_SERIES
   const [shown, setShown] = useState<Set<SeriesKey> | null>(null)
   const activeShown = shown ?? new Set(series.map(s => s.key))
   const toggle = (key: SeriesKey) => setShown(() => {
@@ -147,6 +147,21 @@ export default function PerformanceChart({ players, loading, error, emptyLabel }
   // slabs; the row grows with how many are drawn instead.
   const rowHeight = 16 + active.length * 13
   const height = Math.max(200, rows.length * rowHeight + 8)
+
+  // PTS (500s) and Goals (single digits) live on wildly different scales, so
+  // one shared numeric axis renders every count series as a zero-length sliver
+  // next to the points series. Each series is normalized to its own maximum
+  // instead; the printed value and the tooltip keep reading the raw counts,
+  // so only the bar length is relative.
+  const perSeriesMax = new Map(active.map(s => {
+    const max = rows.reduce((m, r) => Math.max(m, Number((r as Record<string, unknown>)[s.dataKey]) || 0), 0)
+    return [s.key, Math.max(max, 1)]
+  }))
+  const barData = rows.map(r => {
+    const out: Record<string, unknown> = { ...r }
+    for (const s of active) out[`${s.key}__n`] = (Number((r as Record<string, unknown>)[s.dataKey]) || 0) / perSeriesMax.get(s.key)!
+    return out
+  })
 
   // A panel that already has a leaderboard keeps it while the next range
   // loads and dims, rather than collapsing into six skeleton bars. The
@@ -202,16 +217,14 @@ export default function PerformanceChart({ players, loading, error, emptyLabel }
           <div style={{ width: '100%', height }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
-                data={rows}
+                data={barData}
                 layout="vertical"
-                margin={{ top: 0, right: wide ? 34 : 26, left: 0, bottom: 0 }}
+                margin={{ top: 0, right: wide ? 38 : 30, left: 0, bottom: 0 }}
                 barCategoryGap="26%"
                 barGap={2}
               >
-                {/* Present only to establish the numeric domain — the axis
-                    itself is never drawn. The 12% headroom is what keeps the
-                    value printed past the longest bar inside the plot. */}
-                <XAxis type="number" hide domain={[0, (max: number) => Math.ceil(max * 1.12) || 1]} />
+                {/* Fixed [0, 1.12] domain so each normalized series scales to its own max */}
+                <XAxis type="number" hide domain={[0, 1.12]} />
                 <YAxis
                   type="category"
                   dataKey="shortName"
@@ -231,7 +244,7 @@ export default function PerformanceChart({ players, loading, error, emptyLabel }
                 {active.map(s => (
                   <Bar
                     key={s.key}
-                    dataKey={s.key}
+                    dataKey={`${s.key}__n`}
                     name={s.label}
                     fill={`hsl(var(${s.token}))`}
                     radius={[0, 3, 3, 0]}
@@ -239,11 +252,9 @@ export default function PerformanceChart({ players, loading, error, emptyLabel }
                     isAnimationActive={false}
                   >
                     <LabelList
-                      dataKey={s.key}
+                      dataKey={s.dataKey}
                       position="right"
                       offset={7}
-                      // Zero is drawn as nothing rather than as "0": a
-                      // column of zeroes beside bars of no length is noise.
                       formatter={(v: unknown) => (Number(v) > 0 ? String(v) : '')}
                       style={{
                         fontFamily: 'var(--st-mono)',

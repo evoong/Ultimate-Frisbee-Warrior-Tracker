@@ -436,7 +436,9 @@ export default function Schedule() {
     const s = seasonsWithGames as { id: number }[] | undefined
     const allS = seasons as Season[] | undefined
     if (!s || s.length === 0 || !allS || allS.length === 0 || scheduleSeasonManual.current) return
-    const fallbackId = getDefaultJamSeasonId(allS, s[0]!.id)
+    const today = todayLocalStr()
+    const activeSeasons = allS.filter(s => s.start_date && s.start_date <= today && (s.end_date == null || today <= s.end_date))
+    const fallbackId = activeSeasons.length > 0 ? activeSeasons[0]!.id : getDefaultJamSeasonId(allS, s[0]!.id)
     const ids = playerLink.data?.team_id === currentTeamId && playerLink.data.status === 'approved' ? playerSeasonIds.data : undefined
     if (scheduleSeasonDefaultApplied.current && ids === undefined) return
     scheduleSeasonDefaultApplied.current = true
@@ -1407,7 +1409,7 @@ export default function Schedule() {
   }
   const formatTimestamp = (ts: string) => new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 
-  const getPlayerName = (id: number | null) =>
+  const getPlayerName = (id: number | null | undefined) =>
     id ? (players as Player[] | undefined)?.find(p => p.id === id)?.display_name ?? null : null
 
   const getSeasonLabel = (seasonId: number | null) => {
@@ -1519,23 +1521,26 @@ export default function Schedule() {
     const theirGoals = gameEvents.filter(e => e.event_type === 'Opponent Goal').length
     const displayResult = selectedGame.outcome_override ?? selectedGame.result
 
-    const playerMap: Record<number, { name: string; goals: number; assists: number; turnovers: number }> = {}
+    const playerMap: Record<number, { name: string; points: number; goals: number; assists: number; secondAssists: number; blocks: number }> = {}
     const ensurePlayer = (id: number, name: string) => {
-      if (!playerMap[id]) playerMap[id] = { name, goals: 0, assists: 0, turnovers: 0 }
+      if (!playerMap[id]) playerMap[id] = { name, points: 0, goals: 0, assists: 0, secondAssists: 0, blocks: 0 }
     }
     gameEvents.forEach(e => {
-      const sn = getPlayerName(e.player_id), an = getPlayerName(e.related_player_id)
+      const sn = getPlayerName(e.player_id), an = getPlayerName(e.related_player_id), s2n = getPlayerName(e.secondary_assister_id)
       if (e.event_type === 'Goal') {
         if (e.player_id && sn) { ensurePlayer(e.player_id, sn); playerMap[e.player_id]!.goals++ }
         if (e.related_player_id && an) { ensurePlayer(e.related_player_id, an); playerMap[e.related_player_id]!.assists++ }
-      } else if (isTurnoverEvent(e.event_type)) {
-        if (e.player_id && sn) { ensurePlayer(e.player_id, sn); playerMap[e.player_id]!.turnovers++ }
+        if (e.secondary_assister_id && s2n) { ensurePlayer(e.secondary_assister_id, s2n); playerMap[e.secondary_assister_id]!.secondAssists++ }
+      } else if (e.event_type === 'Block') {
+        if (e.player_id && sn) { ensurePlayer(e.player_id, sn); playerMap[e.player_id]!.blocks++ }
       }
     })
-    // Same ranking as the Stats page's Player Rankings: goals+assists desc,
-    // ties broken by goals desc (see useGetPlayerStats in stats.ts).
+    Object.values(playerMap).forEach(p => {
+      p.points = p.goals * 500 + p.assists * 500 + p.secondAssists * 250 + p.blocks * 500
+    })
+    // Ranked by Warrior points desc, ties broken by goals desc
     const playerStats = Object.values(playerMap).sort((a, b) =>
-      (b.goals + b.assists) - (a.goals + a.assists) || b.goals - a.goals
+      b.points - a.points || b.goals - a.goals || b.assists - a.assists
     )
     const lineupEntries = (lineups as LineupEntry[] | undefined) ?? []
     const lineupByGroup = lineupEntries.reduce((acc, e) => {
@@ -2539,20 +2544,26 @@ export default function Schedule() {
               ) : (
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="text-xs text-muted-foreground font-medium">
-                      <th className="w-8 text-center font-medium pb-2">#</th>
-                      <th className="text-left font-medium px-3 pb-2">Player</th>
-                      <th className="w-10 text-center font-medium text-green-600 dark:text-green-400 pb-2">G</th>
-                      <th className="w-10 text-center font-medium text-blue-600 dark:text-blue-400 pb-2">A</th>
+                    <tr className="text-xs text-muted-foreground font-medium border-b border-border">
+                      <th className="w-8 text-center font-medium py-3">#</th>
+                      <th className="text-left font-medium px-3 py-3">Player</th>
+                      <th className="w-12 text-center font-bold text-primary py-3">PTS</th>
+                      <th className="w-8 text-center font-medium text-green-600 dark:text-green-400 py-3">G</th>
+                      <th className="w-8 text-center font-medium text-blue-600 dark:text-blue-400 py-3">A</th>
+                      <th className="w-8 text-center font-medium text-blue-400 dark:text-blue-500 py-3">2ND</th>
+                      <th className="w-8 text-center font-medium text-orange-600 dark:text-orange-400 py-3">BLK</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-border/50">
                     {playerStats.map((p, i) => (
-                      <tr key={p.name} className="border-t border-border/50">
-                        <td className="text-center text-muted-foreground py-2 text-xs">{i + 1}</td>
-                        <td className="px-3 py-2 font-medium text-foreground">{p.name}</td>
-                        <td className="w-10 text-center font-bold text-green-600 dark:text-green-400">{p.goals}</td>
-                        <td className="w-10 text-center font-bold text-blue-600 dark:text-blue-400">{p.assists}</td>
+                      <tr key={p.name} className="hover:bg-accent/5 transition-colors">
+                        <td className="text-center text-muted-foreground py-3 text-xs">{i + 1}</td>
+                        <td className="px-3 py-3 font-medium text-foreground">{p.name}</td>
+                        <td className="w-12 text-center font-black text-primary py-3">{p.points}</td>
+                        <td className="w-8 text-center font-bold text-green-600 dark:text-green-400 py-3">{p.goals}</td>
+                        <td className="w-8 text-center font-bold text-blue-600 dark:text-blue-400 py-3">{p.assists}</td>
+                        <td className="w-8 text-center font-bold text-blue-400 dark:text-blue-500 py-3">{p.secondAssists}</td>
+                        <td className="w-8 text-center font-bold text-orange-600 dark:text-orange-400 py-3">{p.blocks}</td>
                       </tr>
                     ))}
                   </tbody>

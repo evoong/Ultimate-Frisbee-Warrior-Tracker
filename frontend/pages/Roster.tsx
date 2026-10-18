@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlayer, useGetPlayerGameStats, useSetGameAttendance, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer, useGetSeasonRoster, useCopyPlayersToSeason, useRemovePlayersFromSeason, useGetPlayerAssistPairings, useGetPlayerTurnoverBreakdown, useGetPlayerPrivate, useUpsertPlayerPrivate, type AssistPairingRow, type TurnoverBreakdownRow, type PlayerPrivate } from '../hooks/backend/players'
+import { useGetPlayers, useUpdatePlayer, useUpdatePlayerPosition, useDeletePlayer, useGetPlayerGameStats, useSetGameAttendance, useUploadPlayerPhoto, useGetPlayerSeasons, useUpdatePlayerSeasons, useCreatePlayer, useGetSeasonRoster, useCopyPlayersToSeason, useRemovePlayersFromSeason, useGetPlayerAssistPairings, useGetPlayerPrivate, useUpsertPlayerPrivate, type AssistPairingRow, type PlayerPrivate } from '../hooks/backend/players'
 import { track } from '../lib/analytics'
 import { useGetAllSeasons, useGetSeasons, useCreateSeason, useGetSeasonsMeta } from '../hooks/backend/stats'
 import { getDefaultJamSeasonId, getDefaultSeasonForPlayer } from '../lib/seasonUtils'
@@ -32,7 +32,7 @@ type Player = {
   id: number; display_name: string; first_name: string | null; last_name: string | null
   gender_match: string | null; phone: string | null; is_sub: boolean; position: string | null; photo_url: string | null; number: number | null
 }
-type GameStat = { game_id: number; opponent: string; game_date: string; game_time: string | null; game_type: string; season_id: number | null; in: boolean; goals: string; assists: string; turnovers: string }
+type GameStat = { game_id: number; opponent: string; game_date: string; game_time: string | null; game_type: string; season_id: number | null; in: boolean; points: number; goals: string; assists: string; secondAssists: number; blocks: number }
 type Season = { id: number; name: string; year: number; organizer: string | null; start_date: string | null; end_date: string | null }
 type SeasonMeta = { organizers: string[]; names: string[]; years: number[]; locations: string[] }
 type PlayerSeason = { id: number; name: string; year: number; organizer: string | null; active: boolean; is_sub: boolean }
@@ -170,8 +170,6 @@ function PlayerEgoNetworkGraph({ centerName, received, given }: {
 
 export default function Roster() {
   const { can, currentTeamId, isGuest, user } = useAuth()
-  const { flags } = useFlags()
-  const showTurnovers = flags?.show_turnovers ?? false
   const navigate = useNavigate()
   // The selected player mirrors this URL segment (see the effect near
   // handleSelectPlayer below), so a reload, browser back/forward, or a
@@ -180,7 +178,6 @@ export default function Roster() {
   const { data: rawPlayers, loading, error, trigger: fetchPlayers } = useGetPlayers()
   const { data: gameStats, loading: statsLoading, trigger: fetchGameStats } = useGetPlayerGameStats()
   const { data: assistPairings, loading: pairingsLoading, trigger: fetchAssistPairings } = useGetPlayerAssistPairings()
-  const { data: turnoverBreakdown, trigger: fetchTurnoverBreakdown } = useGetPlayerTurnoverBreakdown()
   const { trigger: setGameAttendance } = useSetGameAttendance()
   const { data: allSeasons, trigger: fetchAllSeasons } = useGetAllSeasons()
   const { data: seasonsWithGames, trigger: fetchSeasonsWithGames } = useGetSeasons()
@@ -386,9 +383,6 @@ export default function Roster() {
     setEditingSeasons(false)
     fetchGameStats({ playerId: player.id })
     fetchPlayerSeasons({ playerId: player.id })
-    // Skipped while turnovers are hidden: nothing renders the breakdown, so
-    // the query is a round trip for a card that cannot appear.
-    if (showTurnovers) fetchTurnoverBreakdown({ playerId: player.id })
     // Assist Connections is fetched by the seasonFilters-driven effect
     // below, once playerSeasons loads and seeds seasonFilters — not here,
     // since seasonFilters isn't populated yet at selection time.
@@ -669,13 +663,16 @@ export default function Roster() {
   // they're already lined up for, shouldn't dilute the average.
   const summary = filteredStats.reduce(
     (acc, g) => g.in && isPastGame(g)
-      ? { goals: acc.goals + parseInt(g.goals), assists: acc.assists + parseInt(g.assists), turnovers: acc.turnovers + parseInt(g.turnovers), games: acc.games + 1 }
+      ? { points: acc.points + (g.points || 0), goals: acc.goals + parseInt(g.goals), assists: acc.assists + parseInt(g.assists), secondAssists: acc.secondAssists + (g.secondAssists || 0), blocks: acc.blocks + (g.blocks || 0), games: acc.games + 1 }
       : acc,
-    { goals: 0, assists: 0, turnovers: 0, games: 0 }
+    { points: 0, goals: 0, assists: 0, secondAssists: 0, blocks: 0, games: 0 }
   )
 
+  const avgPoints = summary.games > 0 ? (summary.points / summary.games).toFixed(0) : '-'
   const avgGoals = summary.games > 0 ? (summary.goals / summary.games).toFixed(1) : '-'
   const avgAssists = summary.games > 0 ? (summary.assists / summary.games).toFixed(1) : '-'
+  const avgSecond = summary.games > 0 ? (summary.secondAssists / summary.games).toFixed(1) : '-'
+  const avgBlocks = summary.games > 0 ? (summary.blocks / summary.games).toFixed(1) : '-'
   const bestStat = bestGame((gameStats as GameStat[] | undefined) ?? [])
 
   const formatDate = (dateStr: string) => new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -704,14 +701,16 @@ export default function Roster() {
   const seasonTrend = (() => {
     const allStats = (gameStats as GameStat[] | undefined) ?? []
     const pSeasonsForTrend = (playerSeasons as PlayerSeason[] | undefined) ?? []
-    const bySeasonId = new Map<number, { games: number; goals: number; assists: number; turnovers: number }>()
+    const bySeasonId = new Map<number, { games: number; points: number; goals: number; assists: number; secondAssists: number; blocks: number }>()
     allStats.forEach(g => {
       if (!g.in || !isPastGame(g) || g.season_id == null) return
-      const entry = bySeasonId.get(g.season_id) ?? { games: 0, goals: 0, assists: 0, turnovers: 0 }
+      const entry = bySeasonId.get(g.season_id) ?? { games: 0, points: 0, goals: 0, assists: 0, secondAssists: 0, blocks: 0 }
       entry.games += 1
+      entry.points += (g.points || 0)
       entry.goals += parseInt(g.goals)
       entry.assists += parseInt(g.assists)
-      entry.turnovers += parseInt(g.turnovers)
+      entry.secondAssists += (g.secondAssists || 0)
+      entry.blocks += (g.blocks || 0)
       bySeasonId.set(g.season_id, entry)
     })
     return [...bySeasonId.entries()]
@@ -953,33 +952,37 @@ export default function Roster() {
         </Card>
 
         {/* Summary Cards */}
-        <div className={`grid gap-2 ${showTurnovers ? 'grid-cols-4' : 'grid-cols-3'}`}>
+        <div className="grid grid-cols-5 gap-1.5">
           <Card className="bg-muted/40 border-border">
-            <CardContent className="pt-4 pb-3 text-center">
-              <div className="text-2xl font-bold text-foreground">{summary.games}</div>
-              <div className="text-xs text-muted-foreground mt-0.5">Games</div>
+            <CardContent className="pt-3 pb-2 text-center">
+              <div className="text-xl font-bold text-foreground">{summary.games}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">GP</div>
+            </CardContent>
+          </Card>
+          <Card className="bg-primary/5 border-primary/20">
+            <CardContent className="pt-3 pb-2 text-center">
+              <div className="text-xl font-bold text-primary">{summary.points}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">PTS</div>
             </CardContent>
           </Card>
           <Card className="bg-green-500/5 border-green-500/20">
-            <CardContent className="pt-4 pb-3 text-center">
-              <div className="text-2xl font-bold text-green-600 dark:text-green-400">{summary.goals}</div>
-              <div className="text-xs text-muted-foreground mt-0.5">Goals</div>
+            <CardContent className="pt-3 pb-2 text-center">
+              <div className="text-xl font-bold text-green-600 dark:text-green-400">{summary.goals}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">Goals</div>
             </CardContent>
           </Card>
           <Card className="bg-blue-500/5 border-blue-500/20">
-            <CardContent className="pt-4 pb-3 text-center">
-              <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{summary.assists}</div>
-              <div className="text-xs text-muted-foreground mt-0.5">Assists</div>
+            <CardContent className="pt-3 pb-2 text-center">
+              <div className="text-xl font-bold text-blue-600 dark:text-blue-400">{summary.assists}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">Assists</div>
             </CardContent>
           </Card>
-          {showTurnovers && (
-            <Card className="bg-orange-500/5 border-orange-500/20">
-              <CardContent className="pt-4 pb-3 text-center">
-                <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">{summary.turnovers}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">TOs</div>
-              </CardContent>
-            </Card>
-          )}
+          <Card className="bg-orange-500/5 border-orange-500/20">
+            <CardContent className="pt-3 pb-2 text-center">
+              <div className="text-xl font-bold text-orange-600 dark:text-orange-400">{summary.blocks}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">Blocks</div>
+            </CardContent>
+          </Card>
         </div>
 
         {bestStat && (
@@ -993,9 +996,11 @@ export default function Roster() {
                 <div className="text-xs text-muted-foreground mt-0.5">{formatDate(bestStat.game_date)}</div>
               </div>
               <div className="flex gap-3 text-center shrink-0">
+                <div><div className="font-bold text-primary">{bestStat.points}</div><div className="text-xs text-muted-foreground">PTS</div></div>
                 <div><div className="font-bold text-green-600 dark:text-green-400">{bestStat.goals}</div><div className="text-xs text-muted-foreground">G</div></div>
                 <div><div className="font-bold text-blue-600 dark:text-blue-400">{bestStat.assists}</div><div className="text-xs text-muted-foreground">A</div></div>
-                {showTurnovers && <div><div className="font-bold text-orange-600 dark:text-orange-400">{bestStat.turnovers}</div><div className="text-xs text-muted-foreground">TO</div></div>}
+                <div><div className="font-bold text-blue-400 dark:text-blue-500">{bestStat.secondAssists}</div><div className="text-xs text-muted-foreground">2ND</div></div>
+                <div><div className="font-bold text-orange-600 dark:text-orange-400">{bestStat.blocks}</div><div className="text-xs text-muted-foreground">BLK</div></div>
               </div>
             </CardContent>
           </Card>
@@ -1003,17 +1008,35 @@ export default function Roster() {
 
         {/* Avg per game */}
         {summary.games > 0 && (
-          <div className="flex gap-3">
-            <Card className="flex-1 bg-green-500/5 border-green-500/20">
-              <CardContent className="pt-3 pb-3 text-center">
-                <div className="text-xl font-bold text-green-600 dark:text-green-400">{avgGoals}</div>
-                <div className="text-xs text-muted-foreground">Avg G/game</div>
+          <div className="grid grid-cols-5 gap-1.5">
+            <Card className="bg-primary/5 border-primary/20">
+              <CardContent className="pt-2 pb-2 text-center">
+                <div className="text-lg font-bold text-primary">{avgPoints}</div>
+                <div className="text-[10px] text-muted-foreground">PTS/gm</div>
               </CardContent>
             </Card>
-            <Card className="flex-1 bg-blue-500/5 border-blue-500/20">
-              <CardContent className="pt-3 pb-3 text-center">
-                <div className="text-xl font-bold text-blue-600 dark:text-blue-400">{avgAssists}</div>
-                <div className="text-xs text-muted-foreground">Avg A/game</div>
+            <Card className="bg-green-500/5 border-green-500/20">
+              <CardContent className="pt-2 pb-2 text-center">
+                <div className="text-lg font-bold text-green-600 dark:text-green-400">{avgGoals}</div>
+                <div className="text-[10px] text-muted-foreground">G/gm</div>
+              </CardContent>
+            </Card>
+            <Card className="bg-blue-500/5 border-blue-500/20">
+              <CardContent className="pt-2 pb-2 text-center">
+                <div className="text-lg font-bold text-blue-600 dark:text-blue-400">{avgAssists}</div>
+                <div className="text-[10px] text-muted-foreground">A/gm</div>
+              </CardContent>
+            </Card>
+            <Card className="bg-blue-400/5 border-blue-400/20">
+              <CardContent className="pt-2 pb-2 text-center">
+                <div className="text-lg font-bold text-blue-400 dark:text-blue-500">{avgSecond}</div>
+                <div className="text-[10px] text-muted-foreground">2ND/gm</div>
+              </CardContent>
+            </Card>
+            <Card className="bg-orange-500/5 border-orange-500/20">
+              <CardContent className="pt-2 pb-2 text-center">
+                <div className="text-lg font-bold text-orange-600 dark:text-orange-400">{avgBlocks}</div>
+                <div className="text-[10px] text-muted-foreground">BLK/gm</div>
               </CardContent>
             </Card>
           </div>
@@ -1093,25 +1116,6 @@ export default function Roster() {
           </CardContent>
         </Card>
 
-        {/* Turnovers by Type */}
-        {showTurnovers && (turnoverBreakdown as TurnoverBreakdownRow[] | undefined)?.length ? (
-          <Card className="bg-card text-card-foreground border-border">
-            <CardHeader>
-              <CardTitle className="text-base">Turnovers by Type</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex gap-2">
-                {(turnoverBreakdown as TurnoverBreakdownRow[]).map(row => (
-                  <div key={row.type} className="flex-1 bg-orange-500/5 border border-orange-500/20 rounded-lg text-center py-2">
-                    <div className="text-lg font-bold text-orange-600 dark:text-orange-400">{row.count}</div>
-                    <div className="text-xs text-muted-foreground">{row.type}</div>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        ) : null}
-
         {/* Per-Game Breakdown */}
         <Card className="bg-card text-card-foreground border-border">
           <CardHeader>
@@ -1125,39 +1129,45 @@ export default function Roster() {
               <div className="text-center py-8 text-muted-foreground text-sm">Loading...</div>
             ) : filteredStats.length > 0 ? (
               <div className="space-y-2">
-                <div className="flex items-center gap-3 px-3 text-xs text-muted-foreground font-medium">
+                <div className="flex items-center gap-2 px-3 text-[10px] text-muted-foreground font-medium">
                   <div className="flex-1">Game</div>
                   <div className="w-6 text-center">In</div>
-                  <div className="w-8 text-center text-green-600 dark:text-green-400">G</div>
-                  <div className="w-8 text-center text-blue-600 dark:text-blue-400">A</div>
-                  {showTurnovers && <div className="w-8 text-center text-orange-600 dark:text-orange-400">TO</div>}
+                  <div className="w-8 text-center text-primary">PTS</div>
+                  <div className="w-6 text-center text-green-600 dark:text-green-400">G</div>
+                  <div className="w-6 text-center text-blue-600 dark:text-blue-400">A</div>
+                  <div className="w-6 text-center text-blue-400 dark:text-blue-500">2ND</div>
+                  <div className="w-6 text-center text-orange-600 dark:text-orange-400">BLK</div>
                 </div>
-                {filteredStats.map(stat => (
-                  <div key={stat.game_id} className={`flex items-center gap-3 px-3 py-2.5 rounded-lg ${stat.in ? 'bg-background' : 'bg-muted/40 opacity-60'}`}>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-foreground text-sm truncate">vs {stat.opponent}</div>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-xs text-muted-foreground">{formatDate(stat.game_date)}</span>
-                        {stat.game_type === 'Playoff' && <Trophy className="w-3 h-3 text-yellow-500" />}
+                <div className="max-h-[300px] overflow-y-auto space-y-1">
+                  {filteredStats.map(stat => (
+                    <div key={stat.game_id} className={`flex items-center gap-2 px-3 py-2 rounded-lg ${stat.in ? 'bg-background' : 'bg-muted/40 opacity-60'}`}>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-foreground text-xs truncate">vs {stat.opponent}</div>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <span className="text-[10px] text-muted-foreground">{formatDate(stat.game_date)}</span>
+                          {stat.game_type === 'Playoff' && <Trophy className="w-2.5 h-2.5 text-yellow-500" />}
+                        </div>
                       </div>
+                      <div className="w-6 flex justify-center">
+                        <input
+                          type="checkbox"
+                          checked={stat.in}
+                          disabled={!can.record}
+                          onChange={async e => {
+                            await setGameAttendance({ gameId: stat.game_id, playerId: selectedPlayer.id, seasonId: stat.season_id, attending: e.target.checked, organizationId: currentTeamId })
+                            fetchGameStats({ playerId: selectedPlayer.id })
+                          }}
+                          className={`accent-primary w-3.5 h-3.5 ${can.record ? 'cursor-pointer' : 'cursor-default'}`}
+                        />
+                      </div>
+                      <div className="w-8 text-center font-bold text-primary text-xs">{stat.in ? stat.points : '-'}</div>
+                      <div className="w-6 text-center font-bold text-green-600 dark:text-green-400 text-xs">{stat.in ? stat.goals : '-'}</div>
+                      <div className="w-6 text-center font-bold text-blue-600 dark:text-blue-400 text-xs">{stat.in ? stat.assists : '-'}</div>
+                      <div className="w-6 text-center font-bold text-blue-400 dark:text-blue-500 text-xs">{stat.in ? stat.secondAssists : '-'}</div>
+                      <div className="w-6 text-center font-bold text-orange-600 dark:text-orange-400 text-xs">{stat.in ? stat.blocks : '-'}</div>
                     </div>
-                    <div className="w-6 flex justify-center">
-                      <input
-                        type="checkbox"
-                        checked={stat.in}
-                        disabled={!can.record}
-                        onChange={async e => {
-                          await setGameAttendance({ gameId: stat.game_id, playerId: selectedPlayer.id, seasonId: stat.season_id, attending: e.target.checked, organizationId: currentTeamId })
-                          fetchGameStats({ playerId: selectedPlayer.id })
-                        }}
-                        className={`accent-primary w-4 h-4 ${can.record ? 'cursor-pointer' : 'cursor-default'}`}
-                      />
-                    </div>
-                    <div className="w-8 text-center font-bold text-green-600 dark:text-green-400">{stat.in ? stat.goals : '-'}</div>
-                    <div className="w-8 text-center font-bold text-blue-600 dark:text-blue-400">{stat.in ? stat.assists : '-'}</div>
-                    {showTurnovers && <div className="w-8 text-center font-bold text-orange-600 dark:text-orange-400">{stat.in ? stat.turnovers : '-'}</div>}
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             ) : (
               <div className="text-center py-10">
@@ -1176,20 +1186,24 @@ export default function Roster() {
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                <div className="flex items-center gap-3 px-3 text-xs text-muted-foreground font-medium">
+                <div className="flex items-center gap-2 px-3 text-[10px] text-muted-foreground font-medium">
                   <div className="flex-1">Season</div>
-                  <div className="w-10 text-center">GP</div>
-                  <div className="w-10 text-center text-green-600 dark:text-green-400">G</div>
-                  <div className="w-10 text-center text-blue-600 dark:text-blue-400">A</div>
-                  {showTurnovers && <div className="w-10 text-center text-orange-600 dark:text-orange-400">TO</div>}
+                  <div className="w-8 text-center">GP</div>
+                  <div className="w-10 text-center text-primary">PTS</div>
+                  <div className="w-6 text-center text-green-600 dark:text-green-400">G</div>
+                  <div className="w-6 text-center text-blue-600 dark:text-blue-400">A</div>
+                  <div className="w-6 text-center text-blue-400 dark:text-blue-500">2ND</div>
+                  <div className="w-6 text-center text-orange-600 dark:text-orange-400">BLK</div>
                 </div>
                 {seasonTrend.map(row => (
-                  <div key={row.seasonId} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-background">
-                    <div className="flex-1 min-w-0 text-sm text-foreground truncate">{row.label}</div>
-                    <div className="w-10 text-center text-sm text-muted-foreground">{row.games}</div>
-                    <div className="w-10 text-center font-bold text-green-600 dark:text-green-400">{row.goals}</div>
-                    <div className="w-10 text-center font-bold text-blue-600 dark:text-blue-400">{row.assists}</div>
-                    {showTurnovers && <div className="w-10 text-center font-bold text-orange-600 dark:text-orange-400">{row.turnovers}</div>}
+                  <div key={row.seasonId} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-background">
+                    <div className="flex-1 min-w-0 text-xs text-foreground truncate">{row.label}</div>
+                    <div className="w-8 text-center text-xs text-muted-foreground">{row.games}</div>
+                    <div className="w-10 text-center font-bold text-primary text-xs">{row.points}</div>
+                    <div className="w-6 text-center font-bold text-green-600 dark:text-green-400 text-xs">{row.goals}</div>
+                    <div className="w-6 text-center font-bold text-blue-600 dark:text-blue-400 text-xs">{row.assists}</div>
+                    <div className="w-6 text-center font-bold text-blue-400 dark:text-blue-500 text-xs">{row.secondAssists}</div>
+                    <div className="w-6 text-center font-bold text-orange-600 dark:text-orange-400 text-xs">{row.blocks}</div>
                   </div>
                 ))}
               </div>

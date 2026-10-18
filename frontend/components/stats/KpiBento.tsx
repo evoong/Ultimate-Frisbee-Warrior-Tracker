@@ -16,9 +16,11 @@ import './stats-theme.css'
 // up with a green number over an amber bar.
 
 const SERIES_CLASS: Record<SeriesKey, string> = {
+  points: 'st-points',
   goals: 'st-goals',
   assists: 'st-assists',
-  turnovers: 'st-turnovers',
+  secondAssists: 'st-second',
+  blocks: 'st-blocks',
 }
 
 /**
@@ -131,6 +133,8 @@ export function KpiRowSkeleton() {
     <>
       <LeaderCardSkeleton />
       <LeaderCardSkeleton />
+      <LeaderCardSkeleton />
+      <LeaderCardSkeleton />
       <TeamCardSkeleton />
     </>
   )
@@ -184,11 +188,23 @@ function Cell({ label, series, children }: { label: string; series?: SeriesKey; 
 }
 
 /**
+ * Big Warrior-PTS figures (7500+) run past the card. Compact them the way the
+ * rest of the app's numbers never need: 7500 -> "7.5K", 12500 -> "12.5K".
+ */
+export function fmtFigure(n: number): string {
+  if (Math.abs(n) >= 1000) {
+    const k = n / 1000
+    return `${k % 1 === 0 ? k : k.toFixed(1)}K`
+  }
+  return String(n)
+}
+
+/**
  * Top finisher / top playmaker. `share` is what makes this more than a
  * leaderboard entry: 24 goals means nothing until you know whether the team
  * scored 60 or 300, and the meter is the cheapest way to say it.
  */
-export function LeaderCard({ overline, icon, series, player, value, unit, teamTotal, secondary }: {
+export function LeaderCard({ overline, icon, series, player, value, unit, teamTotal, secondary, isTied, tiedPlayers }: {
   overline: string
   icon: ReactNode
   series: SeriesKey
@@ -198,13 +214,17 @@ export function LeaderCard({ overline, icon, series, player, value, unit, teamTo
   teamTotal: number
   /** This player's other numbers, so the card is their whole line rather
    *  than the one stat that got them onto it. Same strip, same anatomy, as
-   *  the team card beside it. A cell with no series of its own stays
-   *  neutral, the way the team card's "Scored" does -- a combined figure
-   *  like G+A belongs to no one series and must not borrow one. */
+   *  the team card beside it. */
   secondary: { label: string; series?: SeriesKey; value: number }[]
+  /** Every player tied on the hero stat, leader first. Shown stacked so a
+   *  tie is visible, not just flagged. */
+  tiedPlayers?: PlayerLine[]
+  isTied?: boolean
 }) {
-  const perGame = player && player.gamesPlayed > 0 ? value / player.gamesPlayed : null
+  const lead = tiedPlayers?.[0] ?? player
+  const perGame = lead && lead.gamesPlayed > 0 ? value / lead.gamesPlayed : null
   const share = teamTotal > 0 ? Math.round((value / teamTotal) * 100) : null
+  const shown = (tiedPlayers?.length ? tiedPlayers : player ? [player] : []).slice(0, 3)
 
   return (
     <div className={`st-panel st-kpi ${SERIES_CLASS[series]}`}>
@@ -213,25 +233,52 @@ export function LeaderCard({ overline, icon, series, player, value, unit, teamTo
           <span className="st-series-ink flex">{icon}</span>
           {overline}
         </span>
-        {perGame != null && <span className="st-chip">{perGame.toFixed(1)} /gm</span>}
+        <div className="flex items-center gap-1.5">
+          {isTied && <span className="st-chip bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30 font-medium">Tied</span>}
+          {perGame != null && <span className="st-chip">{fmtFigure(Math.round(perGame * 10) / 10)} /gm</span>}
+        </div>
       </div>
 
-      {player ? (
-        <div className="flex items-center gap-2.5">
-          <Avatar className="st-crest">
-            {player.photoUrl && <AvatarImage src={player.photoUrl} alt="" />}
-            <AvatarFallback className="st-crest-text">{crestInitials(player.name)}</AvatarFallback>
-          </Avatar>
-          <div className="min-w-0 flex-1">
-            <p className="st-name" title={player.name}>{player.name}</p>
-            <p className="st-meta">{player.gamesPlayed} {player.gamesPlayed === 1 ? 'game' : 'games'}</p>
-          </div>
-          <span className="st-figure shrink-0">{value}</span>
+      {shown.length > 0 ? (
+        <div className="space-y-1.5">
+          {shown.map(p => {
+            const perPlayerSecondary = shown.length > 1
+              ? secondary
+                  .map(c => ({
+                    ...c,
+                    value: p[c.series ?? 'points'] ?? 0,
+                  }))
+                  .filter(c => c.value > 0)
+              : null
+            return (
+            <div key={p.playerId} className="flex items-center gap-2.5">
+              <Avatar className="st-crest">
+                {p.photoUrl && <AvatarImage src={p.photoUrl} alt="" />}
+                <AvatarFallback className="st-crest-text">{crestInitials(p.name)}</AvatarFallback>
+              </Avatar>
+              <div className="min-w-0 flex-1">
+                <p className="st-name" title={p.name}>{p.name}</p>
+                <p className="st-meta">{p.gamesPlayed} {p.gamesPlayed === 1 ? 'game' : 'games'}</p>
+              </div>
+              {shown.length > 1 && perPlayerSecondary && perPlayerSecondary.length > 0 && (
+                <span className="st-meta shrink-0 text-right leading-tight">
+                  {perPlayerSecondary.map(c => (
+                    <span key={c.label} className="block">{fmtFigure(c.value)} {c.label}</span>
+                  ))}
+                </span>
+              )}
+              {shown.length === 1 && <span className="st-figure shrink-0">{fmtFigure(value)}</span>}
+            </div>
+            )
+          })}
+          {tiedPlayers && tiedPlayers.length > shown.length && (
+            <p className="st-meta">+{tiedPlayers.length - shown.length} more tied</p>
+          )}
         </div>
       ) : (
         <div className="flex items-center gap-2.5">
           <Avatar className="st-crest">
-            <AvatarFallback className="st-crest-text">—</AvatarFallback>
+            <AvatarFallback className="st-crest-text">-</AvatarFallback>
           </Avatar>
           <p className="st-meta flex-1">No player data in range</p>
         </div>
@@ -240,18 +287,20 @@ export function LeaderCard({ overline, icon, series, player, value, unit, teamTo
       <div className="space-y-1.5 pt-0.5">
         <div className="flex items-baseline justify-between gap-2">
           <span className="st-unit">{unit}</span>
-          <span className="st-meta">{share == null ? '—' : `${share}% of team`}</span>
+          <span className="st-meta">{share == null ? '-' : `${share}% of team`}</span>
         </div>
         <div className="st-meter">
           <div className="st-meter-fill" style={{ width: `${share ?? 0}%` }} />
         </div>
       </div>
 
-      <div className="st-strip">
-        {secondary.map(c => (
-          <Cell key={c.label} label={c.label} series={c.series}>{player ? c.value : '—'}</Cell>
-        ))}
-      </div>
+      {shown.length <= 1 && (
+        <div className="st-strip">
+          {secondary.filter(c => c.value > 0).map(c => (
+            <Cell key={c.label} label={c.label} series={c.series}>{player ? c.value : '-'}</Cell>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

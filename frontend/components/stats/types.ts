@@ -4,7 +4,7 @@
 // against `games` — it is what lets these pieces be reused or restyled
 // without a query changing underneath them.
 
-export type SeriesKey = 'goals' | 'assists' | 'turnovers'
+export type SeriesKey = 'points' | 'goals' | 'assists' | 'secondAssists' | 'blocks'
 
 export type SeasonOption = {
   id: number
@@ -29,9 +29,11 @@ export type PlayerLine = {
   name: string
   shortName: string
   photoUrl: string | null
+  points: number
   goals: number
   assists: number
-  turnovers: number
+  secondAssists: number
+  blocks: number
   gamesPlayed: number
   rank?: number
 }
@@ -70,7 +72,7 @@ export type MatrixEdge = { assisterId: number; scorerId: number; count: number }
  *  display name — two players called "Sam" would otherwise collapse into one
  *  line and silently sum. */
 export type ProgressionPlayer = { id: number; name: string }
-export type ProgressionStat = 'ga' | 'goals' | 'assists' | 'turnovers'
+export type ProgressionStat = 'points' | 'goals' | 'assists' | 'secondAssists' | 'blocks'
 /** Sentinel season id for "every game", so the picker can stay numeric
  *  instead of carrying a '__all__' string that every call site has to know. */
 export const ALL_SEASONS = -1

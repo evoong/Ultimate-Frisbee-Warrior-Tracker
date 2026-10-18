@@ -1,7 +1,6 @@
 import { useState, useCallback, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { authenticatedStorageUrl } from '../../lib/storageUrl'
-import { isTurnoverEvent, TURNOVER_EVENT_TYPES } from '../../lib/eventUtils'
 
 type HookResult<T, P = void> = {
   data: T | undefined
@@ -436,7 +435,7 @@ export function useGetPlayerGameStats() {
     if (lineupError) throw new Error(lineupError.message)
     const inGameIds = new Set(((lineupRows ?? []) as { game_id: number }[]).map(r => r.game_id))
 
-    // Fetch events where this player scored
+    // Fetch events where this player scored or blocked
     const { data: scoringEvents, error } = await supabase
       .from('game_events')
       .select('game_id, event_type')
@@ -453,6 +452,15 @@ export function useGetPlayerGameStats() {
       .in('game_id', gameIds)
     if (assistError) throw new Error(assistError.message)
 
+    // Fetch Goal events where this player secondary-assisted
+    const { data: secondAssistEvents, error: secondAssistError } = await supabase
+      .from('game_events')
+      .select('game_id, event_type')
+      .eq('secondary_assister_id', params.playerId)
+      .eq('event_type', 'Goal')
+      .in('game_id', gameIds)
+    if (secondAssistError) throw new Error(secondAssistError.message)
+
     // Seed every season game with zeroes so games with no recorded events still appear
     const statsMap = new Map<number, any>()
     ;(games ?? []).forEach((g: any) => {
@@ -464,9 +472,11 @@ export function useGetPlayerGameStats() {
         game_type: g.game_type ?? '',
         season_id: g.season_id ?? null,
         in: inGameIds.has(g.id),
+        points: 0,
         goals: 0,
         assists: 0,
-        turnovers: 0,
+        secondAssists: 0,
+        blocks: 0,
       })
     })
 
@@ -475,11 +485,19 @@ export function useGetPlayerGameStats() {
       const stat = statsMap.get(e.game_id)
       if (!stat) return
       if (e.event_type === 'Goal') stat.goals++
-      else if (isTurnoverEvent(e.event_type)) stat.turnovers++
+      else if (e.event_type === 'Block') stat.blocks++
     })
     ;(assistEvents as any[] ?? []).forEach((e: any) => {
       const stat = statsMap.get(e.game_id)
       if (stat) stat.assists++
+    })
+    ;(secondAssistEvents as any[] ?? []).forEach((e: any) => {
+      const stat = statsMap.get(e.game_id)
+      if (stat) stat.secondAssists++
+    })
+
+    statsMap.forEach(stat => {
+      stat.points = stat.goals * 500 + stat.assists * 500 + stat.secondAssists * 250 + stat.blocks * 500
     })
 
     return [...statsMap.values()].sort((a, b) => b.game_date.localeCompare(a.game_date)) as any[]
@@ -559,27 +577,6 @@ export function useGetPlayerAssistPairings() {
     }
   }, [])
   return useApiCall<PlayerAssistPairings, { playerId: number; seasonIds: number[] }>(fn)
-}
-
-export type TurnoverBreakdownRow = { type: string; count: number }
-
-// Splits the same total shown in the Roster summary card's TOs count (see
-// isTurnoverEvent) into its component event types, so a player known for
-// drops vs. throwaways shows up differently even when their TO totals match.
-export function useGetPlayerTurnoverBreakdown() {
-  const fn = useCallback(async (params: { playerId: number }): Promise<TurnoverBreakdownRow[]> => {
-    const { data, error } = await supabase
-      .from('game_events')
-      .select('event_type')
-      .eq('player_id', params.playerId)
-      .in('event_type', [...TURNOVER_EVENT_TYPES])
-    if (error) throw new Error(error.message)
-
-    const counts = new Map<string, number>()
-    ;(data ?? []).forEach((e: any) => counts.set(e.event_type, (counts.get(e.event_type) ?? 0) + 1))
-    return TURNOVER_EVENT_TYPES.map(type => ({ type, count: counts.get(type) ?? 0 })).filter(r => r.count > 0)
-  }, [])
-  return useApiCall<TurnoverBreakdownRow[], { playerId: number }>(fn)
 }
 
 // Roster's per-game breakdown lets you toggle whether a player was in a

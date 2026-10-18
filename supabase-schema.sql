@@ -166,8 +166,9 @@ insert into event_types (id, name, category) overriding system value values
   (5, 'Drop',          'Offense'),
   (6, 'Pull',          'Special'),
   (7, 'Opponent Goal', 'Defense'),
-  (8, 'Caught OB',     'Offense');
-select setval('event_types_id_seq', 8);
+  (8, 'Caught OB',     'Offense'),
+  (11, 'Pass',         'Offense');
+select setval('event_types_id_seq', 11);
 
 -- Season Players
 insert into season_players (id, season_id, player_id, jersey_number, active, role) overriding system value values

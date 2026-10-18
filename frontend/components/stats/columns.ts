@@ -1,9 +1,9 @@
 import type { PlayerLine } from './types'
 
-// The rankings table's column system. Every non-name column -- the six
+// The rankings table's column system. Every non-name column -- the
 // built-ins and anything the user adds -- is a signed combination of the
-// three raw stats, optionally divided by games played. That is what makes
-// "G+A", "G-TO/gm" and the rest reachable from a three-dropdown picker
+// raw stats, optionally divided by games played. That is what makes
+// "G+A", "G-TO/gm" and the rest reachable from a picker
 // instead of needing a formula language.
 //
 // It moved out of pages/Stats.tsx and onto PlayerLine on the way: it used to
@@ -11,7 +11,7 @@ import type { PlayerLine } from './types'
 // SUM(), and so every column evaluation ran its own parseInt. The parsing
 // happens once now, where the rest of the page already does it.
 
-export type StatKey = 'goals' | 'assists' | 'turnovers'
+export type StatKey = 'points' | 'goals' | 'assists' | 'secondAssists' | 'blocks'
 export type ColumnTerm = { stat: StatKey; sign: 1 | -1 }
 
 export type ColumnConfig = {
@@ -26,35 +26,36 @@ export type ColumnConfig = {
   perGame?: boolean
 }
 
-export const STAT_LABELS: Record<StatKey, string> = { goals: 'G', assists: 'A', turnovers: 'TO' }
-
-// The stats a formula column may be built from. Gated rather than filtered
-// out of STAT_LABELS, because a column the user built while a stat was live
-// still has to be able to render its own label.
-export function getVisibleStatKeys(showTurnovers: boolean): StatKey[] {
-  return (Object.keys(STAT_LABELS) as StatKey[])
-    .filter(k => k !== 'turnovers' || showTurnovers)
+export const STAT_LABELS: Record<StatKey, string> = {
+  points: 'PTS',
+  goals: 'G',
+  assists: 'A',
+  secondAssists: '2ND',
+  blocks: 'BLK',
 }
 
-/** Whether every stat a column reads is currently on display. A column built
- *  from a gated stat is hidden, not deleted -- it is still in localStorage
- *  and comes back with the stat. */
-export function isColumnAvailable(col: ColumnConfig, showTurnovers: boolean): boolean {
-  const visibleKeys = getVisibleStatKeys(showTurnovers)
+// The stats a formula column may be built from.
+export function getVisibleStatKeys(): StatKey[] {
+  return Object.keys(STAT_LABELS) as StatKey[]
+}
+
+/** Whether every stat a column reads is valid. */
+export function isColumnAvailable(col: ColumnConfig): boolean {
+  const visibleKeys = getVisibleStatKeys()
   return (col.terms ?? []).every(t => visibleKeys.includes(t.stat))
 }
 
 const ALL_DEFAULT_COLUMNS: ColumnConfig[] = [
+  { id: 'points', label: 'PTS', color: 'st-points', builtin: true, terms: [{ stat: 'points', sign: 1 }] },
   { id: 'goals', label: 'G', color: 'st-goals', builtin: true, terms: [{ stat: 'goals', sign: 1 }] },
   { id: 'assists', label: 'A', color: 'st-assists', builtin: true, terms: [{ stat: 'assists', sign: 1 }] },
-  { id: 'turnovers', label: 'TO', color: 'st-turnovers', builtin: true, terms: [{ stat: 'turnovers', sign: 1 }] },
+  { id: 'secondAssists', label: '2ND', color: 'st-second', builtin: true, terms: [{ stat: 'secondAssists', sign: 1 }] },
+  { id: 'blocks', label: 'BLK', color: 'st-blocks', builtin: true, terms: [{ stat: 'blocks', sign: 1 }] },
   { id: 'games_played', label: 'GP', color: '', builtin: true },
-  { id: 'avgG', label: 'G/gm', color: 'st-goals', builtin: true, terms: [{ stat: 'goals', sign: 1 }], perGame: true },
-  { id: 'avgA', label: 'A/gm', color: 'st-assists', builtin: true, terms: [{ stat: 'assists', sign: 1 }], perGame: true },
 ]
 
-export function getDefaultColumns(showTurnovers: boolean): ColumnConfig[] {
-  return ALL_DEFAULT_COLUMNS.filter(col => isColumnAvailable(col, showTurnovers))
+export function getDefaultColumns(): ColumnConfig[] {
+  return ALL_DEFAULT_COLUMNS.filter(col => isColumnAvailable(col))
 }
 
 export const CUSTOM_COLUMNS_KEY = 'ufwt_stats_custom_columns'

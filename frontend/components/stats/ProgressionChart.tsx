@@ -26,10 +26,11 @@ import './stats-theme.css'
 // state, which is the only thing that colour is ever spent on in this app.
 
 const ALL_STATS: { key: ProgressionStat; label: string }[] = [
-  { key: 'ga', label: 'G+A' },
+  { key: 'points', label: 'PTS' },
   { key: 'goals', label: 'Goals' },
   { key: 'assists', label: 'Assists' },
-  { key: 'turnovers', label: 'TO' },
+  { key: 'secondAssists', label: '2ND' },
+  { key: 'blocks', label: 'BLK' },
 ]
 
 const AXIS_TICK = {
@@ -90,7 +91,7 @@ export default function ProgressionChart({
   loading: boolean
 }) {
   const { flags } = useFlags()
-  const stats = useMemo(() => ALL_STATS.filter(s => s.key !== 'turnovers' || flags?.show_turnovers), [flags])
+  const stats = ALL_STATS
 
   const [pinnedId, setPinnedId] = useState<number | null>(null)
   const [hoverId, setHoverId] = useState<number | null>(null)

@@ -23,7 +23,8 @@ import { Skeleton } from '../lib/shadcn/skeleton'
 import FadeIn from '../components/FadeIn'
 import Swap from '../components/Swap'
 import Resolve from '../components/Resolve'
-import StatsHeader from '../components/stats/StatsHeader'
+import StatsHeader, { type HeaderTab } from '../components/stats/StatsHeader'
+import Segmented from '../components/stats/Segmented'
 import FilterBar from '../components/stats/FilterBar'
 import { LeaderCard, TeamCard, MetricCard, KpiRowSkeleton, MetricCardSkeleton } from '../components/stats/KpiBento'
 import PerformanceChart from '../components/stats/PerformanceChart'
@@ -40,16 +41,17 @@ import {
 } from '../components/stats/types'
 import {
   CaretLeft, Check as CheckIcon, Gear, Handshake, NotePencil, PencilSimple,
-  Plus as PlusIcon, Scales, Trash, Trophy, X as XIcon,
+  Plus as PlusIcon, Scales, Shield, Trash, Trophy, Crown, X as XIcon,
 } from '@phosphor-icons/react'
 
 type PlayerStat = {
-  player_id: number; player_name: string; goals: string; assists: string
-  turnovers: string; games_played: string; ga_rank: number
+  player_id: number; player_name: string; points?: string; goals: string; assists: string
+  second_assists?: string; blocks?: string; games_played: string; ga_rank: number
+  gender_match?: string | null
 }
 type CumulativeRow = {
   game_id: number; opponent: string; game_date: string
-  player_id: number; player_name: string; goals: string; assists: string; turnovers: string
+  player_id: number; player_name: string; goals: string; assists: string; second_assists: string; blocks: string
 }
 type Season = { id: number; name: string; year: number; organizer: string | null; start_date: string | null; end_date: string | null }
 type StatsSeasonRow = { id: number; name: string; year: number; organizer: string | null; game_count: string }
@@ -78,14 +80,38 @@ function perGame(total: string | number, gamesPlayed: string | number): string |
 // second cell falls back to G+A -- the strip is two columns at every width by
 // design, and one lonely cell is a different object from the team card
 // beside it.
-function secondaryFor(hero: SeriesKey, p: PlayerLine | null, showTurnovers: boolean): { label: string; series?: SeriesKey; value: number }[] {
+function getTiedLeaders(lines: PlayerLine[], series: SeriesKey): PlayerLine[] {
+  const statGetter = (p: PlayerLine) => p[series] || 0
+  const maxVal = lines.reduce((m, p) => Math.max(m, statGetter(p)), 0)
+  if (maxVal <= 0) return []
+  const tied = lines.filter(p => statGetter(p) === maxVal)
+  if (tied.length <= 1) return tied
+
+  if (series === 'points') {
+    // MVP tie: Attendance > Goals > Assists
+    return tied.slice().sort((a, b) =>
+      (b.gamesPlayed - a.gamesPlayed) || (b.goals - a.goals) || (b.assists - a.assists)
+    )
+  }
+
+  // Other stats tie: Warrior PTS > Attendance > Goals
+  return tied.slice().sort((a, b) =>
+    (b.points - a.points) || (b.gamesPlayed - a.gamesPlayed) || (b.goals - a.goals)
+  )
+}
+
+function secondaryFor(hero: SeriesKey, p: PlayerLine | null): { label: string; series?: SeriesKey; value: number }[] {
+  if (hero === 'points') {
+    return [
+      { label: 'Goals', series: 'goals', value: p?.goals ?? 0 },
+      { label: 'Assists', series: 'assists', value: p?.assists ?? 0 },
+    ]
+  }
   const other: SeriesKey = hero === 'goals' ? 'assists' : 'goals'
-  const cells: { label: string; series?: SeriesKey; value: number }[] = [
+  return [
     { label: other === 'goals' ? 'Goals' : 'Assists', series: other, value: p?.[other] ?? 0 },
+    { label: 'PTS', series: 'points', value: p?.points ?? 0 },
   ]
-  if (showTurnovers) cells.push({ label: 'Turnovers', series: 'turnovers', value: p?.turnovers ?? 0 })
-  else cells.push({ label: 'G+A', value: (p?.goals ?? 0) + (p?.assists ?? 0) })
-  return cells
 }
 
 function seasonLabel(s: { name: string; year: number; organizer: string | null }) {
@@ -128,10 +154,8 @@ export default function Stats() {
   const navigate = useNavigate()
   const { isGuest, currentTeamId, user } = useAuth()
   const entitlement = useEffectiveTier(currentTeamId)
-  // The active sub-tab mirrors this URL segment, so a reload, browser
-  // back/forward, or a bookmarked/shared link lands on the right sub-tab
-  // instead of always resetting to Overview.
   const { subtab } = useParams<{ subtab: string }>()
+  const [genderFilter, setGenderFilter] = useState<'all' | 'Man' | 'Woman'>('all')
   // A guest holds no membership and can never claim a roster spot, so "Me"
   // never appears for one -- there is nothing there but a claim picker that
   // would 403 on every selection.
@@ -237,19 +261,33 @@ export default function Stats() {
         }}
       >
         {pageTab !== 'standings' && (
-          <FilterBar
-            mode={filterType}
-            onModeChange={handleModeChange}
-            seasons={(allSeasons as Season[] | undefined) ?? []}
-            selectedSeasonIds={selectedSeasonIds}
-            onSeasonsChange={ids => {
-              defaultSeasonManual.current = true
-              setSelectedSeasonIds(ids)
-            }}
-            games={(games as Game[] | undefined) ?? []}
-            selectedGameIds={selectedGameIds}
-            onGamesChange={setSelectedGameIds}
-          />
+          <div className="flex flex-wrap items-center gap-2.5">
+            <FilterBar
+              mode={filterType}
+              onModeChange={handleModeChange}
+              seasons={(allSeasons as Season[] | undefined) ?? []}
+              selectedSeasonIds={selectedSeasonIds}
+              onSeasonsChange={ids => {
+                defaultSeasonManual.current = true
+                setSelectedSeasonIds(ids)
+              }}
+              games={(games as Game[] | undefined) ?? []}
+              selectedGameIds={selectedGameIds}
+              onGamesChange={setSelectedGameIds}
+            />
+            {(pageTab === 'overview' || pageTab === 'table') && (
+              <Segmented
+                options={[
+                  { key: 'all', label: 'Both' },
+                  { key: 'Woman', label: 'Female' },
+                  { key: 'Man', label: 'Male' },
+                ]}
+                value={genderFilter}
+                onChange={setGenderFilter}
+                ariaLabel="Filter by gender"
+              />
+            )}
+          </div>
         )}
       </StatsHeader>
 
@@ -262,6 +300,8 @@ export default function Stats() {
           selectedSeasonIds={selectedSeasonIds}
           selectedGameIds={selectedGameIds}
           tier={entitlement.tier}
+          genderFilter={genderFilter}
+          onGenderFilterChange={setGenderFilter}
         />
       )}
     </div>
@@ -274,6 +314,7 @@ export default function Stats() {
 // filters differs by tab.
 function PlayerStatsView({
   tab, games, allSeasons, filterType, selectedSeasonIds, selectedGameIds, tier,
+  genderFilter, onGenderFilterChange,
 }: {
   tab: 'me' | 'overview' | 'table'
   /** Hoisted to Stats() along with the filter below -- see the comment there. */
@@ -283,10 +324,10 @@ function PlayerStatsView({
   selectedSeasonIds: number[]
   selectedGameIds: number[]
   tier: string | null
+  genderFilter: 'all' | 'Man' | 'Woman'
+  onGenderFilterChange: (v: 'all' | 'Man' | 'Woman') => void
 }) {
   const { currentTeamId, user } = useAuth()
-  const { flags } = useFlags()
-  const showTurnovers = flags?.show_turnovers ?? false
   const link = useMyPlayerLink()
   const claim = useClaimPlayer()
   const teamLinks = useGetTeamPlayerLinks()
@@ -303,7 +344,7 @@ function PlayerStatsView({
   const [networkSelectedId, setNetworkSelectedId] = useState<number | null>(null)
   const [includeSubsInNetwork, setIncludeSubsInNetwork] = useState(true)
 
-  const [cumulativeStat, setCumulativeStat] = useState<ProgressionStat>('ga')
+  const [cumulativeStat, setCumulativeStat] = useState<ProgressionStat>('points')
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<number[]>([])
 
   useEffect(() => {
@@ -311,7 +352,7 @@ function PlayerStatsView({
     fetchOrgPlayers({ organizationId: currentTeamId })
   }, [currentTeamId])
 
-  const [playerRankingMode, setPlayerRankingMode] = useState<RankingMode>('standard')
+  const [playerRankingMode, setPlayerRankingMode] = useState<RankingMode>('dense')
   
   useEffect(() => {
     if (currentTeamId == null) return
@@ -423,28 +464,50 @@ function PlayerStatsView({
       ((orgPlayers as { id: number; photo_url: string | null }[] | undefined) ?? [])
         .map(p => [p.id, p.photo_url] as const),
     )
-    return (statsArr ?? []).map(p => ({
+    const genderById = new Map(
+      ((orgPlayers as { id: number; gender_match: string | null }[] | undefined) ?? [])
+        .map(p => [p.id, p.gender_match] as const),
+    )
+    return (statsArr ?? [])
+      .filter(p => genderFilter === 'all' || genderById.get(p.player_id) === genderFilter)
+      .map(p => ({
       playerId: p.player_id,
       name: p.player_name,
       shortName: shortName(p.player_name),
       photoUrl: photoById.get(p.player_id) ?? null,
-      goals: parseInt(p.goals),
-      assists: parseInt(p.assists),
-      turnovers: parseInt(p.turnovers),
-      gamesPlayed: parseInt(p.games_played),
+      points: parseInt(p.points ?? '0'),
+      goals: parseInt(p.goals ?? '0'),
+      assists: parseInt(p.assists ?? '0'),
+      secondAssists: parseInt(p.second_assists ?? '0'),
+      blocks: parseInt(p.blocks ?? '0'),
+      gamesPlayed: parseInt(p.games_played ?? '0'),
     }))
-  }, [statsArr, orgPlayers])
+  }, [statsArr, orgPlayers, genderFilter])
 
-  const topFinisher = maxBy(playerLines, p => p.goals)
-  const topPlaymaker = maxBy(playerLines, p => p.assists)
+  const tiedScorers = getTiedLeaders(playerLines, 'points')
+  const tiedFinishers = getTiedLeaders(playerLines, 'goals')
+  const tiedPlaymakers = getTiedLeaders(playerLines, 'assists')
+  const tiedDefenders = getTiedLeaders(playerLines, 'blocks')
+
+  const topScorer = tiedScorers[0] ?? null
+  const topFinisher = tiedFinishers[0] ?? null
+  const topPlaymaker = tiedPlaymakers[0] ?? null
+  const topDefender = tiedDefenders[0] ?? null
+
+  const topScorerTied = tiedScorers.length > 1
+  const topFinisherTied = tiedFinishers.length > 1
+  const topPlaymakerTied = tiedPlaymakers.length > 1
+  const topDefenderTied = tiedDefenders.length > 1
   const teamGoals = playerLines.reduce((sum, p) => sum + p.goals, 0)
   const teamAssists = playerLines.reduce((sum, p) => sum + p.assists, 0)
+  const teamPoints = playerLines.reduce((sum, p) => sum + p.points, 0)
+  const teamBlocks = playerLines.reduce((sum, p) => sum + p.blocks, 0)
 
   // The leaderboard is capped at 12 rows -- past that the bars are too short
   // to compare against each other and the panel outruns the viewport. Ranked
-  // by G+A, the same order the summary table opens in.
+  // by PTS desc.
   const chartLines = useMemo(
-    () => [...playerLines].sort((a, b) => (b.goals + b.assists) - (a.goals + a.assists)).slice(0, 12),
+    () => [...playerLines].sort((a, b) => b.points - a.points).slice(0, 12),
     [playerLines],
   )
 
@@ -469,25 +532,27 @@ function PlayerStatsView({
       game_id: g.id, opponent: g.opponent, game_date: g.game_date,
     }))
 
-    const perGamePlayer: Record<number, Record<number, { goals: number; assists: number; turnovers: number }>> = {}
+    const perGamePlayer: Record<number, Record<number, { goals: number; assists: number; secondAssists: number; blocks: number }>> = {}
     for (const r of rows) {
       if (!perGamePlayer[r.game_id]) perGamePlayer[r.game_id] = {}
       if (!perGamePlayer[r.game_id]![r.player_id]) {
-        perGamePlayer[r.game_id]![r.player_id] = { goals: 0, assists: 0, turnovers: 0 }
+        perGamePlayer[r.game_id]![r.player_id] = { goals: 0, assists: 0, secondAssists: 0, blocks: 0 }
       }
       const existing = perGamePlayer[r.game_id]![r.player_id]!
-      existing.goals += parseInt(r.goals)
-      existing.assists += parseInt(r.assists)
-      existing.turnovers += parseInt(r.turnovers)
+      existing.goals += Number(r.goals)
+      existing.assists += Number(r.assists)
+      existing.secondAssists += Number(r.second_assists)
+      existing.blocks += Number(r.blocks)
     }
 
     const playerTotals: Record<number, { name: string; total: number }> = {}
     for (const r of rows) {
       if (!playerTotals[r.player_id]) playerTotals[r.player_id] = { name: r.player_name, total: 0 }
-      const v = cumulativeStat === 'goals' ? parseInt(r.goals)
-        : cumulativeStat === 'assists' ? parseInt(r.assists)
-        : cumulativeStat === 'turnovers' ? parseInt(r.turnovers)
-        : parseInt(r.goals) + parseInt(r.assists)
+      const v = cumulativeStat === 'goals' ? Number(r.goals)
+        : cumulativeStat === 'assists' ? Number(r.assists)
+        : cumulativeStat === 'secondAssists' ? Number(r.second_assists)
+        : cumulativeStat === 'blocks' ? Number(r.blocks)
+        : Number(r.goals) * 500 + Number(r.assists) * 500 + Number(r.second_assists) * 250 + Number(r.blocks) * 500
       playerTotals[r.player_id]!.total += v
     }
 
@@ -517,11 +582,12 @@ function PlayerStatsView({
     const lineData = gameOrder.map((game, idx) => {
       const point: Record<string, unknown> = { label: `G${idx + 1}`, fullLabel: `vs ${game.opponent}` }
       for (const p of displayPlayers) {
-        const gs = perGamePlayer[game.game_id]?.[p.id] ?? { goals: 0, assists: 0, turnovers: 0 }
+        const gs = perGamePlayer[game.game_id]?.[p.id] ?? { goals: 0, assists: 0, secondAssists: 0, blocks: 0 }
         const v = cumulativeStat === 'goals' ? gs.goals
           : cumulativeStat === 'assists' ? gs.assists
-          : cumulativeStat === 'turnovers' ? gs.turnovers
-          : gs.goals + gs.assists
+          : cumulativeStat === 'secondAssists' ? gs.secondAssists
+          : cumulativeStat === 'blocks' ? gs.blocks
+          : gs.goals * 500 + gs.assists * 500 + gs.secondAssists * 250 + gs.blocks * 500
         cumulative[p.id] += v
         point[String(p.id)] = cumulative[p.id]
       }
@@ -703,14 +769,14 @@ function PlayerStatsView({
               <Swap busy={rangePending && mine != null}>
                 <Resolve
                   loading={rangePending && mine == null}
-                  className={`grid gap-3 ${showTurnovers ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 sm:grid-cols-3'}`}
-                  skeleton={<MetricCardSkeleton count={showTurnovers ? 4 : 3} />}
+                  className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-6"
+                  skeleton={<MetricCardSkeleton count={6} />}
                 >
+                  <MetricCard label="Points" value={mine?.points ?? 0} series="points" hint={mine ? perGame(mine.points ?? 0, mine.games_played) : undefined} />
                   <MetricCard label="Goals" value={mine?.goals ?? 0} series="goals" hint={mine ? perGame(mine.goals, mine.games_played) : undefined} />
                   <MetricCard label="Assists" value={mine?.assists ?? 0} series="assists" hint={mine ? perGame(mine.assists, mine.games_played) : undefined} />
-                  {showTurnovers && (
-                    <MetricCard label="Turnovers" value={mine?.turnovers ?? 0} series="turnovers" hint={mine ? perGame(mine.turnovers, mine.games_played) : undefined} />
-                  )}
+                  <MetricCard label="2nd Assists" value={mine?.second_assists ?? 0} series="secondAssists" hint={mine ? perGame(mine.second_assists ?? 0, mine.games_played) : undefined} />
+                  <MetricCard label="Blocks" value={mine?.blocks ?? 0} series="blocks" hint={mine ? perGame(mine.blocks ?? 0, mine.games_played) : undefined} />
                   <MetricCard label="Games played" value={mine?.games_played ?? 0} />
                 </Resolve>
               </Swap>
@@ -735,29 +801,65 @@ function PlayerStatsView({
             <Swap busy={rangePending && playerLines.length > 0}>
               <Resolve
                 loading={rangePending && playerLines.length === 0}
-                className="grid grid-cols-1 gap-3 md:grid-cols-3"
+                className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5"
                 skeleton={<KpiRowSkeleton />}
               >
-                <LeaderCard
-                  overline="Top finisher"
-                  icon={<Trophy className="h-3.5 w-3.5" weight="bold" />}
-                  series="goals"
-                  player={topFinisher}
-                  value={topFinisher?.goals ?? 0}
-                  unit="Goals"
-                  teamTotal={teamGoals}
-                  secondary={secondaryFor('goals', topFinisher, showTurnovers)}
-                />
-                <LeaderCard
-                  overline="Top playmaker"
-                  icon={<Handshake className="h-3.5 w-3.5" weight="bold" />}
-                  series="assists"
-                  player={topPlaymaker}
-                  value={topPlaymaker?.assists ?? 0}
-                  unit="Assists"
-                  teamTotal={teamAssists}
-                  secondary={secondaryFor('assists', topPlaymaker, showTurnovers)}
-                />
+                {(topScorer?.points ?? 0) > 0 && (
+                  <LeaderCard
+                    overline="MVP (PTS)"
+                    icon={<Crown className="h-3.5 w-3.5" weight="bold" />}
+                    series="points"
+                    player={topScorer}
+                    value={topScorer?.points ?? 0}
+                    unit="PTS"
+                    teamTotal={teamPoints}
+                    secondary={secondaryFor('points', topScorer)}
+                    isTied={topScorerTied}
+                    tiedPlayers={tiedScorers}
+                  />
+                )}
+                {(topFinisher?.goals ?? 0) > 0 && (
+                  <LeaderCard
+                    overline="Top finisher"
+                    icon={<Trophy className="h-3.5 w-3.5" weight="bold" />}
+                    series="goals"
+                    player={topFinisher}
+                    value={topFinisher?.goals ?? 0}
+                    unit="Goals"
+                    teamTotal={teamGoals}
+                    secondary={secondaryFor('goals', topFinisher)}
+                    isTied={topFinisherTied}
+                    tiedPlayers={tiedFinishers}
+                  />
+                )}
+                {(topPlaymaker?.assists ?? 0) > 0 && (
+                  <LeaderCard
+                    overline="Top playmaker"
+                    icon={<Handshake className="h-3.5 w-3.5" weight="bold" />}
+                    series="assists"
+                    player={topPlaymaker}
+                    value={topPlaymaker?.assists ?? 0}
+                    unit="Assists"
+                    teamTotal={teamAssists}
+                    secondary={secondaryFor('assists', topPlaymaker)}
+                    isTied={topPlaymakerTied}
+                    tiedPlayers={tiedPlaymakers}
+                  />
+                )}
+                {(topDefender?.blocks ?? 0) > 0 && (
+                  <LeaderCard
+                    overline="Top defender"
+                    icon={<Shield className="h-3.5 w-3.5" weight="bold" />}
+                    series="blocks"
+                    player={topDefender}
+                    value={topDefender?.blocks ?? 0}
+                    unit="Blocks"
+                    teamTotal={teamBlocks}
+                    secondary={secondaryFor('blocks', topDefender)}
+                    isTied={topDefenderTied}
+                    tiedPlayers={tiedDefenders}
+                  />
+                )}
                 <TeamCard icon={<Scales className="h-3.5 w-3.5" weight="bold" />} team={teamLine} />
               </Resolve>
             </Swap>
@@ -882,7 +984,7 @@ function Standings() {
 
   const refresh = () => { if (selectedSeasonId != null) fetchLeague({ seasonId: selectedSeasonId }) }
 
-  const [rankingMode, setRankingMode] = useState<RankingMode>('standard')
+  const [rankingMode, setRankingMode] = useState<RankingMode>('dense')
   const standings = useMemo(() => league ? computeStandings(league, rankingMode) : [], [league, rankingMode])
   const usTeam = league?.teams.find(t => t.is_us) ?? null
 

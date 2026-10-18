@@ -11,7 +11,6 @@ const mk = (over: Partial<BestGameStat>): BestGameStat => ({
   in: true,
   goals: '0',
   assists: '0',
-  turnovers: '0',
   ...over,
 })
 

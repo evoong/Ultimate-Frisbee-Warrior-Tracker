@@ -1,7 +1,6 @@
 import { useState, useCallback, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { RankingMode } from './league'
-import { isTurnoverEvent } from '../../lib/eventUtils'
 import { isPastGame } from '../../lib/gameOrder'
 import { calculatePoints } from '../../lib/scoring'
 
@@ -153,7 +152,7 @@ export function useGetPlayerStats() {
     // Fetch all players
     const { data: players, error: playersError } = await supabase
       .from('players')
-      .select('id, display_name')
+      .select('id, display_name, gender_match')
       .eq('organization_id', params.organizationId)
 
     if (playersError) throw new Error(playersError.message)
@@ -186,7 +185,7 @@ export function useGetPlayerStats() {
       const playerId = event.player_id
       const playerData = playerId ? playersMap.get(playerId) : undefined
 
-      // Credit the scorer (goals/turnovers) only when the scorer is known.
+      // Credit the scorer (goals/blocks) only when the scorer is known.
       // This does NOT gate the assist credit below: a goal can have no
       // recorded scorer (e.g. an unregistered teammate scored) while still
       // having a recorded assister, and that assist should still count.
@@ -195,11 +194,11 @@ export function useGetPlayerStats() {
           statsMap.set(playerId, {
             player_id: playerId,
             player_name: playerData.display_name,
+            gender_match: playerData.gender_match,
             goals: 0,
             assists: 0,
             second_assists: 0,
             blocks: 0,
-            turnovers: 0,
             games_played: new Set<number>(),
           })
         }
@@ -209,7 +208,6 @@ export function useGetPlayerStats() {
 
         if (event.event_type === 'Goal') stats.goals++
         else if (event.event_type === 'Block') stats.blocks++
-        else if (isTurnoverEvent(event.event_type)) stats.turnovers++
       }
 
       // Credit assist to the related player on a Goal
@@ -221,11 +219,11 @@ export function useGetPlayerStats() {
             statsMap.set(assisterId, {
               player_id: assisterId,
               player_name: assisterData.display_name,
+              gender_match: assisterData.gender_match,
               goals: 0,
               assists: 0,
               second_assists: 0,
               blocks: 0,
-              turnovers: 0,
               games_played: new Set<number>(),
             })
           }
@@ -244,11 +242,11 @@ export function useGetPlayerStats() {
             statsMap.set(secondAssisterId, {
               player_id: secondAssisterId,
               player_name: secondAssisterData.display_name,
+              gender_match: secondAssisterData.gender_match,
               goals: 0,
               assists: 0,
               second_assists: 0,
               blocks: 0,
-              turnovers: 0,
               games_played: new Set<number>(),
             })
           }
@@ -263,13 +261,19 @@ export function useGetPlayerStats() {
     const result = Array.from(statsMap.values()).map((s: any) => {
       const attended = attendanceMap.get(s.player_id) ?? new Set<number>()
       const gamesPlayed = [...attended].filter(gid => playedGameIds.has(gid) && (!filteredGameIds || filteredGameIds.has(gid))).length
-      // Warrior points: SC 500, AS 500, 2ND 250, DEF 500 (lib/scoring.ts is
-      // the single source of truth for the values).
+      // Warrior points: PTS 500, G 500, A 500, 2ND 250, BLK 500
       const points = calculatePoints({
-        goals: s.goals, assists: s.assists,
-        secondAssists: s.second_assists, blocks: s.blocks,
+        goals: s.goals,
+        assists: s.assists,
+        secondAssists: s.second_assists,
+        blocks: s.blocks,
       })
-      return { ...s, points, games_played: gamesPlayed, ga_rank: 0 }
+      return {
+        ...s,
+        points,
+        games_played: gamesPlayed,
+        ga_rank: 0,
+      }
     })
 
     // Rank by points descending
@@ -397,7 +401,7 @@ export function useGetCumulativeStats() {
 
     let eventsQuery = supabase
       .from('game_events')
-      .select('player_id, related_player_id, event_type, game_id')
+      .select('player_id, related_player_id, secondary_assister_id, event_type, game_id')
     
     if ((games ?? []).length > 0) {
       eventsQuery = eventsQuery.in('game_id', (games ?? []).map((g: any) => g.id))
@@ -422,20 +426,34 @@ export function useGetCumulativeStats() {
     const rows: any[] = []
     filtered.forEach((e: any) => {
       const game = gamesMap.get(e.game_id)
-      const isTurnover = isTurnoverEvent(e.event_type)
 
-      // Row for the primary player (scorer / turnover player)
-      if (e.player_id && (e.event_type === 'Goal' || isTurnover)) {
-        rows.push({
-          game_id: game?.id,
-          opponent: game?.opponent,
-          game_date: game?.game_date,
-          player_id: e.player_id,
-          player_name: playersMap.get(e.player_id)?.display_name,
-          goals: e.event_type === 'Goal' ? 1 : 0,
-          assists: 0,
-          turnovers: isTurnover ? 1 : 0,
-        })
+      // Row for the scorer (Goal or Block)
+      if (e.player_id) {
+        if (e.event_type === 'Goal') {
+          rows.push({
+            game_id: game?.id,
+            opponent: game?.opponent,
+            game_date: game?.game_date,
+            player_id: e.player_id,
+            player_name: playersMap.get(e.player_id)?.display_name,
+            goals: 1,
+            assists: 0,
+            second_assists: 0,
+            blocks: 0,
+          })
+        } else if (e.event_type === 'Block') {
+          rows.push({
+            game_id: game?.id,
+            opponent: game?.opponent,
+            game_date: game?.game_date,
+            player_id: e.player_id,
+            player_name: playersMap.get(e.player_id)?.display_name,
+            goals: 0,
+            assists: 0,
+            second_assists: 0,
+            blocks: 1,
+          })
+        }
       }
 
       // Separate row for the assister (related_player_id on a Goal)
@@ -448,7 +466,23 @@ export function useGetCumulativeStats() {
           player_name: playersMap.get(e.related_player_id)?.display_name,
           goals: 0,
           assists: 1,
-          turnovers: 0,
+          second_assists: 0,
+          blocks: 0,
+        })
+      }
+
+      // Separate row for the secondary assister (secondary_assister_id on a Goal)
+      if (e.event_type === 'Goal' && e.secondary_assister_id) {
+        rows.push({
+          game_id: game?.id,
+          opponent: game?.opponent,
+          game_date: game?.game_date,
+          player_id: e.secondary_assister_id,
+          player_name: playersMap.get(e.secondary_assister_id)?.display_name,
+          goals: 0,
+          assists: 0,
+          second_assists: 1,
+          blocks: 0,
         })
       }
     })

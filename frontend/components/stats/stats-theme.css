@@ -75,6 +75,10 @@
   --st-goals: 152 65% 32%;
   --st-assists: 258 62% 48%;
   --st-turnovers: 28 88% 38%;
+  /* Warrior-point system. MVP (PTS) is the headline metric, styled in rich gold. */
+  --st-points: 42 92% 38%;
+  --st-second: 340 64% 44%;
+  --st-blocks: 228 58% 48%;
 
   /* Point differential. Signed, so it needs the ledger's own win/loss hues
      rather than a series colour — a positive differential and a win are the
@@ -112,6 +116,9 @@
   --st-goals: 152 62% 46%;
   --st-assists: 258 88% 72%;
   --st-turnovers: 28 88% 54%;
+  --st-points: 44 96% 62%;
+  --st-second: 340 82% 70%;
+  --st-blocks: 228 80% 72%;
 
   --st-up: 142 71% 45%;
   --st-down: 0 84% 60%;
@@ -602,12 +609,26 @@ textarea.st-field {
 
 /* Series binding. Each modifier rebinds one variable, so the rules above
    stay one rule each and a fourth series is two lines, not six. */
-.stats-scope .st-goals { --st-series: var(--st-goals); }
+.stats-scope .st-points { --st-series: var(--st-points); }
+.stats-scope .st-goals { --st-goals-clr: var(--st-goals); --st-series: var(--st-goals); }
 .stats-scope .st-assists { --st-series: var(--st-assists); }
+.stats-scope .st-second { --st-series: var(--st-second); }
+.stats-scope .st-blocks { --st-series: var(--st-blocks); }
 .stats-scope .st-turnovers { --st-series: var(--st-turnovers); }
 .stats-scope .st-up { --st-series: var(--st-up); }
 .stats-scope .st-down { --st-series: var(--st-down); }
 .stats-scope .st-tie { --st-series: var(--st-tie); }
+
+/* MVP card elevated styling */
+.stats-scope .st-kpi.st-points {
+  border-color: hsl(var(--st-points) / 0.35);
+  background: linear-gradient(180deg, hsl(var(--st-points) / 0.08) 0%, hsl(var(--st-panel)) 100%);
+  box-shadow: 0 4px 16px -8px hsl(var(--st-points) / 0.25);
+}
+.stats-scope .st-kpi.st-points:hover {
+  border-color: hsl(var(--st-points) / 0.55);
+  background: linear-gradient(180deg, hsl(var(--st-points) / 0.12) 0%, hsl(var(--st-panel)) 100%);
+}
 
 /* Anything that should take the card's bound series colour — the overline's
    glyph, a bare number in the footer strip. */
