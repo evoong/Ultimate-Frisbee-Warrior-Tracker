@@ -1,7 +1,7 @@
 // Shared team-context builder for the chat assistants (Cloudflare gateway
 // chat.ts and the Express server both re-export it). Moved verbatim out of
 // gateway/chat.ts; the scope param is the only addition (Task 6).
-import { getOrgEffectiveTier, gameDateWithinFreeWindow } from '../supabaseRest.js'
+import { getOrgEffectiveTier, gameDateWithinFreeWindow, sbGetPaged } from '../supabaseRest.js'
 
 // Player-scoped context for a linked member (spec: linked = scoped,
 // unlinked/captain/editor = full). playerId filters the DB queries and the
@@ -46,7 +46,7 @@ export async function getTeamContext(config: TeamContextConfig, organizationId: 
     const idsFilter = allowedGameIds.length > 0 ? allowedGameIds.join(',') : '-1'
     eventsQuery += `&game_id=in.(${idsFilter})`
   }
-  const events = await supabaseServiceFetch(config, eventsQuery)
+  const events = await sbGetPaged(config, eventsQuery)
 
   const seasonNames = new Map((seasons ?? []).map((s: any) => [s.id, `${s.organizer ?? ''} ${s.name} ${s.year}`.trim()]))
   const gameMap = new Map<number, any>((games ?? []).map((g: any) => [g.id, g]))
