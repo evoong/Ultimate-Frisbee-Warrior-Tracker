@@ -151,6 +151,36 @@ export const useCancelJoinRequest = () => useJoinRequestRpc('cancel_join_request
 export const useApproveJoinRequest = () => useJoinRequestRpc('approve_join_request', 'p_request_id')
 export const useDenyJoinRequest = () => useJoinRequestRpc('deny_join_request', 'p_request_id')
 
+export type MyInvite = {
+  id: number
+  team_id: number
+  team_name: string
+  role: Exclude<TeamRole, 'captain'>
+  invited_by_email: string | null
+  expires_at: string
+}
+
+// Invitations addressed to the signed-in user's own (confirmed) email.
+export function useMyInvites() {
+  const fn = useCallback(async () => {
+    const { data, error } = await supabase.rpc('my_pending_invites')
+    if (error) throw new Error(error.message)
+    return (data ?? []) as MyInvite[]
+  }, [])
+  return useApiCall<MyInvite[]>(fn)
+}
+
+export function useRespondToInvite() {
+  const fn = useCallback(async (params: { inviteId: number; accept: boolean }) => {
+    const { error } = await supabase.rpc(params.accept ? 'accept_team_invite' : 'decline_team_invite', {
+      p_invite_id: params.inviteId,
+    })
+    if (error) throw new Error(error.message)
+    return true
+  }, [])
+  return useApiCall<boolean, { inviteId: number; accept: boolean }>(fn)
+}
+
 export function useRevokeInvite() {
   const fn = useCallback(async (params: { inviteId: number }) => {
     const { error } = await supabase.rpc('revoke_invite', { p_invite_id: params.inviteId })
