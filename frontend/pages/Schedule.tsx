@@ -1571,6 +1571,11 @@ export default function Schedule() {
   const scorerOrderedPlayerOptions = rankByStat(attendingPlayerOptions, seasonGoalsByPlayerId)
   const assisterOrderedPlayerOptions = rankByStat(attendingPlayerOptions, seasonAssistsByPlayerId)
   const currentEventTypeOrderedPlayerOptions = rankByStat(attendingPlayerOptions, new Map(), newEventType)
+  // Edit uses the full roster (see note above attendingPlayerIds) and a
+  // leading None chip, since chips can't be deselected like a dropdown can.
+  const noneChip = { id: '__none__', label: 'None' }
+  const scorerEditOptions = [noneChip, ...rankByStat(playerOptions, seasonGoalsByPlayerId)]
+  const assisterEditOptions = [noneChip, ...rankByStat(playerOptions, seasonAssistsByPlayerId)]
 
   // Calendar helpers
   const calYear = calendarDate.getFullYear()
@@ -2051,18 +2056,32 @@ export default function Schedule() {
                       return (
                         <div key={event.id} className="py-2.5 border-b border-border last:border-0">
                           <div className="space-y-2 bg-background rounded-lg p-3">
-                            <div className="space-y-1">
-                              <Label className="text-xs">Scorer / Player</Label>
-                              <PlayerCombobox players={playerOptions} value={editScorerId || '__none__'} onValueChange={setEditScorerId} placeholder="Select player..." className="w-full bg-card border-border" />
+                            <div className="flex items-center bg-muted p-1 rounded-lg w-fit">
+                              {(['combobox', 'buttons'] as const).map(mode => (
+                                <button
+                                  key={mode}
+                                  type="button"
+                                  onClick={() => setSelectionMode(mode)}
+                                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${selectionMode === mode ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                                >
+                                  {mode === 'combobox' ? 'Dropdown' : 'Buttons'}
+                                </button>
+                              ))}
                             </div>
-                            <div className="space-y-1">
-                              <Label className="text-xs">Assister / Related</Label>
-                              <PlayerCombobox players={playerOptions} value={editAssisterId || '__none__'} onValueChange={setEditAssisterId} placeholder="Select player..." className="w-full bg-card border-border" />
-                            </div>
-                            <div className="space-y-1">
-                              <Label className="text-xs">2nd Assister</Label>
-                              <PlayerCombobox players={playerOptions} value={editSecondaryAssisterId || '__none__'} onValueChange={setEditSecondaryAssisterId} placeholder="Select player..." className="w-full bg-card border-border" />
-                            </div>
+                            {([
+                              { label: 'Scorer / Player', value: editScorerId, set: setEditScorerId, ranked: scorerEditOptions },
+                              { label: 'Assister / Related', value: editAssisterId, set: setEditAssisterId, ranked: assisterEditOptions },
+                              { label: '2nd Assister', value: editSecondaryAssisterId, set: setEditSecondaryAssisterId, ranked: assisterEditOptions },
+                            ]).map(f => (
+                              <div key={f.label} className="space-y-1">
+                                <Label className="text-xs">{f.label}</Label>
+                                {selectionMode === 'combobox' ? (
+                                  <PlayerCombobox players={playerOptions} value={f.value || '__none__'} onValueChange={f.set} placeholder="Select player..." className="w-full bg-card border-border" />
+                                ) : (
+                                  <PlayerChipGrid options={f.ranked} value={f.value || '__none__'} onChange={f.set} photoMap={lineupPhotoByPlayerId} />
+                                )}
+                              </div>
+                            ))}
                             <div className="flex gap-2">
                               <Button size="sm" onClick={handleSaveEventEdit} className="flex-1 bg-primary text-primary-foreground h-8 text-xs"><FloppyDisk className="w-3 h-3 mr-1" />Save</Button>
                               <Button size="sm" variant="outline" onClick={() => setEditingEventId(null)} className="h-8 text-xs"><X className="w-3 h-3" /></Button>
