@@ -28,7 +28,7 @@ import {
   EVENT_TYPES,
   type EventType,
 } from './gameActions.js'
-import { sbGet, sbWrite, sbUpsertIgnore, getOrgEffectiveTier, gameDateWithinFreeWindow } from './supabaseRest.js'
+import { sbGet, sbGetPaged, sbWrite, sbUpsertIgnore, getOrgEffectiveTier, gameDateWithinFreeWindow } from './supabaseRest.js'
 import { hasAtLeast, type TeamRole } from './membership.js'
 
 // The MCP twins of gameActions.ts's WRITE_FUNCTIONS: registered tools
@@ -340,7 +340,7 @@ export function registerUfwtMcpTools(server: McpServer, config: ActionsConfig, o
       // design's "attendance remains visible" split.
       const statGameIds = free ? games.filter(g => gameDateWithinFreeWindow(g.game_date)).map(g => g.id) : gameIds
       const statIdsFilter = statGameIds.length > 0 ? `(${statGameIds.join(',')})` : '(-1)'
-      const events = await sbGet(config, `/game_events?game_id=in.${statIdsFilter}&select=player_id,related_player_id,event_type,game_id`)
+      const events = await sbGetPaged(config, `/game_events?game_id=in.${statIdsFilter}&select=player_id,related_player_id,event_type,game_id`)
       const playersData: { id: number; display_name: string }[] = await sbGet(config, `/players?organization_id=eq.${orgId}&select=id,display_name`)
       const playersMap = new Map((playersData ?? []).map(p => [p.id, p] as const))
 

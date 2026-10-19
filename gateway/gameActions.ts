@@ -29,7 +29,7 @@
 // player_id, lineup_rows: [] }; create_lineup_group after_rows.group =
 // full created row.
 
-import { type ActionsConfig, sbGet, sbWrite, sbUpsertIgnore, getOrgEffectiveTier, gameDateWithinFreeWindow } from './supabaseRest.js'
+import { type ActionsConfig, sbGet, sbGetPaged, sbWrite, sbUpsertIgnore, getOrgEffectiveTier, gameDateWithinFreeWindow } from './supabaseRest.js'
 import type { ChatScope } from './agent/context.js'
 
 export type { ActionsConfig }
@@ -770,7 +770,7 @@ export async function queryStatBreakdown(
     : `/game_events?organization_id=eq.${orgId}&select=event_type,player_id,related_player_id`
   const events: { event_type: string; player_id: number | null; related_player_id: number | null }[] = archived
     ? []
-    : await sbGet(config, eventsPath)
+    : await sbGetPaged(config, eventsPath)
   // Player-scope gate (spec: a linked member's tool results are filtered to
   // their own player, exactly like the prompt context). Applied after fetch
   // so it composes with the free-tier game_id filter instead of fighting it.
