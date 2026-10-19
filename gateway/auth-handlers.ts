@@ -459,7 +459,7 @@ export async function handleAuthRequest(
     // Emails a pending invite through Supabase Auth's own mailer (the same one
     // that sends signup-confirmation and recovery mail): a magic link for an
     // existing account, a confirm-signup mail for a new one. Either way, signing
-    // in afterwards runs accept_invite() on /auth/session.
+    // in afterwards shows them the invitation (my_pending_invites) to accept.
     case 'POST /auth/invite-email': {
       const { accessToken, setCookies } = await resolveAccessToken(config, request, url)
       if (!accessToken) return json({ error: 'not authenticated' }, 401, setCookies)
