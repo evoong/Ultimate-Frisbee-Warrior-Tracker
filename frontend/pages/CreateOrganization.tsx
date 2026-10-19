@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { supabase } from '../lib/supabase'
-import { useCancelJoinRequest, useGetJoinRequests, useRequestToJoin } from '../hooks/backend/teams'
+import { useCancelJoinRequest, useGetJoinRequests, useMyInvites, useRequestToJoin } from '../hooks/backend/teams'
+import { InviteCards } from '../components/PendingInvitations'
 import { useAuth } from '../contexts/AuthContext'
 import { Button } from '../lib/shadcn/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../lib/shadcn/card'
@@ -20,6 +21,7 @@ export default function CreateOrganization() {
   const { createTeam, logout, user, refreshSession } = useAuth()
   const [publicTeams, setPublicTeams] = useState<{ id: number; name: string }[]>([])
   const [checking, setChecking] = useState(false)
+  const myInvites = useMyInvites()
   const requests = useGetJoinRequests()
   const requestJoin = useRequestToJoin()
   const cancelRequest = useCancelJoinRequest()
@@ -31,15 +33,16 @@ export default function CreateOrganization() {
     supabase.from('organizations').select('id,name').order('name')
       .then(({ data }) => setPublicTeams(data ?? []))
     void requests.trigger({})
+    void myInvites.trigger()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // accept_invite() only runs when the session is loaded, so an invite sent
-  // after sign-in is invisible until something re-reads the session.
+  // An invite sent, or a join request approved, after this page loaded is only
+  // seen once it is re-read.
   async function checkForInvites() {
     setChecking(true)
     try {
-      await refreshSession()
+      await Promise.all([myInvites.trigger(), refreshSession()])
     } finally {
       setChecking(false)
     }
@@ -77,6 +80,12 @@ export default function CreateOrganization() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {myInvites.data && myInvites.data.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-sm font-medium">You've been invited</p>
+            <InviteCards invites={myInvites.data} onChanged={async () => { await myInvites.trigger() }} />
+          </div>
+        )}
         <form onSubmit={handleCreate} className="space-y-3">
           <Input
             value={name}
@@ -95,8 +104,8 @@ export default function CreateOrganization() {
         <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
           <p className="font-medium text-foreground">Joining someone else's team?</p>
           <p className="mt-1">
-            Ask their captain to invite {user?.email}, then check below -- there's
-            nothing to accept.
+            Ask their captain to invite {user?.email}. The invitation shows up
+            here and you choose whether to accept it.
           </p>
           <Button variant="outline" size="sm" className="mt-2" onClick={checkForInvites} disabled={checking}>
             {checking && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
@@ -133,7 +142,7 @@ export default function CreateOrganization() {
               })}
             </ul>
             <p className="mt-2 text-xs text-muted-foreground">
-              A captain or editor approves your request; check back with "Check for invites" afterwards.
+              A captain or editor approves your request; press "Check for invites" afterwards to see the result.
             </p>
           </div>
         )}

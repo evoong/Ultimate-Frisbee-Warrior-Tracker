@@ -35,6 +35,7 @@ import FeedbackDialog from './components/FeedbackDialog'
 import ThemeToggle from './components/nav/ThemeToggle'
 import PanelToggle from './components/nav/PanelToggle'
 import UserMenu from './components/nav/UserMenu'
+import PendingInvitations from './components/PendingInvitations'
 import WorkspaceSwitcher from './components/nav/WorkspaceSwitcher'
 import { passkeysAvailable } from './lib/passkeys'
 import { AdBanner } from './components/AdBanner'
@@ -340,6 +341,7 @@ export default function App() {
           </header>
           <AdBanner tier={entitlement.tier} />
           {guestNotice}
+          {!isGuest && <PendingInvitations />}
           {readOnlyNotice}
           <main className="mx-auto w-full max-w-5xl px-6 py-6">
             {pageContent}
@@ -387,6 +389,7 @@ export default function App() {
       </header>
 
       {guestNotice}
+      {!isGuest && <PendingInvitations />}
       {readOnlyNotice}
 
       <PasskeysDialog open={passkeysOpen} onOpenChange={setPasskeysOpen} />
