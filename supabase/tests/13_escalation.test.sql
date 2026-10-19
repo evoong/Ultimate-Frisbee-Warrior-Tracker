@@ -46,7 +46,10 @@ select throws_ok(
 );
 
 -- 5. Cross-tenant row movement, both directions.
+-- Ensure seeded game 1 is within the 30-day free tier window so its game_events
+-- are visible to members under RLS.
 select tests.logout();
+update public.games set game_date = current_date where id = 1;
 select tests.login_as('member@local.test');
 select throws_ok(
   $$ update public.game_events set organization_id = 2 where organization_id = 1 $$,
