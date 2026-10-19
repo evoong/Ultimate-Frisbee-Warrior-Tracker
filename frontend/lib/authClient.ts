@@ -95,6 +95,11 @@ export async function forgotPassword(email: string): Promise<void> {
   if (!res.ok) throw new Error(await readError(res))
 }
 
+export async function sendInviteEmail(teamId: number, email: string): Promise<void> {
+  const res = await post('/auth/invite-email', { teamId, email })
+  if (!res.ok) throw new Error(await readError(res))
+}
+
 export async function resetPassword(password: string): Promise<void> {
   const res = await post('/auth/reset-password', { password })
   if (!res.ok) throw new Error(await readError(res))
