@@ -2068,20 +2068,25 @@ export default function Schedule() {
                                 </button>
                               ))}
                             </div>
-                            {([
-                              { label: 'Scorer / Player', value: editScorerId, set: setEditScorerId, ranked: scorerEditOptions },
-                              { label: 'Assister / Related', value: editAssisterId, set: setEditAssisterId, ranked: assisterEditOptions },
-                              { label: '2nd Assister', value: editSecondaryAssisterId, set: setEditSecondaryAssisterId, ranked: assisterEditOptions },
-                            ]).map(f => (
-                              <div key={f.label} className="space-y-1">
-                                <Label className="text-xs">{f.label}</Label>
-                                {selectionMode === 'combobox' ? (
-                                  <PlayerCombobox players={playerOptions} value={f.value || '__none__'} onValueChange={f.set} placeholder="Select player..." className="w-full bg-card border-border" />
-                                ) : (
-                                  <PlayerChipGrid options={f.ranked} value={f.value || '__none__'} onChange={f.set} photoMap={lineupPhotoByPlayerId} />
-                                )}
-                              </div>
-                            ))}
+                            {/* Same possession chain as Add Event: 2nd -> Assist -> Scorer, top to bottom. */}
+                            <div className="relative pl-3 space-y-3">
+                              <div className="absolute left-[4px] top-[14px] bottom-[18px] w-px bg-border" aria-hidden="true" />
+                              {([
+                                { label: '2nd', value: editSecondaryAssisterId, set: setEditSecondaryAssisterId, ranked: assisterEditOptions },
+                                { label: 'Assist', value: editAssisterId, set: setEditAssisterId, ranked: assisterEditOptions },
+                                { label: 'Scorer', value: editScorerId, set: setEditScorerId, ranked: scorerEditOptions },
+                              ]).map(f => (
+                                <div key={f.label} className="relative grid grid-cols-[44px_1fr] items-center gap-2">
+                                  <span className={`absolute -left-3 top-1/2 -translate-y-1/2 w-[9px] h-[9px] rounded-full ${f.label === 'Scorer' ? 'bg-green-600 dark:bg-green-500' : 'border-2 border-border bg-card'}`} aria-hidden="true" />
+                                  <span className={`text-xs font-medium text-right ${f.label === 'Scorer' ? 'text-foreground' : 'text-muted-foreground'}`}>{f.label}</span>
+                                  {selectionMode === 'combobox' ? (
+                                    <PlayerCombobox players={playerOptions} value={f.value || '__none__'} onValueChange={f.set} placeholder="None" className="w-full h-9 text-sm bg-card border-border" />
+                                  ) : (
+                                    <PlayerChipGrid options={f.ranked} value={f.value || '__none__'} onChange={f.set} photoMap={lineupPhotoByPlayerId} />
+                                  )}
+                                </div>
+                              ))}
+                            </div>
                             <div className="flex gap-2">
                               <Button size="sm" onClick={handleSaveEventEdit} className="flex-1 bg-primary text-primary-foreground h-8 text-xs"><FloppyDisk className="w-3 h-3 mr-1" />Save</Button>
                               <Button size="sm" variant="outline" onClick={() => setEditingEventId(null)} className="h-8 text-xs"><X className="w-3 h-3" /></Button>
