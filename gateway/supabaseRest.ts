@@ -46,6 +46,30 @@ export async function sbGet(config: ActionsConfig, path: string): Promise<any> {
   return res.json()
 }
 
+export async function sbGetPaged(config: ActionsConfig, path: string): Promise<any[]> {
+  const rows: any[] = []
+  const PAGE_SIZE = 1000
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const sep = path.includes('?') ? '&' : '?'
+    const range = `${from}-${from + PAGE_SIZE - 1}`
+    const res = await fetch(`${config.supabaseUrl}/rest/v1${path}${sep}order=id.asc`, {
+      headers: {
+        apikey: config.supabaseSecretKey,
+        Authorization: `Bearer ${config.supabaseSecretKey}`,
+        'Range-Unit': 'items',
+        Range: range,
+      },
+    })
+    if (res.status === 416) break
+    if (!res.ok) throw new Error(`Supabase paged query failed (${res.status}): ${path}`)
+    const page = await res.json()
+    if (!Array.isArray(page) || page.length === 0) break
+    rows.push(...page)
+    if (page.length < PAGE_SIZE) break
+  }
+  return rows
+}
+
 export async function sbWrite(config: ActionsConfig, method: 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<any> {
   const res = await fetch(`${config.supabaseUrl}/rest/v1${path}`, {
     method,
