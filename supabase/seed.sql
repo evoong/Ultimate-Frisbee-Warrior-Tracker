@@ -31,8 +31,8 @@ on conflict (player_id) do nothing;
 
 insert into public.games (id, season_id, opponent, game_date, our_score, their_score, organization_id)
 overriding system value
-values (1, 1, 'Rivals', '2026-09-01', 15, 12, 1),
-       (2, 2, 'Others', '2026-09-01', 10, 15, 2)
+values (1, 1, 'Rivals', current_date - interval '5 days', 15, 12, 1),
+       (2, 2, 'Others', current_date - interval '5 days', 10, 15, 2)
 on conflict (id) do nothing;
 
 insert into public.game_events (game_id, player_id, related_player_id, event_type, organization_id)

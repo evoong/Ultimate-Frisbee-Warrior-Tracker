@@ -16,7 +16,7 @@ select is(
 );
 
 -- RLS Check: insert a row in ai_usage_logs and verify no access to outsider
-insert into public.ai_usage_logs (organization_id, month_key, message_count) values (999, '2026-09', 10);
+insert into public.ai_usage_logs (organization_id, month_key, message_count) values (999, to_char(now(), 'YYYY-MM'), 10);
 select tests.login_as('outsider@local.test');
 select is_empty(
   $$ select * from public.ai_usage_logs where organization_id = 999 $$,
