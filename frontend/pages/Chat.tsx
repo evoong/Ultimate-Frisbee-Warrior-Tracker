@@ -9,6 +9,8 @@ import ActionReceiptCard, { type ActionReceipt } from '../components/chat/Action
 import { useAuth } from '../contexts/AuthContext'
 import { ChatChips } from '../components/chat/ChatChips'
 import { ActionCard, type ChatProposal, type ProposalStatus } from '../components/chat/ActionCard'
+import VoiceChat from '../components/chat/VoiceChat'
+import type { VoiceTurn } from '../lib/geminiLive'
 
 type Message = {
   role: 'user' | 'assistant'
@@ -258,6 +260,26 @@ export default function Chat() {
     ))
   }
 
+  // --- Voice mode ----------------------------------------------------------------
+  // Spoken turns arrive as transcript pairs; append them to the same thread so
+  // voice and text share one history. A voice proposal lands as a normal
+  // pending card (and auto-approve fires on arrival, same as text).
+  const handleVoiceTurns = (turns: VoiceTurn[]) => {
+    if (turns.length === 0) return
+    setMessages(prev => [...prev, ...turns.map(t => ({ role: t.role, content: t.content }))])
+  }
+
+  const handleVoiceProposal = (proposal: ChatProposal) => {
+    setMessages(prev => [...prev, {
+      role: 'assistant' as const,
+      content: 'I prepared a change for you:',
+      proposal,
+      proposalStatus: 'pending' as ProposalStatus,
+      proposalOutcome: null,
+    }])
+    if (autoApprove) void confirmProposal(proposal)
+  }
+
   // Chips yield while any card is still actionable (pending/confirming/error):
   // one decision at a time, same rule the single-card UX enforced.
   const hasActionableProposal = messages.some(
@@ -279,9 +301,18 @@ export default function Chat() {
     <div className="flex flex-col h-[calc(100vh-8rem)]">
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-2xl font-bold text-foreground">Team Assistant</h1>
-        {/* Auto-approve is an editor-tier affordance — members never receive
-            proposals, so the toggle would be a dead control for them. */}
-        {can.record && (role === 'editor' || role === 'captain') && (
+        <div className="flex items-center gap-2">
+          {can.record && currentTeamId != null && (
+            <VoiceChat
+              organizationId={currentTeamId}
+              sessionId={sessionId.current}
+              onProposal={handleVoiceProposal}
+              onTurnComplete={handleVoiceTurns}
+            />
+          )}
+          {/* Auto-approve is an editor-tier affordance — members never receive
+              proposals, so the toggle would be a dead control for them. */}
+          {can.record && (role === 'editor' || role === 'captain') && (
           <Button
             variant="outline"
             size="sm"
@@ -305,6 +336,7 @@ export default function Chat() {
             Clear chat
           </Button>
         )}
+        </div>
       </div>
 
       <Dialog open={confirmClear} onOpenChange={open => !open && setConfirmClear(false)}>
