@@ -5,6 +5,7 @@ import { createMembershipLookup } from './gateway/membership.js'
 import { createAdminLookup } from './gateway/admin/adminAuth.js'
 import { handleAdminRequest } from './gateway/admin/index.js'
 import { handleChatRequest, handleChatHistoryRequest, handleChatHistoryDeleteRequest, handleChatConfirmRequest, handleChatUndoRequest, type ChatConfig } from './gateway/chat.js'
+import { handleVoiceSessionRequest, handleVoiceToolRequest, handleVoiceLogRequest } from './gateway/voice.js'
 import { handleFlagsRequest, type FlagsConfig } from './gateway/flags.js'
 import { handleAccountDeleteRequest } from './gateway/account/deleteAccount.js'
 import { runJamSync, JAM_SYNC_MONITOR_SLUG, JAM_SYNC_MONITOR_CONFIG } from './gateway/jamSync.js'
@@ -140,6 +141,32 @@ async function handleAppRequest(request: Request, env: Env, ctx: ExecutionContex
         }
         if (url.pathname === "/api/chat/history" && request.method === "DELETE") {
           return handleChatHistoryDeleteRequest(chatConfig, request);
+        }
+      }
+
+      // Voice chat (Gemini Live full-duplex session, tool and log endpoints).
+      // Note: Worker chat path currently has no quota enforcement, so voice chat mirrors that.
+      if (url.pathname.startsWith("/api/chat/voice")) {
+        const chatConfig: ChatConfig = {
+          supabaseUrl: env.SUPABASE_URL,
+          publishableKey: env.SUPABASE_PUBLISHABLE_KEY,
+          jwksUrl: env.SUPABASE_JWKS_URL,
+          supabaseSecretKey: env.SUPABASE_SECRET_KEY,
+          geminiApiKey: env.GEMINI_API_KEY,
+          geminiModel: env.GEMINI_MODEL,
+          posthogProjectToken: env.POSTHOG_PROJECT_TOKEN,
+          posthogHost: env.POSTHOG_HOST,
+          langsmithApiKey: env.LANGSMITH_API_KEY,
+          langsmithProject: env.LANGSMITH_PROJECT,
+        };
+        if (url.pathname === "/api/chat/voice/session" && request.method === "POST") {
+          return handleVoiceSessionRequest(chatConfig, request);
+        }
+        if (url.pathname === "/api/chat/voice/tool" && request.method === "POST") {
+          return handleVoiceToolRequest(chatConfig, request);
+        }
+        if (url.pathname === "/api/chat/voice/log" && request.method === "POST") {
+          return handleVoiceLogRequest(chatConfig, request);
         }
       }
 

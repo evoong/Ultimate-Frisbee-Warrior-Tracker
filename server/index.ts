@@ -20,7 +20,8 @@ import { runChatAgent } from "../gateway/agent/agent.js";
 import { makeChatTools } from "../gateway/agent/tools.js";
 import { callChatFunction, type ActionsConfig } from "../gateway/gameActions.js";
 import { buildProposal, confirmProposal, ConfirmError } from "../gateway/chatProposals.js";
-import { mapRollbackError } from "../gateway/chat.js";
+import { mapRollbackError, type ChatConfig } from "../gateway/chat.js";
+import { handleVoiceSessionRequest, handleVoiceToolRequest, handleVoiceLogRequest } from "../gateway/voice.js";
 import { executeRollback } from "../gateway/chatRecovery.js";
 import { getTeamContext as buildTeamContext, type ChatScope } from "../gateway/agent/context.js";
 import { createMembershipLookup, hasAtLeast, type TeamRole } from "../gateway/membership.js";
@@ -103,6 +104,56 @@ app.use(
       request
     ),
     (path) => path === "/api/account/delete" || path === "/api/account/delete/blockers"
+  )
+);
+
+// ── Voice chat (Gemini Live) ──────────────────────────────────────────────────
+// Voice endpoints as web-standard handlers, mounted before express.json() so
+// the adapter re-reads the raw body itself (same pattern as /api/flags).
+// Express enforces the AI-message quota on session start (one voice session =
+// one AI message, refunded if token minting fails); the Worker chat path
+// currently has no quota, so voice chat mirrors that there.
+app.use(
+  createNodeAdapter(
+    async (request) => {
+      const url = new URL(request.url);
+      const path = url.pathname;
+      const chatConfig: ChatConfig = {
+        supabaseUrl: process.env.SUPABASE_URL || "",
+        publishableKey: process.env.SUPABASE_PUBLISHABLE_KEY || "",
+        jwksUrl: process.env.SUPABASE_JWKS_URL || "",
+        supabaseSecretKey: process.env.SUPABASE_SECRET_KEY || "",
+        geminiApiKey: process.env.GEMINI_API_KEY,
+        geminiModel: process.env.GEMINI_MODEL,
+        posthogProjectToken: process.env.POSTHOG_PROJECT_TOKEN,
+        posthogHost: process.env.POSTHOG_HOST,
+        langsmithApiKey: process.env.LANGSMITH_API_KEY,
+        langsmithProject: process.env.LANGSMITH_PROJECT,
+      };
+      if (path === "/api/chat/voice/session" && request.method === "POST") {
+        // Quota: consume one AI message per voice session; refund if minting fails.
+        const body: any = await request.clone().json().catch(() => ({}));
+        const orgId = Number(body?.organization_id);
+        if (!orgId) return new Response(JSON.stringify({ error: "organization_id and session_id required" }), { status: 400, headers: { "Content-Type": "application/json" } });
+        if (!await consumeAiMessage(orgId)) {
+          return new Response(JSON.stringify({ error: "Monthly AI chat limit reached for this team's plan. Upgrade to increase limits." }), { status: 429, headers: { "Content-Type": "application/json" } });
+        }
+        try {
+          return await handleVoiceSessionRequest(chatConfig, request);
+        } catch (err) {
+          try { await refundAiMessage(orgId); } catch (refundError) { Sentry.captureException(refundError); }
+          throw err;
+        }
+      }
+      if (path === "/api/chat/voice/tool" && request.method === "POST") {
+        return handleVoiceToolRequest(chatConfig, request);
+      }
+      if (path === "/api/chat/voice/log" && request.method === "POST") {
+        return handleVoiceLogRequest(chatConfig, request);
+      }
+      return new Response(null, { status: 404 });
+    },
+    (path) => path === "/api/chat/voice/session" || path === "/api/chat/voice/tool" || path === "/api/chat/voice/log"
   )
 );
 

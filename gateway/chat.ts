@@ -42,7 +42,7 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
-async function supabaseServiceFetch(config: ChatConfig, path: string): Promise<any> {
+export async function supabaseServiceFetch(config: ChatConfig, path: string): Promise<any> {
   const res = await fetch(`${config.supabaseUrl}/rest/v1${path}`, {
     headers: {
       apikey: config.supabaseSecretKey,
@@ -53,7 +53,7 @@ async function supabaseServiceFetch(config: ChatConfig, path: string): Promise<a
   return res.json()
 }
 
-async function insertChatLogs(config: ChatConfig, organizationId: number, userId: string, rows: { session_id: string; role: string; content: string; request_id?: string }[]): Promise<void> {
+export async function insertChatLogs(config: ChatConfig, organizationId: number, userId: string, rows: { session_id: string; role: string; content: string; request_id?: string }[]): Promise<void> {
   await fetch(`${config.supabaseUrl}/rest/v1/chat_logs`, {
     method: 'POST',
     headers: {
@@ -73,11 +73,11 @@ async function insertChatLogs(config: ChatConfig, organizationId: number, userId
 // Returning null for both, as an earlier version did, made an unauthenticated
 // caller look identical to a rejected member and put this runtime out of step
 // with Express, which distinguishes them.
-type ChatCaller =
+export type ChatCaller =
   | { ok: true; sub: string; email: string | null; role: TeamRole }
   | { ok: false; status: 401 | 403; error: string }
 
-async function requireTeamMember(
+export async function requireTeamMember(
   config: ChatConfig,
   request: Request,
   organizationId: number,
@@ -104,6 +104,23 @@ async function requireTeamMember(
   }
 
   return { ok: true, sub: claims.sub, email: claims.email, role: role as TeamRole }
+}
+
+export async function resolveChatScope(
+  config: ChatConfig,
+  user: { sub: string; role: TeamRole },
+  teamId: number,
+  lookup: ReturnType<typeof createMembershipLookup>
+): Promise<ChatScope | undefined> {
+  if (user.role === 'member') {
+    const linkedId = await lookup.playerLinkFor(user.sub, teamId)
+    if (linkedId != null) {
+      const rows = await supabaseServiceFetch(config, `/players?select=display_name&id=eq.${linkedId}`)
+      const name = Array.isArray(rows) && rows[0]?.display_name ? rows[0].display_name : null
+      if (name) return { playerId: linkedId, playerName: name }
+    }
+  }
+  return undefined
 }
 
 
@@ -155,15 +172,7 @@ export async function handleChatRequest(config: ChatConfig, request: Request): P
     // approved link = their player only; member unlinked = full team).
     // playerLinkFor throws on outage so a broken lookup can never widen
     // the context (Task 3).
-    let scope: ChatScope | undefined
-    if (user.role === 'member') {
-      const linkedId = await lookup.playerLinkFor(user.sub, teamId)
-      if (linkedId != null) {
-        const rows = await supabaseServiceFetch(config, `/players?select=display_name&id=eq.${linkedId}`)
-        const name = Array.isArray(rows) && rows[0]?.display_name ? rows[0].display_name : null
-        if (name) scope = { playerId: linkedId, playerName: name }
-      }
-    }
+    const scope = await resolveChatScope(config, user, teamId, lookup)
 
     const systemContext = await buildTeamContext(config, teamId, scope)
     // (buildTeamContext is the local alias for agent/context.ts's
