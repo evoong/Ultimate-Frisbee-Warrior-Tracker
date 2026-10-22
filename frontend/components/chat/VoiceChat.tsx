@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Mic, MicOff, Loader2, Volume2 } from 'lucide-react'
+import { Mic, Loader2, Volume2 } from 'lucide-react'
 import { Button } from '../../lib/shadcn/button'
 import {
   Select,
@@ -35,6 +35,7 @@ export default function VoiceChat({ organizationId, sessionId, onProposal, onTur
   const [active, setActive] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [heard, setHeard] = useState('')
   const sessionRef = useRef<VoiceSession | null>(null)
 
   useEffect(() => {
@@ -54,13 +55,16 @@ export default function VoiceChat({ organizationId, sessionId, onProposal, onTur
         voiceName,
         events: {
           onProposal,
+          onUserTranscript: text => setHeard(text),
           onTurnComplete: turns => {
+            setHeard('')
             if (turns.length > 0) onTurnComplete(turns)
           },
           onError: msg => setError(msg),
           onClose: () => {
             sessionRef.current = null
             setActive(false)
+            setHeard('')
           },
         },
       })
@@ -80,21 +84,25 @@ export default function VoiceChat({ organizationId, sessionId, onProposal, onTur
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 flex-wrap justify-end">
+      {heard && (
+        <span className="text-xs text-muted-foreground italic max-w-[180px] truncate" title={heard}>
+          "{heard}"
+        </span>
+      )}
       <Select value={voiceName} onValueChange={setVoiceName} disabled={active}>
         <SelectTrigger
-          size="sm"
-          className="w-[140px] h-8 bg-card border-border text-foreground"
+          className="w-[130px] h-8 bg-card border-border text-foreground text-xs"
           aria-label="Assistant voice"
         >
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 truncate">
             <Volume2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
             <SelectValue />
           </div>
         </SelectTrigger>
         <SelectContent className="bg-popover text-popover-foreground">
           {VOICES.map(v => (
-            <SelectItem key={v.name} value={v.name}>{v.label}</SelectItem>
+            <SelectItem key={v.name} value={v.name} className="text-xs">{v.label}</SelectItem>
           ))}
         </SelectContent>
       </Select>
@@ -103,20 +111,23 @@ export default function VoiceChat({ organizationId, sessionId, onProposal, onTur
         disabled={connecting}
         size="sm"
         variant="outline"
-        className={`h-8 shrink-0 ${active ? 'border-primary/50 text-primary' : 'text-muted-foreground'}`}
+        className={`h-8 shrink-0 text-xs ${active ? 'border-primary/50 text-primary bg-primary/5' : 'text-muted-foreground'}`}
         aria-pressed={active}
         title={active ? 'Stop voice mode' : 'Talk to the assistant'}
       >
         {connecting ? (
-          <Loader2 className="w-4 h-4 animate-spin" />
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
         ) : active ? (
-          <MicOff className="w-4 h-4" />
+          <span className="relative flex h-2 w-2 mr-1.5">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
+          </span>
         ) : (
-          <Mic className="w-4 h-4" />
+          <Mic className="w-3.5 h-3.5 mr-1.5" />
         )}
-        <span className="ml-1.5 hidden sm:inline">{active ? 'Stop' : 'Talk'}</span>
+        <span>{active ? 'Listening…' : 'Talk'}</span>
       </Button>
-      {error && <span className="text-xs text-destructive max-w-[220px] truncate" role="alert">{error}</span>}
+      {error && <span className="text-xs text-destructive max-w-[200px] truncate" role="alert">{error}</span>}
     </div>
   )
 }
