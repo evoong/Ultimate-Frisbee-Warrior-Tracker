@@ -10,6 +10,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { ChatChips } from '../components/chat/ChatChips'
 import { ActionCard, type ChatProposal, type ProposalStatus } from '../components/chat/ActionCard'
 import VoiceChat from '../components/chat/VoiceChat'
+import DictateButton from '../components/chat/DictateButton'
 import type { VoiceTurn } from '../lib/geminiLive'
 
 type Message = {
@@ -302,14 +303,6 @@ export default function Chat() {
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-2xl font-bold text-foreground">Team Assistant</h1>
         <div className="flex items-center gap-2">
-          {can.record && currentTeamId != null && (
-            <VoiceChat
-              organizationId={currentTeamId}
-              sessionId={sessionId.current}
-              onProposal={handleVoiceProposal}
-              onTurnComplete={handleVoiceTurns}
-            />
-          )}
           {/* Auto-approve is an editor-tier affordance — members never receive
               proposals, so the toggle would be a dead control for them. */}
           {can.record && (role === 'editor' || role === 'captain') && (
@@ -466,6 +459,15 @@ export default function Chat() {
               disabled={loading}
               className="bg-card border-border text-foreground"
             />
+            <DictateButton value={input} onChange={setInput} disabled={loading} />
+            {currentTeamId != null && (
+              <VoiceChat
+                organizationId={currentTeamId}
+                sessionId={sessionId.current}
+                onProposal={handleVoiceProposal}
+                onTurnComplete={handleVoiceTurns}
+              />
+            )}
             <Button
               onClick={() => sendMessage()}
               disabled={!input.trim() || loading}

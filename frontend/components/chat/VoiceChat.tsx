@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Mic, Loader2, Volume2 } from 'lucide-react'
+import { AudioLines, Loader2, Volume2 } from 'lucide-react'
 import { Button } from '../../lib/shadcn/button'
 import {
   Select,
@@ -84,21 +84,24 @@ export default function VoiceChat({ organizationId, sessionId, onProposal, onTur
   }
 
   return (
-    <div className="flex items-center gap-2 flex-wrap justify-end">
-      {heard && (
-        <span className="text-xs text-muted-foreground italic max-w-[180px] truncate" title={heard}>
-          "{heard}"
+    <div className="relative flex gap-2 shrink-0">
+      {/* Status floats above the row so it never shifts the input. */}
+      {(heard || error) && (
+        <span
+          className={`absolute bottom-full right-0 mb-1 text-xs max-w-[240px] truncate ${error ? 'text-destructive' : 'text-muted-foreground italic'}`}
+          title={error ?? heard}
+          role={error ? 'alert' : undefined}
+        >
+          {error ?? `"${heard}"`}
         </span>
       )}
       <Select value={voiceName} onValueChange={setVoiceName} disabled={active}>
         <SelectTrigger
-          className="w-[130px] h-8 bg-card border-border text-foreground text-xs"
+          className="hidden sm:flex h-9 w-9 justify-center px-0 bg-card border-border text-muted-foreground [&>svg:last-child]:hidden"
           aria-label="Assistant voice"
+          title={`Voice: ${voiceName}`}
         >
-          <div className="flex items-center gap-1.5 truncate">
-            <Volume2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-            <SelectValue />
-          </div>
+          <Volume2 className="w-4 h-4" />
         </SelectTrigger>
         <SelectContent className="bg-popover text-popover-foreground">
           {VOICES.map(v => (
@@ -109,25 +112,24 @@ export default function VoiceChat({ organizationId, sessionId, onProposal, onTur
       <Button
         onClick={active ? stop : start}
         disabled={connecting}
-        size="sm"
+        size="icon"
         variant="outline"
-        className={`h-8 shrink-0 text-xs ${active ? 'border-primary/50 text-primary bg-primary/5' : 'text-muted-foreground'}`}
+        className={`shrink-0 ${active ? 'border-primary/50 text-primary bg-primary/5' : 'text-muted-foreground'}`}
         aria-pressed={active}
-        title={active ? 'Stop voice mode' : 'Talk to the assistant'}
+        aria-label={active ? 'Stop voice mode' : 'Start a voice conversation'}
+        title={active ? 'Stop voice mode' : 'Start a voice conversation'}
       >
         {connecting ? (
-          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          <Loader2 className="w-4 h-4 animate-spin" />
         ) : active ? (
-          <span className="relative flex h-2 w-2 mr-1.5">
+          <span className="relative flex h-2.5 w-2.5">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-primary" />
           </span>
         ) : (
-          <Mic className="w-3.5 h-3.5 mr-1.5" />
+          <AudioLines className="w-4 h-4" />
         )}
-        <span>{active ? 'Listening…' : 'Talk'}</span>
       </Button>
-      {error && <span className="text-xs text-destructive max-w-[200px] truncate" role="alert">{error}</span>}
     </div>
   )
 }
