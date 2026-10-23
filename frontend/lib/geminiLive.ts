@@ -184,12 +184,13 @@ export class Speaker {
 export async function startVoiceSession(opts: {
   organization_id: number
   session_id: string
+  voiceName?: string
   events: VoiceSessionEvents
 }): Promise<VoiceSession> {
   const res = await fetch('/api/chat/voice/session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ organization_id: opts.organization_id, session_id: opts.session_id }),
+    body: JSON.stringify({ organization_id: opts.organization_id, session_id: opts.session_id, voiceName: opts.voiceName }),
   })
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))

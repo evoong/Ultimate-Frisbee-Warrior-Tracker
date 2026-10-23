@@ -17,7 +17,7 @@ function json(body: unknown, status = 200): Response {
 export async function handleVoiceSessionRequest(config: ChatConfig, request: Request): Promise<Response> {
   try {
     const body: any = await request.json().catch(() => ({}))
-    const { organization_id, session_id } = body as { organization_id: number, session_id: string }
+    const { organization_id, session_id, voiceName } = body as { organization_id: number, session_id: string, voiceName?: string }
     if (!organization_id || !session_id) return json({ error: 'organization_id and session_id required' }, 400)
     if (!isValidSessionId(session_id)) return json({ error: 'session_id must be a UUID' }, 400)
 
@@ -35,6 +35,7 @@ export async function handleVoiceSessionRequest(config: ChatConfig, request: Req
 
     const geminiApiKey = await getVaultSecret(config, 'gemini_api_key', config.geminiApiKey)
     const geminiModel = await getVaultSecret(config, 'gemini_live_model', config.geminiModel) ?? 'gemini-3.8-live'
+    const voice = voiceName ?? 'Charon'
     if (!geminiApiKey) return json({ error: 'Gemini API key not configured' }, 500)
 
     // Locked config per Eric's design
@@ -72,7 +73,7 @@ export async function handleVoiceSessionRequest(config: ChatConfig, request: Req
           config: {
             responseModalities: ['AUDIO'],
             speechConfig: {
-              voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Charon' } }
+              voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } }
             },
             inputAudioTranscription: {},
             outputAudioTranscription: {},
