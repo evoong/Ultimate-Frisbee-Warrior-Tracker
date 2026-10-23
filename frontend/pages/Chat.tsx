@@ -10,6 +10,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { ChatChips } from '../components/chat/ChatChips'
 import { ActionCard, type ChatProposal, type ProposalStatus } from '../components/chat/ActionCard'
 import VoiceChat from '../components/chat/VoiceChat'
+import DictateButton from '../components/chat/DictateButton'
 import type { VoiceTurn } from '../lib/geminiLive'
 
 type Message = {
@@ -458,6 +459,7 @@ export default function Chat() {
               disabled={loading}
               className="bg-card border-border text-foreground"
             />
+            <DictateButton value={input} onChange={setInput} disabled={loading} />
             {currentTeamId != null && (
               <VoiceChat
                 organizationId={currentTeamId}

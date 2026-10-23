@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Mic, Loader2, Volume2 } from 'lucide-react'
+import { AudioLines, Loader2, Volume2 } from 'lucide-react'
 import { Button } from '../../lib/shadcn/button'
 import {
   Select,
@@ -97,7 +97,7 @@ export default function VoiceChat({ organizationId, sessionId, onProposal, onTur
       )}
       <Select value={voiceName} onValueChange={setVoiceName} disabled={active}>
         <SelectTrigger
-          className="h-9 w-9 justify-center px-0 bg-card border-border text-muted-foreground [&>svg:last-child]:hidden"
+          className="hidden sm:flex h-9 w-9 justify-center px-0 bg-card border-border text-muted-foreground [&>svg:last-child]:hidden"
           aria-label="Assistant voice"
           title={`Voice: ${voiceName}`}
         >
@@ -116,8 +116,8 @@ export default function VoiceChat({ organizationId, sessionId, onProposal, onTur
         variant="outline"
         className={`shrink-0 ${active ? 'border-primary/50 text-primary bg-primary/5' : 'text-muted-foreground'}`}
         aria-pressed={active}
-        aria-label={active ? 'Stop voice mode' : 'Talk to the assistant'}
-        title={active ? 'Stop voice mode' : 'Talk to the assistant'}
+        aria-label={active ? 'Stop voice mode' : 'Start a voice conversation'}
+        title={active ? 'Stop voice mode' : 'Start a voice conversation'}
       >
         {connecting ? (
           <Loader2 className="w-4 h-4 animate-spin" />
@@ -127,7 +127,7 @@ export default function VoiceChat({ organizationId, sessionId, onProposal, onTur
             <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-primary" />
           </span>
         ) : (
-          <Mic className="w-4 h-4" />
+          <AudioLines className="w-4 h-4" />
         )}
       </Button>
     </div>
