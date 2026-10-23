@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowsLeftRight, Check } from '@phosphor-icons/react'
+import { ArrowsLeftRight } from '@phosphor-icons/react'
 import { Avatar, AvatarFallback, AvatarImage } from '../../lib/shadcn/avatar'
 import { Skeleton } from '../../lib/shadcn/skeleton'
 import Segmented, { type SegmentOption } from './Segmented'
@@ -76,15 +76,13 @@ function Column({ title, total, rows, series, emptyLabel }: {
 }
 
 export default function AssistMatrix({
-  players, edges, selectedId, onSelect, includeSubs, onIncludeSubsChange,
+  players, edges, selectedId, onSelect,
   loading, error, emptyLabel,
 }: {
   players: PlayerLine[]
   edges: MatrixEdge[]
   selectedId: number | null
   onSelect: (id: number) => void
-  includeSubs: boolean
-  onIncludeSubsChange: (next: boolean) => void
   loading: boolean
   error: string | null
   emptyLabel: string
@@ -135,21 +133,6 @@ export default function AssistMatrix({
           Assist matrix
         </span>
         <div className="flex items-center gap-1">
-          {/* The subs toggle kept its behaviour and lost its raw checkbox. It
-              is the same button shape as the leaderboard's legend, because it
-              is the same kind of control: one thing in the panel switched on
-              and off. */}
-          <button
-            type="button"
-            className="st-legend"
-            data-active={includeSubs}
-            aria-pressed={includeSubs}
-            onClick={() => onIncludeSubsChange(!includeSubs)}
-          >
-            <Check className="h-3 w-3" weight="bold" />
-            Subs
-          </button>
-
           {/* Two drawings of one data set, so a segmented control rather than
               a pair of icon buttons: the choice is exclusive and both options
               have to be readable at once. Neutral raised surface for the
